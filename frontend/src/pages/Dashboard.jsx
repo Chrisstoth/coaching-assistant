@@ -300,10 +300,10 @@ export default function Dashboard() {
           className="block bg-gradient-to-br from-accent-900/60 to-pool-800 border border-accent-700/40 rounded-2xl p-5 space-y-2 hover:border-accent-600/60 transition-colors">
           <div className="flex items-center gap-2">
             <span className="text-accent-400 text-lg">✦</span>
-            <p className="font-semibold text-sm text-accent-200">Ask your AI coach</p>
+            <p className="font-semibold text-sm text-accent-200">Ask Deckxtra</p>
           </div>
           <p className="text-xs text-pool-400 leading-relaxed">
-            Plan a session, build a swimmer profile, discuss competition prep — your AI coach knows the squad.
+            Plan a session, build a swimmer profile, discuss competition prep — Deckxtra knows your squad.
           </p>
         </Link>
       )}

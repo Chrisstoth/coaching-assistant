@@ -70,17 +70,14 @@ function BottomNav() {
           {({ isActive }) => (<><SquadIcon active={isActive} /><span>Squad</span></>)}
         </NavLink>
 
-        {/* Centre AI button — raised, accent fill */}
-        <NavLink to="/ai" className="flex flex-col items-center -mt-5">
+        {/* Centre AI button — raised, no label */}
+        <NavLink to="/ai" className="flex flex-col items-center -mt-6">
           {({ isActive }) => (
-            <>
-              <span className={`flex items-center justify-center w-14 h-14 transition-all drop-shadow-lg ${
-                isActive ? 'scale-105' : ''
-              }`}>
-                <AIIcon />
-              </span>
-              <span className={`text-xs font-medium mt-0.5 ${isActive ? 'text-accent-400' : 'text-pool-500'}`}>AI</span>
-            </>
+            <span className={`flex items-center justify-center w-16 h-16 transition-all drop-shadow-lg ${
+              isActive ? 'scale-105' : ''
+            }`}>
+              <AIIcon />
+            </span>
           )}
         </NavLink>
 
@@ -149,7 +146,7 @@ function SquadIcon({ active }) {
 }
 
 function AIIcon() {
-  return <img src="/buttonimage.png" alt="AI" className="w-14 h-14 object-contain" />
+  return <img src="/buttonimage.png" alt="AI" className="w-16 h-16 object-contain" />
 }
 
 function SessionsIcon({ active }) {

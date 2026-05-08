@@ -15,7 +15,9 @@ function Root() {
   if (splash) {
     return (
       <div className="fixed inset-0 bg-pool-900 flex items-center justify-center">
-        <img src="/Loadimage.png" alt="Deckxtra" className="w-48 h-48 object-contain" />
+        <div className="w-72 h-72 rounded-[32px] overflow-hidden">
+          <img src="/Loadimage.png" alt="Deckxtra" className="w-full h-full object-cover" />
+        </div>
       </div>
     )
   }
