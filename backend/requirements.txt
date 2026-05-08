@@ -6,7 +6,7 @@ openpyxl==3.1.5
 anthropic==0.34.2
 python-multipart==0.0.12
 python-dotenv==1.0.1
-rapidfuzz==3.10.1
+rapidfuzz==3.9.7
 aiofiles==24.1.0
 Pillow==10.4.0
 psycopg2-binary==2.9.9
