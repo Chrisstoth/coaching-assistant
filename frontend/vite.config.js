@@ -16,21 +16,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      devOptions: { enabled: true, type: 'module' },
-      manifest: {
-        name: 'Coaching Assistant',
-        short_name: 'CoachAI',
-        description: 'Swimming coaching assistant',
-        start_url: '/',
-        display: 'standalone',
-        background_color: '#0f172a',
-        theme_color: '#0f172a',
-        orientation: 'portrait',
-        icons: [
-          { src: '/logo-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-          { src: '/logo.png',     sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-        ],
-      },
+      manifest: false,
       workbox: {
         globPatterns: [],
         runtimeCaching: [
