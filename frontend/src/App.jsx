@@ -32,7 +32,7 @@ function AppHeader() {
     <header className="fixed top-0 left-0 right-0 z-50 bg-pool-900/95 backdrop-blur border-b border-pool-700/60">
       <div className="flex items-center justify-between max-w-lg mx-auto px-4 h-12">
         <Link to="/" className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="Club logo" className="h-7 w-7 object-contain rounded" />
+          <img src="/logo.png" alt="Club logo" className="h-8 w-8 object-contain rounded-xl" />
           <span className="font-bold text-sm tracking-tight text-pool-100">Deckxtra</span>
         </Link>
         <Link
@@ -74,10 +74,8 @@ function BottomNav() {
         <NavLink to="/ai" className="flex flex-col items-center -mt-5">
           {({ isActive }) => (
             <>
-              <span className={`flex items-center justify-center w-14 h-14 rounded-full shadow-lg transition-all ${
-                isActive
-                  ? 'bg-accent-500 shadow-accent-500/40 scale-105'
-                  : 'bg-accent-600 hover:bg-accent-500 shadow-accent-600/30'
+              <span className={`flex items-center justify-center w-14 h-14 transition-all drop-shadow-lg ${
+                isActive ? 'scale-105' : ''
               }`}>
                 <AIIcon />
               </span>
@@ -151,7 +149,7 @@ function SquadIcon({ active }) {
 }
 
 function AIIcon() {
-  return <img src="/buttonimage.png" alt="AI" className="w-10 h-10 object-contain" />
+  return <img src="/buttonimage.png" alt="AI" className="w-14 h-14 object-contain" />
 }
 
 function SessionsIcon({ active }) {
