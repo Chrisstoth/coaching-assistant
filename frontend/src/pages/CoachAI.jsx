@@ -399,7 +399,7 @@ export default function CoachAI() {
         {!loading && messages.length === 0 && (
           <div className="space-y-4 pt-2">
             <p className="text-pool-400 text-sm leading-relaxed">
-              Talk to me like an assistant coach — swimmer profiles, session planning, competition prep, training science.
+              Ask Deckxtra anything — swimmer profiles, session planning, competition prep, training science.
               I know your squad and I'll pull in the right context as the conversation develops.
             </p>
             <div className="space-y-2">
@@ -597,7 +597,7 @@ export default function CoachAI() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            placeholder={listening ? 'Listening…' : 'Ask anything…'}
+            placeholder={listening ? 'Listening…' : 'Ask Deckxtra…'}
             rows={3}
             className="bg-transparent px-4 pt-3 pb-1 text-sm focus:outline-none resize-none w-full"
           />

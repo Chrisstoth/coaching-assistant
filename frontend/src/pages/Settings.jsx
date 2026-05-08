@@ -73,7 +73,7 @@ export default function Settings() {
     <div className="p-4 space-y-6 pb-8">
       <header className="pt-2">
         <h1 className="text-xl font-bold tracking-tight">Settings</h1>
-        <p className="text-pool-400 text-sm mt-0.5">Configure your coaching assistant</p>
+        <p className="text-pool-400 text-sm mt-0.5">Configure Deckxtra</p>
       </header>
 
       {SECTIONS.map(({ heading, items }) => (
@@ -101,7 +101,7 @@ export default function Settings() {
       ))}
 
       <section className="pt-2 border-t border-pool-700">
-        <p className="text-xs text-pool-600 text-center">Coaching Assistant · built for poolside use</p>
+        <p className="text-xs text-pool-600 text-center">Deckxtra · built for poolside use</p>
       </section>
     </div>
   )

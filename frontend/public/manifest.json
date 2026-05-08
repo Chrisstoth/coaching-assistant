@@ -1,6 +1,6 @@
 {
-  "name": "Coaching Assistant",
-  "short_name": "CoachAI",
+  "name": "Deckxtra",
+  "short_name": "Deckxtra",
   "description": "Swimming coaching assistant",
   "start_url": "/",
   "display": "standalone",
