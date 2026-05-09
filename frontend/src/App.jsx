@@ -33,7 +33,7 @@ function AppHeader() {
     <header className="fixed top-0 left-0 right-0 z-50 bg-pool-900/95 backdrop-blur border-b border-pool-700/60">
       <div className="flex items-center justify-between max-w-lg mx-auto px-4 h-12">
         <Link to="/" className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="Club logo" className="h-8 w-8 object-contain rounded-xl" />
+          <img src="/logo.png" alt="Club logo" className="h-8 w-auto object-contain" />
           <span className="font-bold text-sm tracking-tight text-pool-100">Deckxtra</span>
         </Link>
         <Link
