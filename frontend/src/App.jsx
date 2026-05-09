@@ -15,6 +15,7 @@ import CoachingContext from './pages/CoachingContext'
 import SessionPlanner from './pages/SessionPlanner'
 import CoachAI from './pages/CoachAI'
 import Settings from './pages/Settings'
+import SeasonPlan from './pages/SeasonPlan'
 
 // Pages where the bottom nav should be hidden (full-screen flows)
 const HIDE_NAV_PATHS = ['/sessions/', '/swimmers/new']
@@ -119,6 +120,7 @@ export default function App() {
           <Route path="/context" element={<CoachingContext />} />
           <Route path="/ai" element={<CoachAI />} />
           <Route path="/plan" element={<SessionPlanner />} />
+          <Route path="/season" element={<SeasonPlan />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>

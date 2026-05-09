@@ -333,6 +333,17 @@ export default function Dashboard() {
         </section>
       )}
 
+      {/* Season Plan card */}
+      <Link to="/season" className="block bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-2xl px-4 py-3.5 transition-colors">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold text-pool-200">Season Plan</p>
+            <p className="text-xs text-pool-500 mt-0.5">Training blocks, phase emphasis & meets</p>
+          </div>
+          <span className="text-pool-500 text-lg">›</span>
+        </div>
+      </Link>
+
       {/* Utility links */}
       <div className="grid grid-cols-3 gap-2 pt-1">
         <Link to="/import" className="bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-xl py-3 text-center text-xs text-pool-400 font-medium transition-colors">

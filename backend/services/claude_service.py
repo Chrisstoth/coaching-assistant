@@ -367,35 +367,134 @@ def build_meets_context(db: DBSession, months_ahead: int = 3) -> str:
 
 def build_periodization_context(db: DBSession) -> str:
     """
-    Active and recent periodization plans across the squad. Injected when planning topics detected.
+    Season block context (primary) or legacy periodization plans as fallback.
+    Injected when planning topics detected.
     """
     from datetime import date as date_type, timedelta
-
     today = date_type.today()
-    recent = today - timedelta(days=14)
+    lines = []
 
-    plans = (
-        db.query(models.PeriodizationPlan)
-        .join(models.Swimmer)
-        .filter(
-            models.Swimmer.status == 'active',
-            models.PeriodizationPlan.date_to >= recent,
+    # Season blocks (primary source)
+    current_block = (
+        db.query(models.SeasonBlock)
+        .filter(models.SeasonBlock.date_from <= today, models.SeasonBlock.date_to >= today)
+        .first()
+    )
+    next_block = (
+        db.query(models.SeasonBlock)
+        .filter(models.SeasonBlock.date_from > today)
+        .order_by(models.SeasonBlock.date_from)
+        .first()
+    )
+
+    if current_block:
+        total_days = (current_block.date_to - current_block.date_from).days + 1
+        total_weeks = max(1, round(total_days / 7))
+        week_in = min(total_weeks, (today - current_block.date_from).days // 7 + 1)
+        lines.append(f"CURRENT TRAINING BLOCK: {current_block.name} (Week {week_in} of {total_weeks} | {current_block.date_from} – {current_block.date_to})")
+        if current_block.phase_type:
+            lines.append(f"  Phase: {current_block.phase_type}")
+        if current_block.emphasis:
+            emp_str = ", ".join(f"{k} {v}%" for k, v in current_block.emphasis.items() if v)
+            lines.append(f"  Planned emphasis: {emp_str}")
+        if current_block.notes:
+            lines.append(f"  Notes: {current_block.notes[:120]}")
+
+        # Actual distribution since block start
+        sessions = (
+            db.query(models.Session)
+            .filter(
+                models.Session.date >= current_block.date_from,
+                models.Session.date <= today,
+                models.Session.status != 'cancelled',
+                models.Session.energy_system_focus.isnot(None),
+            )
+            .all()
         )
-        .order_by(models.PeriodizationPlan.plan_type, models.PeriodizationPlan.date_from)
+        if sessions:
+            dist = {}
+            for s in sessions:
+                dist[s.energy_system_focus] = dist.get(s.energy_system_focus, 0) + 1
+            total = sum(dist.values())
+            dist_str = ", ".join(f"{v}x {k} ({round(v/total*100)}%)" for k, v in sorted(dist.items(), key=lambda x: -x[1]))
+            lines.append(f"  Actual this block ({total} sessions): {dist_str}")
+
+            # Flag gaps vs planned
+            if current_block.emphasis:
+                gaps = []
+                for focus, planned in current_block.emphasis.items():
+                    actual_pct = round(dist.get(focus, 0) / total * 100) if total else 0
+                    diff = actual_pct - planned
+                    if diff <= -15:
+                        gaps.append(f"{focus} is UNDER-represented ({actual_pct}% actual vs {planned}% planned)")
+                    elif diff >= 15:
+                        gaps.append(f"{focus} is OVER-represented ({actual_pct}% actual vs {planned}% planned)")
+                if gaps:
+                    lines.append(f"  Block alignment gaps: {'; '.join(gaps)}")
+
+        # Active coaching intents in this block
+        intents = (
+            db.query(models.SwimmerObservation)
+            .filter(
+                models.SwimmerObservation.obs_type == 'coaching_intent',
+                models.SwimmerObservation.date >= current_block.date_from,
+            )
+            .order_by(models.SwimmerObservation.date.desc())
+            .limit(10)
+            .all()
+        )
+        if intents:
+            lines.append("  Active swimmer intents this block:")
+            for i in intents:
+                swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == i.swimmer_id).first()
+                name = swimmer.name if swimmer else "?"
+                lines.append(f"    {name}: {i.content[:100]}")
+
+    if next_block:
+        weeks_away = (next_block.date_from - today).days // 7
+        lines.append(f"NEXT BLOCK: {next_block.name} starts {next_block.date_from} ({weeks_away}w away)")
+
+    # Upcoming meets (next 8 weeks)
+    upcoming = (
+        db.query(models.Meet)
+        .filter(models.Meet.date >= today, models.Meet.date <= today + timedelta(weeks=8))
+        .order_by(models.Meet.date)
+        .limit(6)
         .all()
     )
-    if not plans:
-        return ""
+    if upcoming:
+        lines.append("UPCOMING MEETS (8 weeks):")
+        for m in upcoming:
+            targets = db.query(models.MeetTarget).filter(models.MeetTarget.meet_id == m.id).all()
+            a_swimmers = [t for t in targets if t.priority == 'A']
+            swimmer_names = []
+            for t in a_swimmers[:4]:
+                s = db.query(models.Swimmer).filter(models.Swimmer.id == t.swimmer_id).first()
+                if s:
+                    swimmer_names.append(s.name.split()[0])
+            a_str = f" | A targets: {', '.join(swimmer_names)}" if swimmer_names else ""
+            course = f" ({m.course})" if m.course else ""
+            lines.append(f"  {m.date} | {m.name}{course}{a_str}")
 
-    lines = ["PERIODIZATION PLANS (active/recent):"]
-    for p in plans:
-        swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == p.swimmer_id).first()
-        if not swimmer:
-            continue
-        date_range = f"{p.date_from} – {p.date_to}" if p.date_from and p.date_to else ""
-        focus = f" | focus: {p.focus[:80]}" if p.focus else ""
-        approved = " ✓" if p.coach_approved else " (pending approval)"
-        lines.append(f"  {swimmer.name} | {p.plan_type}{approved} | {date_range}{focus}")
+    # Fall back to old periodization plans if no season blocks defined
+    if not current_block and not next_block:
+        recent = today - timedelta(days=14)
+        plans = (
+            db.query(models.PeriodizationPlan)
+            .join(models.Swimmer)
+            .filter(models.Swimmer.status == 'active', models.PeriodizationPlan.date_to >= recent)
+            .order_by(models.PeriodizationPlan.plan_type, models.PeriodizationPlan.date_from)
+            .all()
+        )
+        if plans:
+            lines.append("PERIODIZATION PLANS (active/recent):")
+            for p in plans:
+                swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == p.swimmer_id).first()
+                if not swimmer:
+                    continue
+                date_range = f"{p.date_from} – {p.date_to}" if p.date_from and p.date_to else ""
+                focus = f" | focus: {p.focus[:80]}" if p.focus else ""
+                lines.append(f"  {swimmer.name} | {p.plan_type} | {date_range}{focus}")
 
     return "\n".join(lines)
 

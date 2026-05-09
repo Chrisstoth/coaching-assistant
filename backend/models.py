@@ -606,3 +606,15 @@ class CoachingNote(Base):
     date_to = Column(Date, nullable=False)
     active = Column(Boolean, default=True)                 # can be manually closed early
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SeasonBlock(Base):
+    __tablename__ = "season_blocks"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    phase_type = Column(String, nullable=True)  # base / build / peak / taper / competition / recovery / transition
+    date_from = Column(Date, nullable=False)
+    date_to = Column(Date, nullable=False)
+    emphasis = Column(JSON, nullable=True)  # {aerobic:70, threshold:20, speed:5, race_pace:5, endurance:0}
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

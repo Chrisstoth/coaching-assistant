@@ -241,6 +241,13 @@ export const api = {
   generateMicro: (swimmerId) => request('POST', `/periodization/${swimmerId}/micro`),
   getPlans: (swimmerId) => request('GET', `/periodization/${swimmerId}`),
 
+  // Season plan
+  getSeasonBlocks: () => request('GET', '/season/blocks'),
+  createSeasonBlock: (data) => request('POST', '/season/blocks', data),
+  updateSeasonBlock: (id, data) => request('PATCH', `/season/blocks/${id}`, data),
+  deleteSeasonBlock: (id) => request('DELETE', `/season/blocks/${id}`),
+  getSeasonSummary: () => request('GET', '/season/summary'),
+
   // Schedule / timetable
   getSlots: () => request('GET', '/schedule/slots'),
   createSlot: (data) => request('POST', '/schedule/slots', data),
