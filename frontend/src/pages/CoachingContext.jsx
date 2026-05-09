@@ -261,6 +261,8 @@ export default function CoachingContext() {
                 { label: 'Squad State Right Now', content: current.squad_state },
                 { label: 'Season Targets', content: current.targets },
                 { label: 'Current Training Block Focus', content: current.current_focus },
+                { label: 'Session Style & Preferences', content: current.session_style },
+                { label: 'Intensity & Terminology', content: current.intensity_terminology },
               ].map(({ label, content }) => content && (
                 <div key={label} className="bg-pool-800 rounded-xl p-4">
                   <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-2">{label}</p>
@@ -318,6 +320,8 @@ export default function CoachingContext() {
             { label: 'Squad State Right Now', content: selectedProfile.squad_state },
             { label: 'Season Targets', content: selectedProfile.targets },
             { label: 'Current Training Block Focus', content: selectedProfile.current_focus },
+            { label: 'Session Style & Preferences', content: selectedProfile.session_style },
+            { label: 'Intensity & Terminology', content: selectedProfile.intensity_terminology },
           ].map(({ label, content }) => content && (
             <div key={label} className="bg-pool-800 rounded-xl p-4">
               <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-2">{label}</p>

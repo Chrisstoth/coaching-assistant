@@ -177,6 +177,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [activeSheet, setActiveSheet] = useState(null) // { session, type }
   const [coachingNotes, setCoachingNotes] = useState([])
+  const [coachingProfile, setCoachingProfile] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -184,10 +185,12 @@ export default function Dashboard() {
       api.getCalendar().catch(() => []),
       api.getSwimmers({ active_only: true }).catch(() => []),
       api.getCoachingNotes().catch(() => []),
-    ]).then(([cal, swim, notes]) => {
+      api.getAIContextStatus().catch(() => null),
+    ]).then(([cal, swim, notes, ctx]) => {
       setCalendar(cal)
       setSwimmers(swim)
       setCoachingNotes(notes)
+      setCoachingProfile(ctx)
       setLoading(false)
     })
   }, [])
@@ -344,16 +347,46 @@ export default function Dashboard() {
         </div>
       </Link>
 
+      {/* Coaching Profile card */}
+      {(() => {
+        const daysOld = coachingProfile?.created_at
+          ? Math.floor((new Date() - new Date(coachingProfile.created_at)) / (1000 * 60 * 60 * 24))
+          : null
+        const stale = daysOld !== null && daysOld > 28
+        return (
+          <Link to="/context" className={`block border rounded-2xl px-4 py-3.5 transition-colors ${
+            stale
+              ? 'bg-amber-900/30 border-amber-700/50 hover:bg-amber-900/40'
+              : coachingProfile?.active
+              ? 'bg-pool-800 border-pool-700 hover:bg-pool-700'
+              : 'bg-pool-800/60 border-dashed border-pool-600 hover:bg-pool-800'
+          }`}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-pool-200">Coaching Profile</p>
+                <p className="text-xs text-pool-500 mt-0.5">
+                  {!coachingProfile?.active
+                    ? 'Not set up yet — tap to build'
+                    : stale
+                    ? `Last updated ${daysOld}d ago — worth refreshing`
+                    : `${coachingProfile.title} · ${daysOld}d ago`}
+                </p>
+              </div>
+              <span className={`text-lg ${stale ? 'text-amber-400' : 'text-pool-500'}`}>
+                {!coachingProfile?.active ? '+' : stale ? '↻' : '›'}
+              </span>
+            </div>
+          </Link>
+        )
+      })()}
+
       {/* Utility links */}
-      <div className="grid grid-cols-3 gap-2 pt-1">
+      <div className="grid grid-cols-2 gap-2 pt-1">
         <Link to="/import" className="bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-xl py-3 text-center text-xs text-pool-400 font-medium transition-colors">
           Import
         </Link>
         <Link to="/schedule" className="bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-xl py-3 text-center text-xs text-pool-400 font-medium transition-colors">
           Schedule
-        </Link>
-        <Link to="/context" className="bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-xl py-3 text-center text-xs text-pool-400 font-medium transition-colors">
-          AI Context
         </Link>
       </div>
 

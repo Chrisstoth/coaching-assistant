@@ -9,19 +9,30 @@ from backend.services.claude_service import get_client, MODEL
 
 router = APIRouter()
 
-SYSTEM_PROMPT = """You are an experienced swimming performance coach helping a fellow coach articulate and capture their coaching context.
+SYSTEM_PROMPT = """You are an experienced swimming performance coach helping a fellow coach articulate and capture their coaching context and style.
 
-Your role is to ask thoughtful questions and listen carefully to understand:
-- Their coaching philosophy and values (how they approach athlete development, what they prioritise)
-- Where their squad currently is (fitness levels, technique, cohesion, strengths, gaps)
+Your role is to ask thoughtful questions across two areas:
+
+**Area 1 — Coaching philosophy and current state:**
+- Their philosophy and values: how they approach athlete development, what they prioritise long-term
+- Where their squad currently is: fitness, technique, cohesion, key individuals, gaps or challenges
 - Season targets and key competitions they're building towards
 - What the current training block focus is and why
 
-Ask one or two questions at a time — don't overwhelm. Probe deeper when answers are vague. Be conversational, not clinical.
+**Area 2 — How they actually coach (session style and preferences):**
+- How they typically structure a session: warm-up style, main set format, cool-down, typical duration
+- Preferred set formats: do they lean towards longer continuous work or shorter reps? Ladders? Descending sets? What does a typical main set look like?
+- What Group 1 / Group 2 / Group 3 means to them: how they differentiate load and expectation between groups
+- Their intensity/effort terminology: what do terms like "aerobic", "threshold", "VO2", "speed" actually mean in their sessions (effort level, HR zone, pace target, feel-based)?
+- How they prefer to communicate intensity to swimmers: pace targets, HR, RPE, feel-based cues?
+- Energy system balance: how much aerobic vs threshold vs speed work in a typical week?
+- Any preferred drills, sets, or structures they come back to repeatedly
 
-When you have enough to form a rich picture, say something like "I think I have a good understanding now — want me to synthesise this into a coaching context summary?"
+Ask one or two questions at a time — don't overwhelm. Cover both areas across the conversation. Probe deeper when answers are vague. Be conversational, not clinical.
 
-You're building a document that will be used as context for AI-powered coaching decisions, so the richer and more specific the picture, the better."""
+When you have a rich picture across both areas, say "I think I have a good understanding now — want me to synthesise this into a coaching context summary?"
+
+This document will be used as context for all AI-powered coaching decisions including writing sessions, reviewing training, and profiling swimmers — so the more specific the better."""
 
 
 def _get_pending_conversation(db: DBSession):
@@ -161,10 +172,10 @@ def finalise(body: dict = Body(...), db: DBSession = Depends(get_db)):
 
     synthesis_prompt = f"""Based on the conversation below, write a rich coaching context document.
 
-Structure it as follows (write in prose, not bullet points — this will be used as AI context):
+Structure it as follows (write in prose, not bullet points — this will be used as AI context for writing sessions, reviewing training, and profiling swimmers):
 
 **Coaching Philosophy & Ethos**
-[How the coach thinks about athlete development, what they value, how they approach coaching]
+[How the coach thinks about athlete development, what they value, how they approach coaching, what they prioritise long-term]
 
 **Squad State Right Now**
 [Where the group currently is — fitness, technique, cohesion, key individuals, gaps or challenges]
@@ -174,6 +185,12 @@ Structure it as follows (write in prose, not bullet points — this will be used
 
 **Current Training Block Focus**
 [What they're training right now, why, and what adaptation they're seeking]
+
+**Session Style & Preferences**
+[How they structure sessions, preferred set formats, typical warm-up/cool-down approach, whether they lean towards volume or intensity, any signature sets or structures they return to. What Group 1/2/3 means to them. How they differentiate load across the squad.]
+
+**Intensity & Terminology**
+[What their intensity labels actually mean: what "aerobic", "threshold", "VO2", "speed" looks like in their sessions — pace, HR, effort, feel-based cues. How they communicate intensity to swimmers. Typical energy system balance across a training week.]
 
 **Key Coaching Priorities**
 [The 2-3 most important things the coach is focused on right now]
@@ -236,12 +253,22 @@ def _profile_out(p: models.CoachingProfile, full: bool = False) -> dict:
         "created_at": p.created_at,
     }
     if full:
+        def _extract(text, heading):
+            import re
+            if not text:
+                return None
+            pattern = rf"\*\*{re.escape(heading)}\*\*\s*(.*?)(?=\*\*|\Z)"
+            match = re.search(pattern, text, re.DOTALL)
+            return match.group(1).strip() if match else None
+
         out.update({
             "summary": p.summary,
             "ethos": p.ethos,
             "squad_state": p.squad_state,
             "targets": p.targets,
             "current_focus": p.current_focus,
+            "session_style": _extract(p.summary, "Session Style & Preferences"),
+            "intensity_terminology": _extract(p.summary, "Intensity & Terminology"),
         })
     return out
 
