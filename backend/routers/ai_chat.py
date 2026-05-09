@@ -174,12 +174,14 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     )
 
     # Tool-calling loop — max 5 iterations to prevent runaway
+    tools_called = set()
     for _ in range(5):
         if response.stop_reason != "tool_use":
             break
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         tool_results = []
         for tu in tool_uses:
+            tools_called.add(tu.name)
             result = execute_tool(tu.name, tu.input, db)
             tool_results.append({
                 "type": "tool_result",
@@ -202,24 +204,31 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 
-    # Classify intent across the full conversation to suggest a save action
-    all_mentioned = _all_mentioned_swimmers(messages, db)
-    intent = classify_intent(messages + [{"role": "assistant", "content": reply}], all_mentioned, db)
-
-    full_convo = "\n".join(
-        f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
-        for m in messages[-10:]
-    ) + f"\nAI: {reply}"
-
-    # Auto-extract and save benchmarks/targets if the topic was detected
+    # Secondary operations — none of these should crash the endpoint after reply is saved
+    WRITE_TOOLS = {"update_swimmer_status", "add_swimmer_observation"}
+    already_handled = tools_called & WRITE_TOOLS
+    intent = {"intent": "general", "suggested_action": None}
     saved_benchmarks = []
-    if 'benchmark' in topics and all_mentioned:
-        saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
-
-    # Auto-save coaching intent when intent is confirmed at high confidence
     saved_intents = []
-    if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high" and all_mentioned:
-        saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+    try:
+        all_mentioned = _all_mentioned_swimmers(messages, db)
+        intent = classify_intent(messages + [{"role": "assistant", "content": reply}], all_mentioned, db)
+
+        if already_handled and intent.get("intent") in ("status_change", "coaching_intent"):
+            intent["suggested_action"] = None
+
+        full_convo = "\n".join(
+            f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
+            for m in messages[-10:]
+        ) + f"\nAI: {reply}"
+
+        if 'benchmark' in topics and all_mentioned:
+            saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
+
+        if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high" and all_mentioned:
+            saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+    except Exception:
+        pass
 
     return {
         "reply": reply,
@@ -409,12 +418,14 @@ async def send_message_with_image(
     )
 
     # Tool-calling loop — max 5 iterations
+    tools_called_img = set()
     for _ in range(5):
         if response.stop_reason != "tool_use":
             break
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         tool_results = []
         for tu in tool_uses:
+            tools_called_img.add(tu.name)
             result = execute_tool(tu.name, tu.input, db)
             tool_results.append({
                 "type": "tool_result",
@@ -437,24 +448,29 @@ async def send_message_with_image(
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 
-    # Classify intent + extract benchmarks/intents from image messages too
-    all_mentioned = _all_mentioned_swimmers(
-        [{"role": "user", "content": text}], db
-    )
-    intent = classify_intent(
-        history + [{"role": "user", "content": text}, {"role": "assistant", "content": reply}],
-        all_mentioned, db,
-    )
-
-    full_convo = "\n".join(f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content'] if isinstance(m['content'], str) else text}" for m in history[-8:]) + f"\nCoach: {text}\nAI: {reply}"
+    # Secondary operations — safe, cannot crash the endpoint after reply is saved
     topics = detect_topics(text, history[-6:])
+    already_handled_img = tools_called_img & {"update_swimmer_status", "add_swimmer_observation"}
+    intent = {"intent": "general", "suggested_action": None}
     saved_benchmarks = []
     saved_intents = []
-    if all_mentioned:
-        if 'benchmark' in topics:
-            saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
-        if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high":
-            saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+    try:
+        all_mentioned = _all_mentioned_swimmers([{"role": "user", "content": text}], db)
+        intent = classify_intent(
+            history + [{"role": "user", "content": text}, {"role": "assistant", "content": reply}],
+            all_mentioned, db,
+        )
+        if already_handled_img and intent.get("intent") in ("status_change", "coaching_intent"):
+            intent["suggested_action"] = None
+
+        full_convo = "\n".join(f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content'] if isinstance(m['content'], str) else text}" for m in history[-8:]) + f"\nCoach: {text}\nAI: {reply}"
+        if all_mentioned:
+            if 'benchmark' in topics:
+                saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
+            if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high":
+                saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+    except Exception:
+        pass
 
     return {
         "reply": reply,
