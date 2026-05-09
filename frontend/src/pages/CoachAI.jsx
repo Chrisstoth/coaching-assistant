@@ -2,61 +2,51 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
-function useSpeechRecognition(onResult) {
-  const [listening, setListening] = useState(false)
+function useWhisperVoice(onResult) {
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
   const [error, setError] = useState(null)
-  const recRef = useRef(null)
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-  const supported = Boolean(SR)
+  const recorderRef = useRef(null)
+  const chunksRef = useRef([])
+  const supported = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
 
   const start = useCallback(async () => {
-    if (!supported || listening) return
+    if (recording || transcribing) return
     setError(null)
-    if (navigator.mediaDevices?.getUserMedia) {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        stream.getTracks().forEach(t => t.stop())
-      } catch (e) {
-        setError(e.name === 'NotAllowedError'
-          ? 'Microphone blocked — tap the lock icon in your address bar to allow it.'
-          : `Microphone unavailable: ${e.message}`)
-        return
-      }
-    }
-    const rec = new SR()
-    rec.continuous = true
-    rec.interimResults = false
-    rec.lang = 'en-US'
-    rec.onresult = (e) => {
-      const transcript = Array.from(e.results)
-        .filter(r => r.isFinal)
-        .map(r => r[0].transcript)
-        .join(' ')
-        .trim()
-      if (transcript) onResult(transcript)
-    }
-    rec.onend = () => setListening(false)
-    rec.onerror = (e) => {
-      setListening(false)
-      if (e.error !== 'no-speech') setError(`Mic error: ${e.error}`)
-    }
     try {
-      rec.start()
-      recRef.current = rec
-      setListening(true)
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
+      const recorder = new MediaRecorder(stream, { mimeType })
+      chunksRef.current = []
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(chunksRef.current, { type: mimeType })
+        setTranscribing(true)
+        try {
+          const result = await api.transcribeAudio(blob)
+          if (result?.text) onResult(result.text)
+        } catch {
+          setError('Transcription failed — check your connection.')
+        }
+        setTranscribing(false)
+      }
+      recorder.start()
+      recorderRef.current = recorder
+      setRecording(true)
     } catch (e) {
-      setError(`Could not start: ${e.message}`)
+      setError(e.name === 'NotAllowedError'
+        ? 'Microphone blocked — tap the lock icon in your address bar to allow it.'
+        : `Microphone unavailable: ${e.message}`)
     }
-  }, [listening, supported, onResult])
+  }, [recording, transcribing, onResult])
 
   const stop = useCallback(() => {
-    recRef.current?.stop()
-    setListening(false)
+    if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
+    setRecording(false)
   }, [])
 
-  const toggle = start
-
-  return { listening, supported, toggle, stop, error, clearError: () => setError(null) }
+  return { recording, transcribing, supported, start, stop, error, clearError: () => setError(null) }
 }
 
 const STARTERS = [
@@ -77,6 +67,7 @@ const INTENT_LABELS = {
   session_plan: { label: 'session plan', colour: 'amber' },
   meet_prep: { label: 'session plan', colour: 'amber' },
   season_plan: { label: 'season plan', colour: 'teal' },
+  coaching_intent: { label: 'training intent', colour: 'teal' },
 }
 
 function getDefaultDates() {
@@ -122,12 +113,15 @@ export default function CoachAI() {
   const [pinSaved, setPinSaved] = useState(false)
 
   const [attachedImage, setAttachedImage] = useState(null) // { file, preview }
+  const [savedBenchmarksToast, setSavedBenchmarksToast] = useState(null) // [{swimmer_name, label}, ...]
+  const [savedIntentsToast, setSavedIntentsToast] = useState(null) // [{swimmer_name, label}, ...]
+  const [speakingId, setSpeakingId] = useState(null)
   const fileInputRef = useRef(null)
 
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
 
-  const { listening, supported: voiceSupported, toggle: toggleVoice, stop: stopVoice, error: voiceError, clearError: clearVoiceError } = useSpeechRecognition(
+  const { recording, transcribing, supported: voiceSupported, start: startVoice, stop: stopVoice, error: voiceError, clearError: clearVoiceError } = useWhisperVoice(
     useCallback((transcript) => {
       setInput(prev => prev ? `${prev} ${transcript}` : transcript)
     }, [])
@@ -208,6 +202,14 @@ export default function CoachAI() {
       setLastInjected(res.context_injected || [])
       setLastTopics(res.topics_detected || [])
       setMessages(prev => [...prev, { role: 'assistant', message: res.reply, id: Date.now() + 1 }])
+      if (res.saved_benchmarks?.length > 0) {
+        setSavedBenchmarksToast(res.saved_benchmarks)
+        setTimeout(() => setSavedBenchmarksToast(null), 5000)
+      }
+      if (res.saved_intents?.length > 0) {
+        setSavedIntentsToast(res.saved_intents)
+        setTimeout(() => setSavedIntentsToast(null), 7000)
+      }
 
       // Auto-trigger register card if register topic detected
       if ((res.topics_detected || []).includes('register')) {
@@ -284,8 +286,23 @@ export default function CoachAI() {
     setActionResult(null)
   }
 
+  const speakMessage = (id, text) => {
+    window.speechSynthesis.cancel()
+    if (speakingId === id) { setSpeakingId(null); return }
+    const plainText = text.replace(/[*_`#>]/g, '').replace(/\n+/g, ' ').trim()
+    const utt = new SpeechSynthesisUtterance(plainText)
+    utt.lang = 'en-GB'
+    utt.rate = 1.05
+    utt.onend = () => setSpeakingId(null)
+    utt.onerror = () => setSpeakingId(null)
+    setSpeakingId(id)
+    window.speechSynthesis.speak(utt)
+  }
+
   const clear = async () => {
     if (!window.confirm('Clear this conversation? This cannot be undone.')) return
+    window.speechSynthesis.cancel()
+    setSpeakingId(null)
     await api.clearAIChat(activeThreadId)
     setMessages([])
     setSuggestedAction(null)
@@ -393,6 +410,38 @@ export default function CoachAI() {
         </div>
       </div>
 
+      {/* Coaching intent saved toast */}
+      {savedIntentsToast && (
+        <div className="mx-4 mt-2 bg-teal-900/60 border border-teal-700/50 rounded-xl px-3 py-2.5 flex items-start gap-2">
+          <span className="text-teal-300 text-base mt-0.5">🎯</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-teal-200">Training intent saved to profile</p>
+            <p className="text-xs text-teal-300 mt-0.5 leading-relaxed">
+              {savedIntentsToast.map((i, idx) => (
+                <span key={idx}>{idx > 0 ? ' · ' : ''}{i.swimmer_name}: {i.label}</span>
+              ))}
+            </p>
+          </div>
+          <button onClick={() => setSavedIntentsToast(null)} className="text-teal-500 hover:text-teal-300 text-sm shrink-0">✕</button>
+        </div>
+      )}
+
+      {/* Benchmark saved toast */}
+      {savedBenchmarksToast && (
+        <div className="mx-4 mt-2 bg-indigo-900/60 border border-indigo-700/50 rounded-xl px-3 py-2.5 flex items-start gap-2">
+          <span className="text-indigo-300 text-base mt-0.5">📌</span>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-indigo-200">Benchmarks saved</p>
+            <p className="text-xs text-indigo-300 mt-0.5 leading-relaxed">
+              {savedBenchmarksToast.map((b, i) => (
+                <span key={i}>{i > 0 ? ' · ' : ''}{b.swimmer_name}: {b.label}</span>
+              ))}
+            </p>
+          </div>
+          <button onClick={() => setSavedBenchmarksToast(null)} className="text-indigo-500 hover:text-indigo-300 text-sm shrink-0">✕</button>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
 
@@ -418,7 +467,7 @@ export default function CoachAI() {
         )}
 
         {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
             <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed space-y-2 ${
               m.role === 'user'
                 ? 'bg-accent-700 text-white rounded-br-sm'
@@ -430,6 +479,25 @@ export default function CoachAI() {
               <MessageContent text={m.role === 'user' && m.message.startsWith('[Photo attached] ')
                 ? m.message.replace('[Photo attached] ', '').trim() || 'Photo attached'
                 : m.message} />
+              {m.role === 'assistant' && (
+                <button
+                  onClick={() => speakMessage(m.id, m.message)}
+                  className={`mt-1 flex items-center gap-1 text-xs transition-colors ${
+                    speakingId === m.id ? 'text-accent-400' : 'text-pool-600 hover:text-pool-400'
+                  }`}
+                  aria-label={speakingId === m.id ? 'Stop speaking' : 'Listen'}
+                >
+                  {speakingId === m.id ? (
+                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                      <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
+                    </svg>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -591,13 +659,13 @@ export default function CoachAI() {
           </div>
         )}
         {/* Single container — ChatGPT style */}
-        <div className={`flex flex-col bg-pool-700 border rounded-2xl transition-colors ${listening ? 'border-red-500' : 'border-pool-600 focus-within:border-accent-500'}`}>
+        <div className={`flex flex-col bg-pool-700 border rounded-2xl transition-colors ${recording ? 'border-red-500' : transcribing ? 'border-yellow-500' : 'border-pool-600 focus-within:border-accent-500'}`}>
           <textarea
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            placeholder={listening ? 'Listening…' : 'Ask Deckxtra…'}
+            placeholder={recording ? 'Recording…' : transcribing ? 'Transcribing…' : 'Ask Deckxtra…'}
             rows={3}
             className="bg-transparent px-4 pt-3 pb-1 text-sm focus:outline-none resize-none w-full"
           />
@@ -617,17 +685,29 @@ export default function CoachAI() {
               {/* Mic */}
               {voiceSupported && (
                 <button
-                  onMouseDown={toggleVoice}
+                  onMouseDown={startVoice}
                   onMouseUp={stopVoice}
                   onMouseLeave={stopVoice}
-                  onTouchStart={(e) => { e.preventDefault(); toggleVoice() }}
+                  onTouchStart={(e) => { e.preventDefault(); startVoice() }}
                   onTouchEnd={(e) => { e.preventDefault(); stopVoice() }}
-                  className={`p-2 rounded-lg transition-all select-none ${listening ? 'text-red-400 animate-pulse' : 'text-pool-500 hover:text-pool-300'}`}
-                  aria-label={listening ? 'Release to stop' : 'Hold to speak'}
+                  disabled={transcribing}
+                  className={`p-2 rounded-lg transition-all select-none ${
+                    recording ? 'text-red-400 animate-pulse' :
+                    transcribing ? 'text-yellow-400 animate-pulse' :
+                    'text-pool-500 hover:text-pool-300'
+                  }`}
+                  aria-label={recording ? 'Release to send' : transcribing ? 'Transcribing…' : 'Hold to speak'}
                 >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
-                  </svg>
+                  {transcribing ? (
+                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                    </svg>
+                  )}
                 </button>
               )}
             </div>

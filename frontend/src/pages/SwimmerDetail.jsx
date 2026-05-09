@@ -62,6 +62,14 @@ export default function SwimmerDetail() {
   const [raceObs, setRaceObs] = useState([])
   const [newMeetObs, setNewMeetObs] = useState({ date: '', event: '', content: '' })
   const [addingMeetObs, setAddingMeetObs] = useState(false)
+  const [benchmarks, setBenchmarks] = useState([])
+  const [targets, setTargets] = useState([])
+  const [showBenchmarkForm, setShowBenchmarkForm] = useState(false)
+  const [benchmarkForm, setBenchmarkForm] = useState({ distance: 100, stroke: 'free', effort: 'max', time_seconds: '', date: new Date().toISOString().split('T')[0], notes: '' })
+  const [savingBenchmark, setSavingBenchmark] = useState(false)
+  const [showTargetForm, setShowTargetForm] = useState(false)
+  const [targetForm, setTargetForm] = useState({ label: '', description: '', distance: '', stroke: '', effort: '', target_time_seconds: '', deadline: '' })
+  const [savingTarget, setSavingTarget] = useState(false)
 
   useEffect(() => {
     api.getSwimmer(id).then((s) => {
@@ -89,6 +97,8 @@ export default function SwimmerDetail() {
       api.getTechnicalProfiles(id).then(setTechnicalProfiles)
       api.getPerformanceAnalyses(id).then(setPerfAnalyses)
       api.getAttendanceStats(id).then(setAttendanceStats).catch(() => {})
+      api.getCurrentBenchmarks(id).then(setBenchmarks).catch(() => {})
+      api.getTargets(id).then(setTargets).catch(() => {})
     }
     if (tab === 'Context') {
       api.getSwimmerContext(id).then(setSwimmerContext)
@@ -666,6 +676,188 @@ export default function SwimmerDetail() {
                     )}
                   </div>
                 </>
+              )}
+            </section>
+
+            {/* Training Benchmarks & Targets */}
+            <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+              <div className="flex justify-between items-center">
+                <h3 className="font-semibold text-sm text-indigo-400">Training Benchmarks</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setShowTargetForm(v => !v)}
+                    className="text-xs text-pool-400 hover:text-pool-200"
+                  >+ target</button>
+                  <button
+                    onClick={() => setShowBenchmarkForm(v => !v)}
+                    className="text-xs text-indigo-400 hover:text-indigo-200"
+                  >+ log time</button>
+                </div>
+              </div>
+
+              {/* Add benchmark form */}
+              {showBenchmarkForm && (
+                <div className="bg-pool-700/50 rounded-xl p-3 space-y-2">
+                  <p className="text-xs text-pool-400 font-semibold">Log a benchmark time</p>
+                  <div className="grid grid-cols-3 gap-2">
+                    <select value={benchmarkForm.distance} onChange={e => setBenchmarkForm(p => ({...p, distance: Number(e.target.value)}))}
+                      className="bg-pool-700 rounded-lg px-2 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none">
+                      {[25,50,100,200,400].map(d => <option key={d} value={d}>{d}m</option>)}
+                    </select>
+                    <select value={benchmarkForm.stroke} onChange={e => setBenchmarkForm(p => ({...p, stroke: e.target.value}))}
+                      className="bg-pool-700 rounded-lg px-2 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none">
+                      {['free','back','breast','fly','IM'].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                    <select value={benchmarkForm.effort} onChange={e => setBenchmarkForm(p => ({...p, effort: e.target.value}))}
+                      className="bg-pool-700 rounded-lg px-2 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none">
+                      {['max','threshold','aerobic'].map(e => <option key={e} value={e}>{e}</option>)}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="number" step="0.01" placeholder="Time (seconds)" value={benchmarkForm.time_seconds}
+                      onChange={e => setBenchmarkForm(p => ({...p, time_seconds: e.target.value}))}
+                      className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                    <input type="date" value={benchmarkForm.date}
+                      onChange={e => setBenchmarkForm(p => ({...p, date: e.target.value}))}
+                      className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                  </div>
+                  <input placeholder="Notes (optional)" value={benchmarkForm.notes}
+                    onChange={e => setBenchmarkForm(p => ({...p, notes: e.target.value}))}
+                    className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowBenchmarkForm(false)} className="flex-1 py-2 text-sm text-pool-400">Cancel</button>
+                    <button
+                      disabled={savingBenchmark || !benchmarkForm.time_seconds}
+                      onClick={async () => {
+                        setSavingBenchmark(true)
+                        try {
+                          await api.logBenchmark({ swimmer_id: Number(id), ...benchmarkForm, time_seconds: Number(benchmarkForm.time_seconds) })
+                          const updated = await api.getCurrentBenchmarks(id)
+                          setBenchmarks(updated)
+                          setShowBenchmarkForm(false)
+                          setBenchmarkForm({ distance: 100, stroke: 'free', effort: 'max', time_seconds: '', date: new Date().toISOString().split('T')[0], notes: '' })
+                        } catch(e) { alert(e.message) }
+                        setSavingBenchmark(false)
+                      }}
+                      className="flex-1 bg-indigo-700 rounded-lg py-2 text-sm font-semibold disabled:opacity-40"
+                    >{savingBenchmark ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Add target form */}
+              {showTargetForm && (
+                <div className="bg-pool-700/50 rounded-xl p-3 space-y-2">
+                  <p className="text-xs text-pool-400 font-semibold">Set a target</p>
+                  <input placeholder="Label (e.g. Sub-60 100 free)" value={targetForm.label}
+                    onChange={e => setTargetForm(p => ({...p, label: e.target.value}))}
+                    className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                  <input placeholder="Description (optional)" value={targetForm.description}
+                    onChange={e => setTargetForm(p => ({...p, description: e.target.value}))}
+                    className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="number" step="0.01" placeholder="Target time (s, optional)" value={targetForm.target_time_seconds}
+                      onChange={e => setTargetForm(p => ({...p, target_time_seconds: e.target.value}))}
+                      className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                    <input type="date" placeholder="Deadline" value={targetForm.deadline}
+                      onChange={e => setTargetForm(p => ({...p, deadline: e.target.value}))}
+                      className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setShowTargetForm(false)} className="flex-1 py-2 text-sm text-pool-400">Cancel</button>
+                    <button
+                      disabled={savingTarget || !targetForm.label.trim()}
+                      onClick={async () => {
+                        setSavingTarget(true)
+                        try {
+                          await api.createTarget({
+                            swimmer_id: Number(id),
+                            label: targetForm.label,
+                            description: targetForm.description || null,
+                            target_time_seconds: targetForm.target_time_seconds ? Number(targetForm.target_time_seconds) : null,
+                            deadline: targetForm.deadline || null,
+                          })
+                          const updated = await api.getTargets(id)
+                          setTargets(updated)
+                          setShowTargetForm(false)
+                          setTargetForm({ label: '', description: '', distance: '', stroke: '', effort: '', target_time_seconds: '', deadline: '' })
+                        } catch(e) { alert(e.message) }
+                        setSavingTarget(false)
+                      }}
+                      className="flex-1 bg-indigo-700 rounded-lg py-2 text-sm font-semibold disabled:opacity-40"
+                    >{savingTarget ? 'Saving…' : 'Save'}</button>
+                  </div>
+                </div>
+              )}
+
+              {/* Benchmarks list */}
+              {benchmarks.length === 0 && targets.length === 0 ? (
+                <p className="text-pool-400 text-xs">No benchmarks logged yet. Use AI Chat to log times, or tap "+ log time" above.</p>
+              ) : (
+                <div className="space-y-2">
+                  {benchmarks.length > 0 && (
+                    <div className="space-y-1.5">
+                      <p className="text-xs text-pool-500 uppercase tracking-wide">Current benchmarks</p>
+                      {benchmarks.map(b => {
+                        const mins = Math.floor(b.time_seconds / 60)
+                        const secs = (b.time_seconds % 60).toFixed(2).padStart(5, '0')
+                        const display = mins > 0 ? `${mins}:${secs}` : `${Number(b.time_seconds).toFixed(2)}s`
+                        return (
+                          <div key={b.id} className="flex items-center justify-between bg-pool-700/40 rounded-lg px-3 py-2">
+                            <div>
+                              <span className="text-sm font-medium">{b.distance}m {b.stroke}</span>
+                              <span className="text-xs text-pool-400 ml-2 capitalize">{b.effort}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-sm font-mono text-indigo-300">{display}</span>
+                              <p className="text-xs text-pool-500">{b.date}</p>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {targets.length > 0 && (
+                    <div className="space-y-1.5 pt-1">
+                      <p className="text-xs text-pool-500 uppercase tracking-wide">Targets</p>
+                      {targets.map(t => (
+                        <div key={t.id} className={`flex items-start justify-between rounded-lg px-3 py-2 ${t.achieved ? 'bg-green-900/20' : 'bg-pool-700/40'}`}>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-sm font-medium ${t.achieved ? 'line-through text-pool-400' : ''}`}>{t.label}</p>
+                            {t.description && <p className="text-xs text-pool-400">{t.description}</p>}
+                            {t.deadline && <p className="text-xs text-pool-500">By {t.deadline}</p>}
+                          </div>
+                          <div className="flex items-center gap-2 ml-2 shrink-0">
+                            {t.target_time_seconds && (
+                              <span className="text-xs font-mono text-indigo-300">
+                                {Math.floor(t.target_time_seconds / 60) > 0
+                                  ? `${Math.floor(t.target_time_seconds / 60)}:${(t.target_time_seconds % 60).toFixed(2).padStart(5, '0')}`
+                                  : `${Number(t.target_time_seconds).toFixed(2)}s`}
+                              </span>
+                            )}
+                            {!t.achieved && (
+                              <button
+                                onClick={async () => {
+                                  await api.updateTarget(t.id, { achieved: true, achieved_date: new Date().toISOString().split('T')[0] })
+                                  setTargets(prev => prev.map(x => x.id === t.id ? {...x, achieved: true} : x))
+                                }}
+                                className="text-xs text-green-400 border border-green-800 rounded-full px-2 py-0.5"
+                              >✓</button>
+                            )}
+                            <button
+                              onClick={async () => {
+                                await api.deleteTarget(t.id)
+                                setTargets(prev => prev.filter(x => x.id !== t.id))
+                              }}
+                              className="text-xs text-pool-600 hover:text-red-400"
+                            >✕</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               )}
             </section>
 

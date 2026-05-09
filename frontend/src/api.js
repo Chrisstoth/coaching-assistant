@@ -171,6 +171,13 @@ export const api = {
     return request('POST', `/meets/${meetId}/combine-extractions`, data)
   },
 
+  // Voice
+  transcribeAudio: (audioBlob) => {
+    const fd = new FormData()
+    fd.append('audio', audioBlob, audioBlob.type?.includes('mp4') ? 'audio.mp4' : 'audio.webm')
+    return request('POST', '/ai-chat/transcribe', fd, true)
+  },
+
   // AI Chat threads
   getAIChatThreads: () => request('GET', '/ai-chat/threads'),
   createAIChatThread: (name) => request('POST', '/ai-chat/threads', { name }),
@@ -202,6 +209,16 @@ export const api = {
     if (threadId != null) fd.append('thread_id', String(threadId))
     return request('POST', '/ai-chat/messages-with-image', fd, true)
   },
+
+  // Benchmarks & targets
+  logBenchmark: (data) => request('POST', '/benchmarks/benchmarks', data),
+  getBenchmarks: (swimmerId) => request('GET', `/benchmarks/benchmarks/${swimmerId}`),
+  getCurrentBenchmarks: (swimmerId) => request('GET', `/benchmarks/benchmarks/${swimmerId}/current`),
+  deleteBenchmark: (id) => request('DELETE', `/benchmarks/benchmarks/${id}`),
+  createTarget: (data) => request('POST', '/benchmarks/targets', data),
+  getTargets: (swimmerId) => request('GET', `/benchmarks/targets/${swimmerId}`),
+  updateTarget: (id, data) => request('PATCH', `/benchmarks/targets/${id}`, data),
+  deleteTarget: (id) => request('DELETE', `/benchmarks/targets/${id}`),
 
   // Coaching context
   getCoachingProfiles: () => request('GET', '/coaching-context/profiles'),

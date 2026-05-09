@@ -9,6 +9,7 @@ from backend.services.claude_service import (
     get_client, MODEL, get_system_prompt, get_swimmer_full_context,
     build_meets_context, build_periodization_context, build_session_writing_context,
     detect_topics, extract_slot_hint, classify_intent, _strip_json,
+    extract_benchmarks_from_conversation, extract_coaching_intent,
 )
 
 router = APIRouter()
@@ -152,7 +153,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         slot_hint = extract_slot_hint(text)
         session_ctx = build_session_writing_context(db, slot_hint)
         if session_ctx:
-            system += f"\n\n---\nSESSION WRITING MODE — you are helping design a training session. Use the slot and attendee information below to recommend group assignments and session structure. Check the design against recent training history and periodization focus.\n{session_ctx}"
+            system += f"\n\n---\nSESSION MODE — you are either helping design a session or reviewing one the coach has proposed. Either way, use the context below.\n\nIf the coach is proposing/describing their own session: act as a reviewer. Check it against the energy system distribution, stated intents, and individual swimmer needs listed below. Flag genuine concerns — patterns, gaps, mismatches with stated goals — but don't manufacture issues. One well-placed question or observation is better than a list.\n\nIf the coach is asking you to generate a session: propose one, but explain the reasoning — why this energy system, why this structure, what it does for these swimmers.\n\n{session_ctx}"
 
     # Inject full profiles for any swimmers mentioned by name in this message
     mentioned_now = _find_mentioned_swimmers(text, db)
@@ -175,6 +176,21 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     all_mentioned = _all_mentioned_swimmers(messages, db)
     intent = classify_intent(messages + [{"role": "assistant", "content": reply}], all_mentioned, db)
 
+    full_convo = "\n".join(
+        f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
+        for m in messages[-10:]
+    ) + f"\nAI: {reply}"
+
+    # Auto-extract and save benchmarks/targets if the topic was detected
+    saved_benchmarks = []
+    if 'benchmark' in topics and all_mentioned:
+        saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
+
+    # Auto-save coaching intent when intent is confirmed at high confidence
+    saved_intents = []
+    if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high" and all_mentioned:
+        saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+
     return {
         "reply": reply,
         "context_injected": [s.name for s in mentioned_now],
@@ -185,6 +201,8 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             "swimmer_id": intent.get("swimmer_id"),
             "swimmer_name": intent.get("swimmer_name"),
         },
+        "saved_benchmarks": saved_benchmarks,
+        "saved_intents": saved_intents,
     }
 
 
@@ -705,6 +723,23 @@ Return only valid JSON."""
         "swimmer_ids": swimmer_ids,
         "swimmer_names": resolved_names,
     }
+
+
+@router.post("/transcribe")
+async def transcribe_audio(audio: UploadFile = File(...)):
+    """Transcribe an audio file using OpenAI Whisper. Returns {text: '...'}."""
+    import io, os
+    import openai as _openai
+
+    audio_bytes = await audio.read()
+    filename = audio.filename or "audio.webm"
+
+    client = _openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    buf = io.BytesIO(audio_bytes)
+    buf.name = filename
+
+    transcript = client.audio.transcriptions.create(model="whisper-1", file=buf)
+    return {"text": transcript.text}
 
 
 @router.delete("/messages")

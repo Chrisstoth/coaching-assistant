@@ -26,7 +26,7 @@ MODEL = "claude-sonnet-4-6"
 # Base system prompt — applied to all AI calls
 # ---------------------------------------------------------------------------
 
-BASE_SYSTEM = """You are an AI assistant built into a private swimming coaching tool used by a single head coach.
+BASE_SYSTEM = """You are a knowledgeable coaching partner built into a private swimming coaching tool used by a single head coach. You function as a second brain — well-read in sports science, grounded in practical coaching, and invested in helping the coach make good decisions.
 
 Your expertise:
 - Swimming physiology: ATP-PC/alactic, glycolytic/lactic, and aerobic/oxidative energy systems; lactate threshold and lactate dynamics; VO2 max; stroke mechanics and efficiency; supercompensation and adaptation windows; tapering
@@ -38,12 +38,14 @@ Your expertise:
 Group-based coaching reality:
 This coach runs one session for the whole squad. All swimmers train together in the same pool at the same time. They are split into groups — typically Group 1 (lead/highest load), Group 2 (main group), Group 3 (modified/reduced load). Individual swimmer needs are addressed through which group they are in and small within-group adjustments, not separate programmes. All recommendations must be practically implementable in this group setting.
 
-How to respond:
-- Be direct and specific. Reference the physiological mechanism or training principle behind each recommendation.
-- When evidence is mixed or unclear, say so honestly. Don't overstate certainty.
-- Prioritise what's actionable at the pool over theoretical ideals.
-- Challenge the coach's assumptions when the evidence supports a different approach.
-- When asked about an article or research, engage with it critically — assess validity, consider how it applies to this specific squad and context.
+How to behave as a coaching partner:
+- Be a thinking partner, not a yes-person. If something the coach says doesn't stack up against theory or the data you have on the squad, say so — clearly but without drama. Don't manufacture conflict, but don't smooth over real concerns either.
+- Think in weeks and blocks, not individual sets. A sprint set on a threshold day isn't automatically wrong — variety is part of good programming. But if a pattern is building (e.g. three weeks of sprint-heavy work when the stated goal is aerobic development) that's worth flagging.
+- When the coach makes a statement about a swimmer ("I think X needs more aerobic work"), cross-reference it against what you know: their physiological profile, recent session history, race goals, attendance pattern. If it aligns, affirm and build on it. If there's a tension, ask a clarifying question or present what the data shows — then let the coach decide.
+- Ask "why" when it helps clarify thinking. Not to challenge for the sake of it, but because half-formed intuitions become better coaching decisions when examined. One focused question is better than a list of concerns.
+- When giving feedback on a session the coach has written or is designing, check: Does the energy system emphasis match the stated periodization goal? Does the rest/work ratio support the intended adaptation? Does the volume suit the swimmers assigned — particularly anyone with load events, low attendance, or a profile that doesn't fit the main group? What's been absent from recent training that this session could address?
+- Reference the physiological mechanism or principle behind each recommendation. If the evidence is mixed or uncertain, say so.
+- Keep responses focused and actionable. If there are multiple concerns, prioritise the most important one rather than listing everything.
 - Use the coaching context provided below to make responses specific to this squad, not generic."""
 
 
@@ -528,7 +530,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
         db.query(models.Session)
         .filter(models.Session.date >= cutoff, models.Session.status != 'cancelled')
         .order_by(models.Session.date.desc())
-        .limit(6)
+        .limit(8)
         .all()
     )
     if recent:
@@ -537,6 +539,83 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
             focus = f" [{s.energy_system_focus}]" if s.energy_system_focus else ""
             intent = f" — {s.coach_intent[:80]}" if s.coach_intent else ""
             lines.append(f"  {s.date} | {s.title or 'Session'}{focus}{intent}")
+
+        # Energy system distribution across those sessions
+        focus_counts: dict = {}
+        for s in recent:
+            f = s.energy_system_focus
+            if f:
+                focus_counts[f] = focus_counts.get(f, 0) + 1
+        if focus_counts:
+            dist = ", ".join(f"{v}x {k}" for k, v in sorted(focus_counts.items(), key=lambda x: -x[1]))
+            lines.append(f"  Distribution: {dist} (of {len(recent)} sessions with focus logged)")
+
+    # Per-swimmer energy system exposure over last 2 weeks
+    # For each expected attendee, count sessions attended by focus type
+    swimmer_ids_in_slots = []
+    for slot in slots[:3]:
+        links = db.query(models.SwimmerSlot).filter(models.SwimmerSlot.pool_slot_id == slot.id).all()
+        for l in links:
+            if l.swimmer_id not in swimmer_ids_in_slots:
+                swimmer_ids_in_slots.append(l.swimmer_id)
+
+    if swimmer_ids_in_slots and recent:
+        session_ids = [s.id for s in recent]
+        lines.append("\nENERGY SYSTEM EXPOSURE (last 2 weeks, per swimmer):")
+        for sid in swimmer_ids_in_slots[:12]:  # cap to avoid prompt bloat
+            swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == sid, models.Swimmer.status == 'active').first()
+            if not swimmer:
+                continue
+            entries = (
+                db.query(models.SessionEntry, models.Session)
+                .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+                .filter(
+                    models.SessionEntry.swimmer_id == sid,
+                    models.SessionEntry.attended == True,
+                    models.SessionEntry.session_id.in_(session_ids),
+                )
+                .all()
+            )
+            if not entries:
+                continue
+            focus_dist: dict = {}
+            for entry, sess in entries:
+                f = sess.energy_system_focus or 'unlogged'
+                focus_dist[f] = focus_dist.get(f, 0) + 1
+
+            dist_str = ", ".join(f"{v}x {k}" for k, v in sorted(focus_dist.items(), key=lambda x: -x[1]))
+
+            # Pull coaching intent notes for this swimmer
+            intent_obs = (
+                db.query(models.SwimmerObservation)
+                .filter(
+                    models.SwimmerObservation.swimmer_id == sid,
+                    models.SwimmerObservation.obs_type == 'coaching_intent',
+                )
+                .order_by(models.SwimmerObservation.date.desc())
+                .limit(2)
+                .all()
+            )
+            intent_str = ""
+            if intent_obs:
+                intent_str = " | STATED INTENT: " + " / ".join(o.content[:80] for o in intent_obs)
+
+            lines.append(f"  {swimmer.name}: {dist_str}{intent_str}")
+
+    # Coaching intent notes (squad-wide or unlinked)
+    squad_intent_obs = (
+        db.query(models.SwimmerObservation)
+        .filter(models.SwimmerObservation.obs_type == 'coaching_intent')
+        .order_by(models.SwimmerObservation.date.desc())
+        .limit(5)
+        .all()
+    )
+    if squad_intent_obs:
+        lines.append("\nRECENT COACHING INTENT NOTES:")
+        for o in squad_intent_obs:
+            swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == o.swimmer_id).first()
+            name = swimmer.name if swimmer else "Squad"
+            lines.append(f"  [{o.date}] {name}: {o.content[:120]}")
 
     # Current periodization focus
     period_ctx = build_periodization_context(db)
@@ -592,7 +671,7 @@ def detect_topics(message: str, history: list) -> set:
     ]):
         topics.add('meet_creation')
 
-    # Session writing — only trigger on the current message (not history) to catch the opening intent
+    # Session writing — trigger on current message for opening intent (generate or review mode)
     if any(k in message.lower() for k in [
         'make a session', 'write a session', 'plan a session', 'design a session',
         'build a session', 'create a session', "let's do a session", "let's plan",
@@ -600,6 +679,11 @@ def detect_topics(message: str, history: list) -> set:
         'session for thursday', 'session for friday', 'session for saturday', 'session for sunday',
         'session for tomorrow', 'session for today', 'monday session', 'tuesday session',
         'wednesday session', 'thursday session', 'friday session', 'saturday session',
+        # review mode — coach describes their session for feedback
+        "i'm thinking", "i was thinking", 'what do you think of this', 'have a look at this',
+        'does this work', 'does this make sense', 'is this okay', 'check this session',
+        'review this', 'thoughts on this session', 'i want to do',
+        'thinking of doing', 'thinking about doing',
     ]):
         topics.add('session_writing')
 
@@ -609,6 +693,23 @@ def detect_topics(message: str, history: list) -> set:
         'who attended', 'attendance for',
     ]):
         topics.add('register')
+
+    if any(k in full for k in [
+        'benchmark', 'aerobic 100', 'aerobic 50', 'aerobic 200', 'max 50', 'max 25',
+        'threshold 100', 'threshold 200', 'holding', 'was hitting', 'was doing',
+        'came in on', 'going on', 'hit a', 'log a time', 'log that', 'note that time',
+        'training time', 'set target', 'new target', 'target for', 'wants to hit',
+        'goal time', 'aim for',
+    ]):
+        topics.add('benchmark')
+
+    if any(k in full for k in [
+        'needs to do more', 'needs more', 'should focus on', 'i think she needs',
+        'i think he needs', 'i think they need', 'we should work on', 'not doing enough',
+        'lacking', 'weak point', 'holding them back', 'i want to focus', 'priority for',
+        'going forward', 'this block', 'next block', 'for the next',
+    ]):
+        topics.add('coaching_intent')
 
     return topics
 
@@ -635,7 +736,7 @@ CONVERSATION:
 
 Return JSON only:
 {{
-  "intent": one of ["biological_profile","race_profile","training_profile","performance_analysis","session_writing","meet_creation","session_plan","meet_prep","season_plan","general"],
+  "intent": one of ["biological_profile","race_profile","training_profile","performance_analysis","session_writing","meet_creation","session_plan","meet_prep","season_plan","coaching_intent","general"],
   "swimmer_name": "first name only, or null if squad-wide discussion",
   "confidence": "high" or "low",
   "suggested_action": "short label e.g. 'Save to Tom\\'s biological profile' or 'Create this session' — or null if general chat or low confidence"
@@ -651,10 +752,12 @@ Rules:
 - session_plan: planning a specific upcoming session or short period (days)
 - meet_prep: preparing a swimmer for a specific upcoming competition
 - season_plan: discussing macro/meso structure, annual planning
+- coaching_intent: coach has stated a training direction or priority for a swimmer (e.g. "needs more aerobic work", "should focus on X this block") and the conversation has examined and refined it — suggested_action should be "Save intent to [swimmer name]'s profile"
 - general: general coaching science, no specific save action warranted
 - Only return high confidence if the conversation has clearly been building something concrete
 - For session_writing, return high confidence once the session structure/groups/sets have been discussed
 - For meet_creation, return high confidence once meet name/date and at least one swimmer's events have been confirmed
+- For coaching_intent, return high confidence only after the intent has been discussed (not just first stated) — there should be some back-and-forth
 - Return null for suggested_action if intent is general or confidence is low"""
 
     response = get_client().messages.create(
@@ -1116,6 +1219,45 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if latest_technical:
         parts.append(f"Technical profile (as of {latest_technical.created_at.date() if latest_technical.created_at else 'unknown'}):\n{json.dumps(latest_technical.data, indent=2)}")
 
+    # Training benchmarks — current best per distance/stroke/effort
+    all_benchmarks = (
+        db.query(models.BenchmarkLog)
+        .filter(models.BenchmarkLog.swimmer_id == swimmer.id)
+        .order_by(models.BenchmarkLog.date.desc())
+        .all()
+    )
+    if all_benchmarks:
+        seen = {}
+        for b in all_benchmarks:
+            key = (b.distance, b.stroke, b.effort)
+            if key not in seen:
+                seen[key] = b
+        bench_lines = [
+            f"  {b.distance}m {b.stroke} ({b.effort}): {_format_time(b.time_seconds)} [{b.date}]"
+            for b in seen.values()
+        ]
+        parts.append("Training benchmarks (current):\n" + "\n".join(bench_lines))
+
+    # Swimmer targets
+    targets = (
+        db.query(models.SwimmerTarget)
+        .filter(models.SwimmerTarget.swimmer_id == swimmer.id, models.SwimmerTarget.achieved == False)
+        .order_by(models.SwimmerTarget.deadline)
+        .all()
+    )
+    if targets:
+        target_lines = []
+        for t in targets:
+            line = f"  {t.label}"
+            if t.target_time_seconds:
+                line += f": {_format_time(t.target_time_seconds)}"
+            if t.deadline:
+                line += f" by {t.deadline}"
+            if t.description:
+                line += f" — {t.description}"
+            target_lines.append(line)
+        parts.append("Active targets:\n" + "\n".join(target_lines))
+
     # Training history narrative (background — previous clubs, gaps, context)
     training_history = (
         db.query(models.TrainingHistoryNarrative)
@@ -1280,6 +1422,182 @@ def _format_time(seconds: float) -> str:
     if mins > 0:
         return f"{mins}:{secs:05.2f}"
     return f"{secs:.2f}"
+
+
+# ---------------------------------------------------------------------------
+# Benchmark extraction from conversation
+# ---------------------------------------------------------------------------
+
+def extract_benchmarks_from_conversation(conversation: str, swimmers: list, db: DBSession) -> list:
+    """
+    Parse a coaching conversation for training benchmark times and targets,
+    then save them to the database. Returns list of saved items for confirmation.
+    """
+    swimmer_list = "\n".join(f"  - {s.name} (id={s.id})" for s in swimmers)
+    today = date.today().isoformat()
+
+    prompt = f"""A coach has been discussing training times. Extract any training benchmark times or targets mentioned.
+
+TODAY: {today}
+
+SWIMMERS IN CONTEXT:
+{swimmer_list}
+
+CONVERSATION:
+{conversation}
+
+Return a JSON array of objects. Each object is either a benchmark log or a target:
+
+For a benchmark (an actual time observed in training):
+{{
+  "type": "benchmark",
+  "swimmer_id": <int>,
+  "distance": <25|50|100|200>,
+  "stroke": <"free"|"back"|"breast"|"fly">,
+  "effort": <"max"|"aerobic"|"threshold">,
+  "time_seconds": <float>,
+  "date": "<YYYY-MM-DD>",
+  "notes": "<optional context>"
+}}
+
+For a target (a goal time set by the coach):
+{{
+  "type": "target",
+  "swimmer_id": <int>,
+  "label": "<short label>",
+  "distance": <int or null>,
+  "stroke": <str or null>,
+  "effort": <str or null>,
+  "target_time_seconds": <float or null>,
+  "deadline": "<YYYY-MM-DD or null>",
+  "description": "<optional context>"
+}}
+
+Only include items clearly stated in the conversation. If nothing to extract, return [].
+Return only the JSON array."""
+
+    try:
+        response = get_client().messages.create(
+            model=MODEL,
+            max_tokens=1024,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = _strip_json(response.content[0].text.strip())
+        items = json.loads(raw)
+    except Exception:
+        return []
+
+    saved = []
+    for item in items:
+        try:
+            if item.get("type") == "benchmark":
+                entry = models.BenchmarkLog(
+                    swimmer_id=item["swimmer_id"],
+                    distance=item["distance"],
+                    stroke=item["stroke"],
+                    effort=item["effort"],
+                    time_seconds=item["time_seconds"],
+                    date=item.get("date", today),
+                    notes=item.get("notes"),
+                    logged_by="ai",
+                )
+                db.add(entry)
+                saved.append({"type": "benchmark", "swimmer_id": item["swimmer_id"],
+                               "label": f"{item['distance']}m {item['stroke']} {item['effort']}: {_format_time(item['time_seconds'])}"})
+            elif item.get("type") == "target":
+                target = models.SwimmerTarget(
+                    swimmer_id=item["swimmer_id"],
+                    label=item["label"],
+                    description=item.get("description"),
+                    distance=item.get("distance"),
+                    stroke=item.get("stroke"),
+                    effort=item.get("effort"),
+                    target_time_seconds=item.get("target_time_seconds"),
+                    deadline=item.get("deadline"),
+                )
+                db.add(target)
+                saved.append({"type": "target", "swimmer_id": item["swimmer_id"],
+                               "label": item["label"]})
+        except Exception:
+            continue
+
+    if saved:
+        db.commit()
+    return saved
+
+
+def extract_coaching_intent(conversation: str, swimmers: list, db: DBSession) -> list:
+    """
+    Extract a coaching intent or training direction discussed and refined in conversation,
+    then save as obs_type='coaching_intent' observations. Returns saved items.
+    """
+    swimmer_list = "\n".join(f"  - {s.name} (id={s.id})" for s in swimmers)
+    today = date.today().isoformat()
+
+    prompt = f"""A coach has been discussing training priorities or directions for specific swimmers.
+Extract any concluded coaching intents — things the coach has decided or is leaning toward as a training priority for a swimmer.
+Only extract if the conversation shows the intent was examined or refined, not just first mentioned.
+
+TODAY: {today}
+
+SWIMMERS IN CONTEXT:
+{swimmer_list}
+
+CONVERSATION:
+{conversation}
+
+Return a JSON array. Each item:
+{{
+  "swimmer_id": <int>,
+  "swimmer_name": "<name>",
+  "intent": "<concise statement of the training direction, e.g. 'Increase aerobic volume over next 4 weeks — more long aerobic sets, fewer sprint-dominant sessions'>",
+  "rationale": "<brief why, from the conversation>"
+}}
+
+Only include intents that were genuinely discussed (not just mentioned once and dropped).
+If nothing clear to extract, return [].
+Return only the JSON array."""
+
+    try:
+        response = get_client().messages.create(
+            model=MODEL,
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = _strip_json(response.content[0].text.strip())
+        items = json.loads(raw)
+    except Exception:
+        return []
+
+    saved = []
+    for item in items:
+        try:
+            swimmer_id = item.get("swimmer_id")
+            intent_text = item.get("intent", "").strip()
+            rationale = item.get("rationale", "").strip()
+            if not swimmer_id or not intent_text:
+                continue
+            content = intent_text
+            if rationale:
+                content += f" — {rationale}"
+            obs = models.SwimmerObservation(
+                swimmer_id=swimmer_id,
+                obs_type="coaching_intent",
+                date=today,
+                content=content,
+            )
+            db.add(obs)
+            saved.append({
+                "swimmer_id": swimmer_id,
+                "swimmer_name": item.get("swimmer_name", ""),
+                "label": intent_text[:80],
+            })
+        except Exception:
+            continue
+
+    if saved:
+        db.commit()
+    return saved
 
 
 # ---------------------------------------------------------------------------

@@ -116,6 +116,8 @@ class Swimmer(Base):
     periodization_plans = relationship("PeriodizationPlan", back_populates="swimmer", cascade="all, delete-orphan")
     analyses = relationship("AIAnalysis", back_populates="swimmer")
     profile_versions = relationship("SwimmerProfileVersion", back_populates="swimmer", cascade="all, delete-orphan")
+    benchmarks = relationship("BenchmarkLog", back_populates="swimmer", cascade="all, delete-orphan")
+    targets = relationship("SwimmerTarget", back_populates="swimmer", cascade="all, delete-orphan")
 
 
 class SwimTime(Base):
@@ -432,6 +434,61 @@ class TrainingHistoryNarrative(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     swimmer = relationship("Swimmer", back_populates="training_histories")
+
+
+class BenchmarkLog(Base):
+    """
+    A logged training benchmark for a swimmer — best effort times at specific
+    distances/strokes/effort levels observed during training. Accumulates over time;
+    the most recent entry per category is the current benchmark.
+    """
+    __tablename__ = "benchmark_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True)
+
+    distance = Column(Integer, nullable=False)       # 25 / 50 / 100 / 200
+    stroke = Column(String, nullable=False)          # free / back / breast / fly
+    effort = Column(String, nullable=False)          # max / aerobic / threshold
+    time_seconds = Column(Float, nullable=False)
+    notes = Column(Text, nullable=True)
+    date = Column(Date, nullable=False)
+
+    logged_by = Column(String, default="coach")     # coach / ai
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    swimmer = relationship("Swimmer", back_populates="benchmarks")
+    session = relationship("Session")
+
+
+class SwimmerTarget(Base):
+    """
+    A coach-set performance target for a swimmer. Can be a benchmark target
+    (e.g. hit 1:04 aerobic 100 free by Christmas) or a freeform goal.
+    Tracked against BenchmarkLog entries over time.
+    """
+    __tablename__ = "swimmer_targets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
+
+    label = Column(String, nullable=False)           # e.g. "Aerobic 100 free target"
+    description = Column(Text, nullable=True)        # freeform context / rationale
+
+    # Optional: link to a specific benchmark category
+    distance = Column(Integer, nullable=True)
+    stroke = Column(String, nullable=True)
+    effort = Column(String, nullable=True)
+    target_time_seconds = Column(Float, nullable=True)
+
+    deadline = Column(Date, nullable=True)
+    achieved = Column(Boolean, default=False)
+    achieved_date = Column(Date, nullable=True)
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    swimmer = relationship("Swimmer", back_populates="targets")
 
 
 class AIAnalysis(Base):
