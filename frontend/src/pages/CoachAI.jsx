@@ -26,8 +26,8 @@ function useWhisperVoice(onResult) {
         try {
           const result = await api.transcribeAudio(blob)
           if (result?.text) onResult(result.text)
-        } catch {
-          setError('Transcription failed — check your connection.')
+        } catch (e) {
+          setError(`Transcription failed: ${e.message}`)
         }
         setTranscribing(false)
       }

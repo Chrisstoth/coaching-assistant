@@ -743,15 +743,28 @@ async def transcribe_audio(audio: UploadFile = File(...)):
     import io, os
     import openai as _openai
 
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not configured on server")
+
     audio_bytes = await audio.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="No audio data received")
+
     filename = audio.filename or "audio.webm"
 
-    client = _openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    buf = io.BytesIO(audio_bytes)
-    buf.name = filename
-
-    transcript = client.audio.transcriptions.create(model="whisper-1", file=buf)
-    return {"text": transcript.text}
+    try:
+        client = _openai.OpenAI(api_key=api_key)
+        buf = io.BytesIO(audio_bytes)
+        buf.name = filename
+        transcript = client.audio.transcriptions.create(model="whisper-1", file=buf)
+        return {"text": transcript.text}
+    except _openai.AuthenticationError:
+        raise HTTPException(status_code=500, detail="Invalid OpenAI API key — check server config")
+    except _openai.RateLimitError:
+        raise HTTPException(status_code=429, detail="OpenAI rate limit reached — try again shortly")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transcription error: {str(e)}")
 
 
 @router.delete("/messages")
