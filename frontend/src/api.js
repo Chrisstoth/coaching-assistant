@@ -1,12 +1,21 @@
 const BASE = '/api'
 
+export function getToken() { return localStorage.getItem('dx_token') }
+export function setToken(t) { localStorage.setItem('dx_token', t) }
+export function clearToken() { localStorage.removeItem('dx_token') }
+
 async function request(method, path, body = null, isFormData = false) {
-  const opts = {
-    method,
-    headers: isFormData ? {} : { 'Content-Type': 'application/json' },
-  }
+  const token = getToken()
+  const headers = isFormData ? {} : { 'Content-Type': 'application/json' }
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  const opts = { method, headers }
   if (body) opts.body = isFormData ? body : JSON.stringify(body)
   const res = await fetch(`${BASE}${path}`, opts)
+  if (res.status === 401) {
+    clearToken()
+    window.location.href = '/login'
+    return
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     const detail = err.detail

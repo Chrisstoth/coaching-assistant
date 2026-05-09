@@ -2,24 +2,87 @@ import React, { useState, useEffect } from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
+import { getToken, setToken } from './api'
 import './index.css'
+
+function LoginScreen({ onLogin }) {
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  const submit = async (e) => {
+    e.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      })
+      if (!res.ok) {
+        setError('Incorrect password')
+        setLoading(false)
+        return
+      }
+      const { token } = await res.json()
+      setToken(token)
+      onLogin()
+    } catch {
+      setError('Could not reach server')
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black flex flex-col items-center justify-center px-8 gap-8">
+      <div className="w-36 h-36 rounded-[28px] overflow-hidden">
+        <img src="/Loadimage.png" alt="Deckxtra" className="w-full h-full object-cover" />
+      </div>
+      <form onSubmit={submit} className="w-full max-w-xs space-y-3">
+        <input
+          type="password"
+          autoComplete="current-password"
+          placeholder="Password"
+          value={password}
+          onChange={e => setPassword(e.target.value)}
+          className="w-full bg-pool-800 border border-pool-600 rounded-xl px-4 py-3 text-sm text-center focus:outline-none focus:border-accent-500"
+        />
+        {error && <p className="text-red-400 text-xs text-center">{error}</p>}
+        <button
+          type="submit"
+          disabled={loading || !password}
+          className="w-full bg-accent-600 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold"
+        >
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </div>
+  )
+}
 
 function Root() {
   const [splash, setSplash] = useState(true)
+  const [authed, setAuthed] = useState(false)
 
   useEffect(() => {
+    if (getToken()) setAuthed(true)
     const t = setTimeout(() => setSplash(false), 1500)
     return () => clearTimeout(t)
   }, [])
 
   if (splash) {
     return (
-      <div className="fixed inset-0 bg-pool-900 flex items-center justify-center">
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
         <div className="w-72 h-72 rounded-[32px] overflow-hidden">
           <img src="/Loadimage.png" alt="Deckxtra" className="w-full h-full object-cover" />
         </div>
       </div>
     )
+  }
+
+  if (!authed) {
+    return <LoginScreen onLogin={() => setAuthed(true)} />
   }
 
   return (
