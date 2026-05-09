@@ -36,6 +36,7 @@ TABLES = [
     "swimmer_observations", "periodization_plans", "ai_analyses",
     "coaching_profiles", "coaching_conversations",
     "ai_threads", "coach_ai_messages", "coaching_notes",
+    "benchmark_logs", "swimmer_targets",
 ]
 
 sqlite_conn = sqlite3.connect(SQLITE_PATH)

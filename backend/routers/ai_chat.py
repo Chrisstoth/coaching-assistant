@@ -380,7 +380,7 @@ async def send_message_with_image(
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 
-    # Classify intent
+    # Classify intent + extract benchmarks/intents from image messages too
     all_mentioned = _all_mentioned_swimmers(
         [{"role": "user", "content": text}], db
     )
@@ -389,16 +389,28 @@ async def send_message_with_image(
         all_mentioned, db,
     )
 
+    full_convo = "\n".join(f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content'] if isinstance(m['content'], str) else text}" for m in history[-8:]) + f"\nCoach: {text}\nAI: {reply}"
+    topics = detect_topics(text, history[-6:])
+    saved_benchmarks = []
+    saved_intents = []
+    if all_mentioned:
+        if 'benchmark' in topics:
+            saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
+        if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high":
+            saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+
     return {
         "reply": reply,
         "context_injected": [],
-        "topics_detected": ["session_writing"],
-        "suggested_action": "Review & create session",
+        "topics_detected": list(topics) or ["session_writing"],
+        "suggested_action": intent.get("suggested_action") or "Review & create session",
         "intent": {
-            "type": "session_writing",
-            "swimmer_id": None,
-            "swimmer_name": None,
+            "type": intent.get("intent") or "session_writing",
+            "swimmer_id": intent.get("swimmer_id"),
+            "swimmer_name": intent.get("swimmer_name"),
         },
+        "saved_benchmarks": saved_benchmarks,
+        "saved_intents": saved_intents,
     }
 
 

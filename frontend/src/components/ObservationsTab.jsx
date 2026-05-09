@@ -11,6 +11,7 @@ const OBS_TYPES = [
   { value: 'recovery',  label: 'Recovery',  colour: 'bg-green-800 text-green-200' },
   { value: 'physical',  label: 'Physical',  colour: 'bg-teal-800 text-teal-200' },
   { value: 'general',   label: 'General',   colour: 'bg-pool-700 text-pool-300' },
+  { value: 'coaching_intent', label: 'Training Intent', colour: 'bg-teal-800 text-teal-200' },
 ]
 
 const typeColour = (t) => OBS_TYPES.find((o) => o.value === t)?.colour || 'bg-pool-700 text-pool-300'

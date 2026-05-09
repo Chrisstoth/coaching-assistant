@@ -1301,6 +1301,7 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
             "race": "Race observations",
             "aerobic": "Aerobic training responses",
             "threshold": "Threshold training responses",
+            "coaching_intent": "Coaching intent / training direction",
             "vo2": "VO2/Hard training responses",
             "speed": "Speed/Sprint responses",
             "recovery": "Recovery observations",
@@ -1491,13 +1492,24 @@ Return only the JSON array."""
     for item in items:
         try:
             if item.get("type") == "benchmark":
+                bdate = item.get("date", today)
+                # Skip if identical benchmark already saved for same date
+                existing = db.query(models.BenchmarkLog).filter(
+                    models.BenchmarkLog.swimmer_id == item["swimmer_id"],
+                    models.BenchmarkLog.distance == item["distance"],
+                    models.BenchmarkLog.stroke == item["stroke"],
+                    models.BenchmarkLog.effort == item["effort"],
+                    models.BenchmarkLog.date == bdate,
+                ).first()
+                if existing:
+                    continue
                 entry = models.BenchmarkLog(
                     swimmer_id=item["swimmer_id"],
                     distance=item["distance"],
                     stroke=item["stroke"],
                     effort=item["effort"],
                     time_seconds=item["time_seconds"],
-                    date=item.get("date", today),
+                    date=bdate,
                     notes=item.get("notes"),
                     logged_by="ai",
                 )
@@ -1569,6 +1581,9 @@ Return only the JSON array."""
     except Exception:
         return []
 
+    from datetime import timedelta
+    dedup_cutoff = date.today() - timedelta(days=1)
+
     saved = []
     for item in items:
         try:
@@ -1580,6 +1595,15 @@ Return only the JSON array."""
             content = intent_text
             if rationale:
                 content += f" — {rationale}"
+            # Skip if identical content saved today (prevents re-saves on same conversation)
+            existing = db.query(models.SwimmerObservation).filter(
+                models.SwimmerObservation.swimmer_id == swimmer_id,
+                models.SwimmerObservation.obs_type == "coaching_intent",
+                models.SwimmerObservation.date >= dedup_cutoff,
+                models.SwimmerObservation.content == content,
+            ).first()
+            if existing:
+                continue
             obs = models.SwimmerObservation(
                 swimmer_id=swimmer_id,
                 obs_type="coaching_intent",
