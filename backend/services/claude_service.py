@@ -46,7 +46,230 @@ How to behave as a coaching partner:
 - When giving feedback on a session the coach has written or is designing, check: Does the energy system emphasis match the stated periodization goal? Does the rest/work ratio support the intended adaptation? Does the volume suit the swimmers assigned — particularly anyone with load events, low attendance, or a profile that doesn't fit the main group? What's been absent from recent training that this session could address?
 - Reference the physiological mechanism or principle behind each recommendation. If the evidence is mixed or uncertain, say so.
 - Keep responses focused and actionable. If there are multiple concerns, prioritise the most important one rather than listing everything.
-- Use the coaching context provided below to make responses specific to this squad, not generic."""
+- Use the coaching context provided below to make responses specific to this squad, not generic.
+
+What this system can do — you have a live database:
+- Swimmer records are real and persistent. You can see the squad, their profiles, observations, times, and session history below.
+- When the coach says something that implies a change to a swimmer's record (status change, new observation, benchmark, coaching intent), acknowledge what you're noting and say it will be saved — the system handles this automatically from the conversation.
+- Swimmer status values: "active", "sabbatical", "injury". If a coach says someone is going on sabbatical or is injured, confirm the status change and note it explicitly (e.g. "I'll mark [name] as sabbatical") — the system will detect this and prompt a save action.
+- You can help write sessions, plan blocks, review training load, and analyse performance — all grounded in the actual data below.
+You have direct access to the coaching database via tools. Use them proactively:
+- get_recent_sessions: fetch what was actually trained recently — use this when the coach asks about last week, recent sessions, what was done
+- get_swimmer_detail: fetch a swimmer's full profile, times, and observations — use when discussing a specific swimmer
+- update_swimmer_status: directly update a swimmer to sabbatical/injury/active — do this immediately when the coach states it, confirm in your reply
+- add_swimmer_observation: save a coaching observation or intent to a swimmer's profile — use when the coach makes a meaningful observation worth keeping
+- get_season_plan: fetch current block, emphasis, upcoming meets
+
+Do not wait to be asked to use tools — if a question implies needing data you don't have in context, fetch it. If the coach states a status change or observation worth saving, save it.
+"""
+
+
+def get_tools() -> list:
+    """Return the list of tool schemas for Claude tool-use calls."""
+    return [
+        {
+            "name": "get_recent_sessions",
+            "description": "Get sessions from the last N days with their content, groups, and which swimmers attended. Use this when the coach asks about recent training, last week's sessions, what was done recently, etc.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "days": {"type": "integer", "description": "Number of days to look back (default 14, max 60)"}
+                },
+                "required": []
+            }
+        },
+        {
+            "name": "get_swimmer_detail",
+            "description": "Get detailed info on a specific swimmer: profile, recent times, observations, load events, benchmarks. Use when the coach asks about a specific swimmer's progress, times, history, or status.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_name": {"type": "string", "description": "Full or partial name of the swimmer"}
+                },
+                "required": ["swimmer_name"]
+            }
+        },
+        {
+            "name": "update_swimmer_status",
+            "description": "Update a swimmer's status. Use when the coach says a swimmer is going on sabbatical, is injured, or is returning to training.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_name": {"type": "string", "description": "Full or partial name of the swimmer"},
+                    "status": {"type": "string", "enum": ["active", "sabbatical", "injury"], "description": "New status"}
+                },
+                "required": ["swimmer_name", "status"]
+            }
+        },
+        {
+            "name": "add_swimmer_observation",
+            "description": "Save a coaching observation to a swimmer's profile. Use when the coach makes a specific observation about a swimmer's training response, race performance, or states a coaching intent/focus for them.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_name": {"type": "string"},
+                    "content": {"type": "string", "description": "The observation text"},
+                    "obs_type": {"type": "string", "enum": ["race", "aerobic", "threshold", "vo2", "speed", "recovery", "physical", "general", "coaching_intent"], "description": "Type of observation"},
+                    "date": {"type": "string", "description": "ISO date string YYYY-MM-DD, defaults to today"}
+                },
+                "required": ["swimmer_name", "content", "obs_type"]
+            }
+        },
+        {
+            "name": "get_season_plan",
+            "description": "Get the current season plan: active training block, phase, emphasis percentages, upcoming meets. Use when the coach asks about the season structure, current block, or upcoming competitions.",
+            "input_schema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        },
+    ]
+
+
+def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
+    """Execute a tool call and return the result as a string."""
+    from datetime import date as date_type, timedelta
+
+    if tool_name == "get_recent_sessions":
+        days = min(int(tool_input.get("days", 14)), 60)
+        cutoff = date_type.today() - timedelta(days=days)
+        sessions = (
+            db.query(models.Session)
+            .filter(
+                models.Session.date >= cutoff,
+                models.Session.status != 'cancelled',
+            )
+            .order_by(models.Session.date.desc())
+            .limit(30)
+            .all()
+        )
+        if not sessions:
+            return f"No sessions found in the last {days} days."
+        lines = [f"SESSIONS (last {days} days):"]
+        for s in sessions:
+            title = s.title or s.energy_system_focus or "Session"
+            intent = f" — {s.coach_intent[:100]}" if s.coach_intent else ""
+            lines.append(f"\n{s.date} | {title}{intent}")
+            # Groups
+            groups = db.query(models.SessionGroup).filter(models.SessionGroup.session_id == s.id).all()
+            for g in groups:
+                desc = g.description or ""
+                sets_str = "; ".join(str(x) for x in (g.sets or [])[:3])
+                lines.append(f"  Group {g.group_number}: {desc[:80]}" + (f" | Sets: {sets_str[:100]}" if sets_str else ""))
+            # Attendance
+            entries = (
+                db.query(models.SessionEntry)
+                .filter(models.SessionEntry.session_id == s.id)
+                .all()
+            )
+            if entries:
+                present = []
+                absent = []
+                for e in entries:
+                    swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == e.swimmer_id).first()
+                    name = swimmer.name if swimmer else f"id={e.swimmer_id}"
+                    if e.attended:
+                        grp = f" (G{e.group_done})" if e.group_done else ""
+                        obs = f" — {e.coach_observation[:60]}" if e.coach_observation else ""
+                        present.append(f"{name}{grp}{obs}")
+                    else:
+                        absent.append(name)
+                if present:
+                    lines.append(f"  Attended ({len(present)}): {', '.join(present[:15])}")
+                if absent:
+                    lines.append(f"  Absent: {', '.join(absent[:10])}")
+            else:
+                lines.append("  No register taken.")
+        return "\n".join(lines)
+
+    elif tool_name == "get_swimmer_detail":
+        name = tool_input.get("swimmer_name", "")
+        swimmer = db.query(models.Swimmer).filter(
+            models.Swimmer.name.ilike(f"%{name}%"),
+            models.Swimmer.status != 'inactive'
+        ).first()
+        if not swimmer:
+            return f"Could not find swimmer matching '{name}'"
+        return get_swimmer_full_context(swimmer, db)
+
+    elif tool_name == "update_swimmer_status":
+        name = tool_input.get("swimmer_name", "")
+        new_status = tool_input.get("status", "")
+        swimmer = db.query(models.Swimmer).filter(
+            models.Swimmer.name.ilike(f"%{name}%"),
+            models.Swimmer.status != 'inactive'
+        ).first()
+        if not swimmer:
+            return f"Could not find swimmer matching '{name}'"
+        swimmer.status = new_status
+        db.commit()
+        return f"Updated {swimmer.name}'s status to {new_status}."
+
+    elif tool_name == "add_swimmer_observation":
+        name = tool_input.get("swimmer_name", "")
+        swimmer = db.query(models.Swimmer).filter(
+            models.Swimmer.name.ilike(f"%{name}%"),
+            models.Swimmer.status != 'inactive'
+        ).first()
+        if not swimmer:
+            return f"Could not find swimmer matching '{name}'"
+        obs_date = tool_input.get("date") or date_type.today().isoformat()
+        obs = models.SwimmerObservation(
+            swimmer_id=swimmer.id,
+            obs_type=tool_input.get("obs_type", "general"),
+            content=tool_input.get("content", ""),
+            date=obs_date,
+        )
+        db.add(obs)
+        db.commit()
+        return f"Saved {tool_input.get('obs_type', 'general')} observation for {swimmer.name}: {tool_input.get('content', '')[:100]}"
+
+    elif tool_name == "get_season_plan":
+        today = date_type.today()
+        lines = []
+        current_block = (
+            db.query(models.SeasonBlock)
+            .filter(models.SeasonBlock.date_from <= today, models.SeasonBlock.date_to >= today)
+            .first()
+        )
+        if current_block:
+            total_days = (current_block.date_to - current_block.date_from).days + 1
+            total_weeks = max(1, round(total_days / 7))
+            week_in = min(total_weeks, (today - current_block.date_from).days // 7 + 1)
+            lines.append(f"CURRENT BLOCK: {current_block.name} (Week {week_in} of {total_weeks} | {current_block.date_from} – {current_block.date_to})")
+            if current_block.phase_type:
+                lines.append(f"  Phase: {current_block.phase_type}")
+            if current_block.emphasis:
+                emp_str = ", ".join(f"{k} {v}%" for k, v in current_block.emphasis.items() if v)
+                lines.append(f"  Emphasis: {emp_str}")
+            if current_block.notes:
+                lines.append(f"  Notes: {current_block.notes[:150]}")
+        else:
+            lines.append("No current training block defined.")
+        next_block = (
+            db.query(models.SeasonBlock)
+            .filter(models.SeasonBlock.date_from > today)
+            .order_by(models.SeasonBlock.date_from)
+            .first()
+        )
+        if next_block:
+            weeks_away = (next_block.date_from - today).days // 7
+            lines.append(f"NEXT BLOCK: {next_block.name} starts {next_block.date_from} ({weeks_away}w away)")
+        meets = (
+            db.query(models.Meet)
+            .filter(models.Meet.date >= today, models.Meet.date <= today + timedelta(days=90))
+            .order_by(models.Meet.date)
+            .all()
+        )
+        if meets:
+            lines.append("UPCOMING MEETS (90 days):")
+            for m in meets:
+                course = f" ({m.course})" if m.course else ""
+                lines.append(f"  {m.date} | {m.name}{course} | {m.location or ''}")
+        return "\n".join(lines) if lines else "No season plan data available."
+
+    return f"Unknown tool: {tool_name}"
 
 
 def get_system_prompt(db: DBSession, extra: str = "") -> str:
@@ -835,10 +1058,11 @@ CONVERSATION:
 
 Return JSON only:
 {{
-  "intent": one of ["biological_profile","race_profile","training_profile","performance_analysis","session_writing","meet_creation","session_plan","meet_prep","season_plan","coaching_intent","general"],
+  "intent": one of ["biological_profile","race_profile","training_profile","performance_analysis","session_writing","meet_creation","session_plan","meet_prep","season_plan","coaching_intent","status_change","general"],
   "swimmer_name": "first name only, or null if squad-wide discussion",
   "confidence": "high" or "low",
-  "suggested_action": "short label e.g. 'Save to Tom\\'s biological profile' or 'Create this session' — or null if general chat or low confidence"
+  "suggested_action": "short label e.g. 'Save to Tom\\'s biological profile' or 'Create this session' — or null if general chat or low confidence",
+  "new_status": "sabbatical, injury, or active — only set when intent is status_change, otherwise null"
 }}
 
 Rules:
@@ -852,11 +1076,13 @@ Rules:
 - meet_prep: preparing a swimmer for a specific upcoming competition
 - season_plan: discussing macro/meso structure, annual planning
 - coaching_intent: coach has stated a training direction or priority for a swimmer (e.g. "needs more aerobic work", "should focus on X this block") and the conversation has examined and refined it — suggested_action should be "Save intent to [swimmer name]'s profile"
+- status_change: coach is changing a swimmer's status — sabbatical (taking a break from swimming), injury (injured/unable to train), or returning to active — suggested_action should be "Mark [swimmer name] as sabbatical" / "Mark [swimmer name] as injured" / "Mark [swimmer name] as active"
 - general: general coaching science, no specific save action warranted
 - Only return high confidence if the conversation has clearly been building something concrete
 - For session_writing, return high confidence once the session structure/groups/sets have been discussed
 - For meet_creation, return high confidence once meet name/date and at least one swimmer's events have been confirmed
 - For coaching_intent, return high confidence only after the intent has been discussed (not just first stated) — there should be some back-and-forth
+- For status_change, return high confidence as soon as the coach clearly states the swimmer is going on sabbatical, is injured, or is returning — no back-and-forth needed
 - Return null for suggested_action if intent is general or confidence is low"""
 
     response = get_client().messages.create(
@@ -883,6 +1109,7 @@ Rules:
             "swimmer_name": swimmer_full_name,
             "confidence": data.get("confidence", "low"),
             "suggested_action": data.get("suggested_action") if data.get("confidence") == "high" else None,
+            "new_status": data.get("new_status") if data.get("intent") == "status_change" else None,
         }
     except Exception:
         return {"intent": "general", "suggested_action": None}

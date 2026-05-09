@@ -10,6 +10,7 @@ from backend.services.claude_service import (
     build_meets_context, build_periodization_context, build_session_writing_context,
     detect_topics, extract_slot_hint, classify_intent, _strip_json,
     extract_benchmarks_from_conversation, extract_coaching_intent,
+    get_tools, execute_tool,
 )
 
 router = APIRouter()
@@ -161,14 +162,43 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         profiles_block = "\n\n".join(get_swimmer_full_context(s, db) for s in mentioned_now)
         system += f"\n\n---\n{profiles_block}"
 
+    tools = get_tools()
+    loop_messages = list(messages)
+
     response = get_client().messages.create(
         model=MODEL,
         max_tokens=1500,
         system=system,
-        messages=messages,
+        messages=loop_messages,
+        tools=tools,
     )
 
-    reply = response.content[0].text.strip()
+    # Tool-calling loop — max 5 iterations to prevent runaway
+    for _ in range(5):
+        if response.stop_reason != "tool_use":
+            break
+        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        tool_results = []
+        for tu in tool_uses:
+            result = execute_tool(tu.name, tu.input, db)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": result,
+            })
+        loop_messages = loop_messages + [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": tool_results},
+        ]
+        response = get_client().messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            system=system,
+            messages=loop_messages,
+            tools=tools,
+        )
+
+    reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 
@@ -367,16 +397,43 @@ async def send_message_with_image(
         },
     ]
 
-    messages_for_claude = history + [{"role": "user", "content": user_content}]
+    loop_messages_img = history + [{"role": "user", "content": user_content}]
 
+    tools = get_tools()
     response = get_client().messages.create(
         model=MODEL,
         max_tokens=1500,
         system=system,
-        messages=messages_for_claude,
+        messages=loop_messages_img,
+        tools=tools,
     )
 
-    reply = response.content[0].text.strip()
+    # Tool-calling loop — max 5 iterations
+    for _ in range(5):
+        if response.stop_reason != "tool_use":
+            break
+        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        tool_results = []
+        for tu in tool_uses:
+            result = execute_tool(tu.name, tu.input, db)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": result,
+            })
+        loop_messages_img = loop_messages_img + [
+            {"role": "assistant", "content": response.content},
+            {"role": "user", "content": tool_results},
+        ]
+        response = get_client().messages.create(
+            model=MODEL,
+            max_tokens=1500,
+            system=system,
+            messages=loop_messages_img,
+            tools=tools,
+        )
+
+    reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 
