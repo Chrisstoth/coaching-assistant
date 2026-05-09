@@ -68,6 +68,7 @@ const INTENT_LABELS = {
   meet_prep: { label: 'session plan', colour: 'amber' },
   season_plan: { label: 'season plan', colour: 'teal' },
   coaching_intent: { label: 'training intent', colour: 'teal' },
+  status_change: { label: 'status update', colour: 'amber' },
 }
 
 function getDefaultDates() {
@@ -223,6 +224,7 @@ export default function CoachAI() {
           type: res.intent?.type,
           swimmer_id: res.intent?.swimmer_id,
           swimmer_name: res.intent?.swimmer_name,
+          new_status: res.intent?.new_status,
         })
       }
     } catch (e) {
@@ -249,7 +251,11 @@ export default function CoachAI() {
       .join('\n')
 
     try {
-      if (type === 'session_writing') {
+      if (type === 'status_change' && swimmer_id && suggestedAction.new_status) {
+        await api.updateSwimmer(swimmer_id, { status: suggestedAction.new_status })
+        setActionResult('saved')
+        setSuggestedAction(null)
+      } else if (type === 'session_writing') {
         const draft = await api.extractSessionDraft(activeThreadId)
         setSessionDraft(draft)
         setSuggestedAction(null)
@@ -276,7 +282,11 @@ export default function CoachAI() {
         setActionResult('error')
       }
     } catch (e) {
-      setActionResult('error')
+      if (swimmer_id) {
+        setActionResult('error_with_link')
+      } else {
+        setActionResult('error')
+      }
     }
     setActioning(false)
   }
@@ -550,6 +560,17 @@ export default function CoachAI() {
             )}
             {actionResult === 'error' && (
               <p className="text-xs opacity-75">Couldn't save automatically — try from the swimmer's profile page.</p>
+            )}
+            {actionResult === 'error_with_link' && (
+              <div className="space-y-2">
+                <p className="text-xs opacity-75">Couldn't save automatically.</p>
+                <button
+                  onClick={() => navigate(`/swimmers/${suggestedAction.swimmer_id}`)}
+                  className="text-xs font-semibold underline opacity-90 hover:opacity-100"
+                >
+                  Open {suggestedAction.swimmer_name}'s profile →
+                </button>
+              </div>
             )}
           </div>
         )}
