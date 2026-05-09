@@ -1104,6 +1104,18 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if latest_perf:
         parts.append(f"Performance analysis (as of {latest_perf.created_at.date() if latest_perf.created_at else 'unknown'}):\n{json.dumps(latest_perf.data, indent=2)}")
 
+    latest_technical = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(
+            models.SwimmerProfileVersion.swimmer_id == swimmer.id,
+            models.SwimmerProfileVersion.profile_type == "technical",
+        )
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .first()
+    )
+    if latest_technical:
+        parts.append(f"Technical profile (as of {latest_technical.created_at.date() if latest_technical.created_at else 'unknown'}):\n{json.dumps(latest_technical.data, indent=2)}")
+
     # Training history narrative (background — previous clubs, gaps, context)
     training_history = (
         db.query(models.TrainingHistoryNarrative)
@@ -1886,7 +1898,7 @@ Return only JSON."""
 
 def synthesise_technical_profile(swimmer: models.Swimmer, db: DBSession, conversation_context: str = None) -> dict:
     """
-    Synthesise a technical profile covering stroke mechanics, race execution, and coachability.
+    Synthesise a technical profile covering stroke mechanics, movement quality, and coachability.
     Uses race/general observations + conversation context as primary input.
     """
     all_obs = (
@@ -1958,21 +1970,22 @@ RECENT TIMES:
 
 {prev_text}
 
-Produce a technical profile covering stroke mechanics, race execution, and coachability.
+Produce a technical profile covering stroke mechanics and movement quality only.
+This is NOT about race tactics, pacing, or energy — those belong in the race profile.
+Focus on what the swimmer does physically in the water: technique, body position, skill execution.
 Focus on patterns that repeat across observations — be specific where the data supports it.
 Note where technical limitations are developmental vs trainable.
 
 Return JSON:
 {{
-  "stroke_mechanics": "primary stroke technique — posture, catch, pull, kick. What stands out technically, good and bad.",
-  "starts_turns": "observed quality of starts, turns, underwaters — where time is gained or lost",
-  "race_execution": "pacing strategy, tactical awareness, ability to execute a race plan under pressure",
+  "stroke_mechanics": "primary stroke technique — body position, catch, pull phase, kick, timing, breathing pattern. What stands out technically, good and bad.",
+  "starts_turns": "observed quality of starts, turns, and underwaters — technique and consistency",
   "technical_strengths": "2-3 specific technical qualities that are a genuine asset",
   "technical_limiters": "the 1-2 technical issues most limiting current performance",
-  "coachability": "how readily they adopt technical change — fast/slow learner, retention under fatigue",
-  "drill_response": "if observed: which drills or cues have worked, which haven't",
-  "event_specific": {{"event_name": "specific technical notes for this event"}},
-  "priorities": "ranked list of what to work on technically, with brief reasoning for the order",
+  "coachability": "how readily they adopt technical change — fast/slow learner, retention under fatigue, response to cues",
+  "drill_response": "if observed: which drills or technical cues have worked well, which haven't landed",
+  "event_specific": {{"event_name": "stroke technique differences specific to this event distance or stroke — e.g. kick timing changes, stroke rate adjustments, not pacing or race strategy"}},
+  "priorities": "ranked list of technical things to work on, with brief reasoning for the order",
   "change_summary": "Compared to previous: what has changed technically. If first profile: Initial profile — summarise key technical picture in 2-3 sentences."
 }}
 
