@@ -353,7 +353,10 @@ def create_session_from_chat(body: dict = Body(default={}), db: DBSession = Depe
     """Save a confirmed session draft to the DB. Accepts the pre-edited draft directly."""
     if not body:
         raise HTTPException(status_code=400, detail="Session data required")
-    session_id = _save_session_from_data(body, db)
+    try:
+        session_id = _save_session_from_data(body, db)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to save session: {str(e)}")
     session = db.query(models.Session).filter(models.Session.id == session_id).first()
     return {"session_id": session_id, "title": session.title, "date": session.date.isoformat()}
 
