@@ -13,9 +13,11 @@ import Schedule from './pages/Schedule'
 import Calendar from './pages/Calendar'
 import CoachingContext from './pages/CoachingContext'
 import SessionPlanner from './pages/SessionPlanner'
+import PlanHub from './pages/PlanHub'
 import CoachAI from './pages/CoachAI'
 import Settings from './pages/Settings'
 import SeasonPlan from './pages/SeasonPlan'
+import SessionPrint from './pages/SessionPrint'
 
 // Pages where the bottom nav should be hidden (full-screen flows)
 const HIDE_NAV_PATHS = ['/sessions/', '/swimmers/new']
@@ -82,10 +84,10 @@ function BottomNav() {
           )}
         </NavLink>
 
-        <NavLink to="/sessions" className={({ isActive }) =>
+        <NavLink to="/plan" className={({ isActive }) =>
           `flex flex-col items-center gap-0.5 py-2 px-3 text-xs font-medium transition-colors ${isActive ? 'text-accent-400' : 'text-pool-500 hover:text-pool-300'}`
         }>
-          {({ isActive }) => (<><SessionsIcon active={isActive} /><span>Sessions</span></>)}
+          {({ isActive }) => (<><SessionsIcon active={isActive} /><span>Plan</span></>)}
         </NavLink>
 
         <NavLink to="/meets" className={({ isActive }) =>
@@ -112,6 +114,7 @@ export default function App() {
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
+          <Route path="/sessions/:id/print" element={<SessionPrint />} />
           <Route path="/sessions/:id/register" element={<Register />} />
           <Route path="/meets" element={<Meets />} />
           <Route path="/meets/:id" element={<MeetDetail />} />
@@ -119,7 +122,8 @@ export default function App() {
           <Route path="/import" element={<Import />} />
           <Route path="/context" element={<CoachingContext />} />
           <Route path="/ai" element={<CoachAI />} />
-          <Route path="/plan" element={<SessionPlanner />} />
+          <Route path="/plan" element={<PlanHub />} />
+          <Route path="/session-planner" element={<SessionPlanner />} />
           <Route path="/season" element={<SeasonPlan />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>

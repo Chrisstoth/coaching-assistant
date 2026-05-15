@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date, timedelta
+from collections import defaultdict
+import json, os
 
 from backend.database import get_db
 from backend import models
@@ -14,36 +16,127 @@ PHASE_COLOURS = {
     'taper': 'yellow', 'competition': 'red', 'recovery': 'teal', 'transition': 'pool',
 }
 
+VOLUME_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
+
 class BlockIn(BaseModel):
     name: str
+    squad: Optional[str] = None
     phase_type: Optional[str] = None
     date_from: date
     date_to: date
     emphasis: Optional[dict] = None
+    group_intents: Optional[dict] = None
     notes: Optional[str] = None
+
+def _block_out(b: models.SeasonBlock, today: date) -> dict:
+    total_days = (b.date_to - b.date_from).days + 1
+    total_weeks = max(1, round(total_days / 7))
+    days_in = max(0, (today - b.date_from).days)
+    week_in = min(total_weeks, days_in // 7 + 1) if b.date_from <= today <= b.date_to else None
+    return {
+        "id": b.id, "name": b.name, "squad": b.squad, "phase_type": b.phase_type,
+        "date_from": b.date_from.isoformat(), "date_to": b.date_to.isoformat(),
+        "emphasis": b.emphasis, "group_intents": b.group_intents, "notes": b.notes,
+        "created_at": b.created_at,
+        "is_current": b.date_from <= today <= b.date_to,
+        "is_past": b.date_to < today,
+        "week_in": week_in, "total_weeks": total_weeks,
+        "colour": PHASE_COLOURS.get(b.phase_type or '', 'pool'),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Macros
+# ---------------------------------------------------------------------------
+
+@router.get("/macros")
+def get_macros(db: Session = Depends(get_db)):
+    today = date.today()
+    macros = db.query(models.TrainingMacro).order_by(models.TrainingMacro.date_from).all()
+    result = []
+    for m in macros:
+        mesos = db.query(models.SeasonBlock).filter(models.SeasonBlock.macro_id == m.id).order_by(models.SeasonBlock.date_from).all()
+        result.append({
+            "id": m.id, "name": m.name, "squad": m.squad,
+            "date_from": m.date_from.isoformat(), "date_to": m.date_to.isoformat(),
+            "narrative": m.narrative, "group_definitions": m.group_definitions,
+            "created_at": m.created_at,
+            "is_current": m.date_from <= today <= m.date_to,
+            "is_past": m.date_to < today,
+            "mesos": [_block_out(b, today) for b in mesos],
+        })
+    return result
+
+
+@router.post("/macros", status_code=201)
+def create_macro(data: dict, db: Session = Depends(get_db)):
+    macro = models.TrainingMacro(
+        name=data["name"],
+        squad=data.get("squad"),
+        date_from=data["date_from"],
+        date_to=data["date_to"],
+        narrative=data.get("narrative"),
+        group_definitions=data.get("group_definitions"),
+    )
+    db.add(macro)
+    db.flush()
+
+    for meso_data in data.get("mesos", []):
+        meso = models.SeasonBlock(
+            macro_id=macro.id,
+            name=meso_data["name"],
+            squad=data.get("squad"),
+            phase_type=meso_data.get("phase_type"),
+            date_from=meso_data["date_from"],
+            date_to=meso_data["date_to"],
+            group_intents=meso_data.get("group_intents"),
+            notes=meso_data.get("notes"),
+        )
+        db.add(meso)
+
+    db.commit()
+    db.refresh(macro)
+    today = date.today()
+    mesos = db.query(models.SeasonBlock).filter(models.SeasonBlock.macro_id == macro.id).all()
+    return {
+        "id": macro.id, "name": macro.name, "squad": macro.squad,
+        "date_from": macro.date_from.isoformat(), "date_to": macro.date_to.isoformat(),
+        "narrative": macro.narrative, "group_definitions": macro.group_definitions,
+        "mesos": [_block_out(b, today) for b in mesos],
+    }
+
+
+@router.patch("/macros/{macro_id}")
+def update_macro(macro_id: int, data: dict, db: Session = Depends(get_db)):
+    macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+    if not macro:
+        raise HTTPException(404, "Macro not found")
+    for k, v in data.items():
+        if hasattr(macro, k) and k not in ("id", "mesos"):
+            setattr(macro, k, v)
+    db.commit()
+    db.refresh(macro)
+    return macro
+
+
+@router.delete("/macros/{macro_id}", status_code=204)
+def delete_macro(macro_id: int, db: Session = Depends(get_db)):
+    macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+    if not macro:
+        raise HTTPException(404, "Macro not found")
+    db.delete(macro)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Blocks (mesos)
+# ---------------------------------------------------------------------------
 
 @router.get("/blocks")
 def get_blocks(db: Session = Depends(get_db)):
     blocks = db.query(models.SeasonBlock).order_by(models.SeasonBlock.date_from).all()
     today = date.today()
-    result = []
-    for b in blocks:
-        # Calculate week number within block and total weeks
-        total_days = (b.date_to - b.date_from).days + 1
-        total_weeks = max(1, round(total_days / 7))
-        days_in = max(0, (today - b.date_from).days)
-        week_in = min(total_weeks, days_in // 7 + 1) if b.date_from <= today <= b.date_to else None
-        is_current = b.date_from <= today <= b.date_to
-        is_past = b.date_to < today
-        result.append({
-            "id": b.id, "name": b.name, "phase_type": b.phase_type,
-            "date_from": b.date_from.isoformat(), "date_to": b.date_to.isoformat(),
-            "emphasis": b.emphasis, "notes": b.notes, "created_at": b.created_at,
-            "is_current": is_current, "is_past": is_past,
-            "week_in": week_in, "total_weeks": total_weeks,
-            "colour": PHASE_COLOURS.get(b.phase_type or '', 'pool'),
-        })
-    return result
+    return [_block_out(b, today) for b in blocks]
 
 @router.post("/blocks", status_code=201)
 def create_block(data: BlockIn, db: Session = Depends(get_db)):
@@ -72,6 +165,80 @@ def delete_block(block_id: int, db: Session = Depends(get_db)):
         raise HTTPException(404, "Block not found")
     db.delete(block)
     db.commit()
+
+
+@router.get("/blocks/{block_id}/progress")
+def get_block_progress(block_id: int, db: Session = Depends(get_db)):
+    """Week-by-week SwimmerSessionLoad aggregation for all swimmers in the block date range."""
+    block = db.query(models.SeasonBlock).filter(models.SeasonBlock.id == block_id).first()
+    if not block:
+        raise HTTPException(404, "Block not found")
+
+    q = db.query(models.Session).filter(
+        models.Session.date >= block.date_from,
+        models.Session.date <= block.date_to,
+        models.Session.status != 'cancelled',
+    )
+    if block.squad:
+        q = q.filter(models.Session.squad == block.squad)
+    session_ids = [s.id for s in q.all()]
+
+    if not session_ids:
+        return {"weeks": [], "swimmers": [], "group_intents": block.group_intents or {}}
+
+    loads = db.query(models.SwimmerSessionLoad).filter(
+        models.SwimmerSessionLoad.session_id.in_(session_ids)
+    ).all()
+
+    def iso_week(d):
+        yr, wk, _ = d.isocalendar()
+        return f"{yr}-W{wk:02d}"
+
+    # Build ordered week list across block range
+    all_weeks, seen = [], set()
+    d = block.date_from
+    while d <= block.date_to:
+        lbl = iso_week(d)
+        if lbl not in seen:
+            all_weeks.append(lbl)
+            seen.add(lbl)
+        d += timedelta(days=7)
+
+    swimmer_weeks: dict = defaultdict(lambda: defaultdict(lambda: {k: 0 for k in VOLUME_KEYS}))
+    swimmer_ids_seen = set()
+
+    for load in loads:
+        wk = iso_week(load.session_date)
+        swimmer_ids_seen.add(load.swimmer_id)
+        for k in VOLUME_KEYS:
+            swimmer_weeks[load.swimmer_id][wk][k] += (load.volume_breakdown or {}).get(k, 0)
+
+    swimmers = db.query(models.Swimmer).filter(
+        models.Swimmer.id.in_(swimmer_ids_seen)
+    ).order_by(models.Swimmer.name).all()
+
+    result = []
+    for s in swimmers:
+        weeks_out = []
+        for wk in all_weeks:
+            vols = dict(swimmer_weeks[s.id].get(wk, {k: 0 for k in VOLUME_KEYS}))
+            weeks_out.append({"week": wk, "volumes": vols, "total": sum(vols.values())})
+        result.append({"id": s.id, "name": s.name, "squad": s.squad, "weeks": weeks_out})
+
+    return {"weeks": all_weeks, "swimmers": result, "group_intents": block.group_intents or {}}
+
+
+@router.post("/blocks/{block_id}/ai-analysis")
+def analyse_block(block_id: int, db: Session = Depends(get_db)):
+    """Block review skill — phase delivery, group analysis, attendance, adaptation signals, next block recommendation."""
+    try:
+        from backend.routers.skills import run_block_review
+        result = run_block_review(block_id, db)
+        return {"analysis": result["analysis"]}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Block review failed: {str(e)}")
 
 @router.get("/summary")
 def get_season_summary(db: Session = Depends(get_db)):

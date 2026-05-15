@@ -17,6 +17,229 @@ router = APIRouter()
 
 MAX_HISTORY = 40
 
+# Phrases that mean "generate a session for me" — triggers the planning skill
+# Phrases that mean "give me a systematic review of this swimmer"
+_REVIEW_SWIMMER_SIGNALS = [
+    'how is ', 'how\'s ', 'how are ', 'review ', 'adaptation review',
+    'give me an update on ', 'update on ', 'how is she doing', 'how is he doing',
+    'where is ', 'where\'s ', 'assess ', 'assessment of ',
+    'how has ', 'how have ', 'check on ', 'check in on ',
+    'is she adapting', 'is he adapting', 'is she responding', 'is he responding',
+]
+
+def _is_swimmer_review(text: str, db) -> Optional[str]:
+    """Returns swimmer name if message is a review request for a specific swimmer, else None."""
+    t = text.lower()
+    if not any(k in t for k in _REVIEW_SWIMMER_SIGNALS):
+        return None
+    # Check if any active swimmer name appears in the message
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
+    for s in swimmers:
+        name_parts = s.name.lower().split()
+        first = name_parts[0] if name_parts else ""
+        if (len(first) >= 4 and first in t) or s.name.lower() in t:
+            return s.name
+    return None
+
+
+_BLOCK_REVIEW_SIGNALS = [
+    'how did the', 'how did that', 'review the block', 'review this block',
+    'review the meso', 'review this meso', 'block review', 'meso review',
+    'how did the last block', 'how did the last meso', 'how has the block gone',
+    'block analysis', 'meso analysis', 'analyse the block', 'analyze the block',
+    'how is the block going', 'how is the meso going',
+    'wrap up the block', 'end of block',
+]
+
+def _is_block_review(text: str, db) -> Optional[int]:
+    """Returns block_id if the message is a block review request, else None."""
+    t = text.lower()
+    if not any(k in t for k in _BLOCK_REVIEW_SIGNALS):
+        return None
+    from datetime import date as date_type
+    today = date_type.today()
+    # Current block first
+    current = db.query(models.SeasonBlock).filter(
+        models.SeasonBlock.date_from <= today,
+        models.SeasonBlock.date_to >= today,
+    ).order_by(models.SeasonBlock.date_from).first()
+    if current:
+        return current.id
+    # Most recent past block
+    recent = db.query(models.SeasonBlock).filter(
+        models.SeasonBlock.date_to < today,
+    ).order_by(models.SeasonBlock.date_to.desc()).first()
+    if recent:
+        return recent.id
+    return None
+
+
+_MESO_PLAN_SIGNALS = [
+    'plan the next block', 'plan the next phase', 'plan a block', 'plan a meso',
+    'what should the next block be', 'what should the next phase be', 'what phase is next',
+    'what comes next', 'next phase', 'next block', 'next meso',
+    'what phase should we do', 'help me plan the next', 'plan the season',
+    'build the next block', 'build the next phase', 'build a meso',
+    'structure the next', 'design the next block', 'recommend a phase',
+]
+
+def _is_meso_plan(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _MESO_PLAN_SIGNALS)
+
+
+_RACE_ANALYSIS_SIGNALS = [
+    'race analysis', 'analyse the meet', 'analyze the meet',
+    'how did we do at', 'how did we perform', 'how did the meet go',
+    'meet analysis', 'post meet', 'post-meet', 'review the meet',
+    'how did the last meet go', 'how did the competition go',
+    'what happened at', 'results from', 'how were the results',
+]
+
+def _is_race_analysis(text: str, db) -> Optional[int]:
+    """Returns meet_id if the message is a post-meet race analysis request, else None."""
+    t = text.lower()
+    if not any(k in t for k in _RACE_ANALYSIS_SIGNALS):
+        return None
+    from datetime import date as date_type
+    today = date_type.today()
+    # Check if a specific meet name appears in the text
+    meets = db.query(models.Meet).order_by(models.Meet.date.desc()).limit(20).all()
+    for m in meets:
+        if m.name and len(m.name) >= 4 and m.name.lower()[:15] in t:
+            return m.id
+    # Default: most recent past meet
+    recent = db.query(models.Meet).filter(
+        models.Meet.date <= today,
+    ).order_by(models.Meet.date.desc()).first()
+    return recent.id if recent else None
+
+
+_TAPER_PLAN_SIGNALS = [
+    'taper for', 'taper plan', 'plan a taper', 'plan the taper',
+    'taper programme', 'taper program', 'pre-meet taper',
+    'how should we taper', 'design a taper', 'build a taper',
+    'plan her taper', 'plan his taper',
+]
+
+def _is_taper_plan(text: str, db) -> Optional[str]:
+    """Returns swimmer name if message is a taper plan request, else None."""
+    t = text.lower()
+    if not any(k in t for k in _TAPER_PLAN_SIGNALS):
+        return None
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
+    for s in swimmers:
+        name_parts = s.name.lower().split()
+        first = name_parts[0] if name_parts else ""
+        if (len(first) >= 4 and first in t) or s.name.lower() in t:
+            return s.name
+    return None
+
+
+_GENERATE_SESSION_SIGNALS = [
+    'plan a session', 'make a session', 'write a session', 'design a session',
+    'build a session', 'create a session', 'generate a session',
+    'session for monday', 'session for tuesday', 'session for wednesday',
+    'session for thursday', 'session for friday', 'session for saturday', 'session for sunday',
+    'session for tomorrow', 'session for today', 'session for next',
+    "what's the session", "what's our session", 'plan the session', 'write the session',
+]
+
+def _is_session_generation(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _GENERATE_SESSION_SIGNALS)
+
+
+_SUGGEST_GROUPS_SIGNALS = [
+    'suggest groups', 'group the squad', 'squad groups', 'training groups',
+    'how should i group', 'how should we group', 'who should be in which group',
+    'review the groups', 'update the groups', 'change the groups', 'group composition',
+    'split the squad', 'squad composition', 'who goes in', 'group assignment',
+    'group recommendations', 'which group should', 'reorganise groups', 'reorganize groups',
+]
+
+def _is_suggest_groups(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _SUGGEST_GROUPS_SIGNALS)
+
+
+_MICRO_PLAN_SIGNALS = [
+    'plan the week', 'plan this week', 'weekly plan', 'week plan',
+    'plan next week', "what's the week", "what sessions this week",
+    'micro plan', 'week structure', 'session sequence', 'sequence the week',
+    'plan the sessions this week', 'sessions for the week', 'weekly schedule',
+    'map out the week', 'structure the week',
+]
+
+def _is_micro_plan(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _MICRO_PLAN_SIGNALS)
+
+
+_SEASON_PLAN_SIGNALS = [
+    "plan the season", "plan a season", "plan next season", "season plan",
+    "let's plan", "lets plan", "build the season", "season structure",
+    "review the season plan", "open the season plan", "season planning",
+    "annual plan", "macro plan", "plan the macro", "build a macro",
+    "plan the year", "year plan",
+]
+
+def _is_season_plan_navigation(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _SEASON_PLAN_SIGNALS)
+
+
+_ATHLETE_PLAN_SIGNALS = [
+    "athlete planning", "athlete plan", "discuss the athletes", "discuss the swimmers",
+    "talk about the athletes", "individual planning", "swimmer planning",
+    "swimmer development", "open the athlete chat", "athlete chat", "athletes chat",
+    "open athlete planning", "athlete development",
+]
+
+def _is_athlete_plan_navigation(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _ATHLETE_PLAN_SIGNALS)
+
+
+_MACRO_PLAN_SIGNALS = [
+    "plan the macro", "plan a macro", "plan the season", "plan next season",
+    "build the season", "season structure", "annual plan", "plan the year",
+    "create a macro", "new macro", "build a macro",
+]
+
+def _is_macro_plan(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _MACRO_PLAN_SIGNALS)
+
+
+def _extract_target_date(text: str):
+    """Best-effort date extraction from natural language. Returns date or None."""
+    from datetime import date as date_type, timedelta
+    import re
+    today = date_type.today()
+    t = text.lower()
+    days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    if 'tomorrow' in t:
+        return today + timedelta(days=1)
+    if 'today' in t:
+        return today
+    for i, day in enumerate(days):
+        if day in t:
+            current_dow = today.weekday()
+            delta = (i - current_dow) % 7
+            if delta == 0:
+                delta = 7  # next week if same day
+            return today + timedelta(days=delta)
+    # ISO date pattern
+    match = re.search(r'\d{4}-\d{2}-\d{2}', text)
+    if match:
+        from datetime import datetime
+        try:
+            return datetime.strptime(match.group(), "%Y-%m-%d").date()
+        except ValueError:
+            pass
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Thread management
@@ -30,11 +253,132 @@ def get_threads(db: DBSession = Depends(get_db)):
 
 @router.post("/threads")
 def create_thread(body: dict = Body(default={}), db: DBSession = Depends(get_db)):
-    thread = models.AIThread(name=body.get("name") or None)
+    thread = models.AIThread(
+        name=body.get("name") or None,
+        thread_type=body.get("thread_type", "general"),
+        macro_id=body.get("macro_id") or None,
+    )
     db.add(thread)
     db.commit()
     db.refresh(thread)
-    return {"id": thread.id, "name": thread.name, "created_at": thread.created_at}
+    return {
+        "id": thread.id,
+        "name": thread.name,
+        "thread_type": thread.thread_type,
+        "macro_id": thread.macro_id,
+        "created_at": thread.created_at,
+    }
+
+
+@router.get("/threads")
+def list_threads(db: DBSession = Depends(get_db)):
+    threads = db.query(models.AIThread).order_by(models.AIThread.created_at.desc()).all()
+    result = []
+    for t in threads:
+        last_msg = db.query(models.CoachAIMessage).filter(
+            models.CoachAIMessage.thread_id == t.id
+        ).order_by(models.CoachAIMessage.created_at.desc()).first()
+        result.append({
+            "id": t.id,
+            "name": t.name,
+            "thread_type": t.thread_type or "general",
+            "macro_id": t.macro_id,
+            "created_at": t.created_at,
+            "last_message_at": last_msg.created_at if last_msg else t.created_at,
+        })
+    return result
+
+
+@router.post("/threads/season-plan")
+def get_or_create_season_plan_thread(body: dict = Body(default={}), db: DBSession = Depends(get_db)):
+    """Get the existing season planning thread for a macro, or create one."""
+    macro_id = body.get("macro_id")
+
+    # Find existing season_plan thread for this macro (or any if no macro_id)
+    q = db.query(models.AIThread).filter(models.AIThread.thread_type == "season_plan")
+    if macro_id:
+        q = q.filter(models.AIThread.macro_id == macro_id)
+    existing = q.order_by(models.AIThread.created_at.desc()).first()
+
+    if existing:
+        msg_count = db.query(models.CoachAIMessage).filter(
+            models.CoachAIMessage.thread_id == existing.id
+        ).count()
+        return {
+            "id": existing.id,
+            "name": existing.name,
+            "thread_type": existing.thread_type,
+            "macro_id": existing.macro_id,
+            "created_at": existing.created_at,
+            "message_count": msg_count,
+            "is_new": False,
+        }
+
+    # Create new season plan thread
+    macro_name = None
+    if macro_id:
+        macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+        macro_name = macro.name if macro else None
+    else:
+        # Find current macro
+        from datetime import date as date_type
+        today = date_type.today()
+        macro = db.query(models.TrainingMacro).filter(
+            models.TrainingMacro.date_from <= today,
+            models.TrainingMacro.date_to >= today,
+        ).order_by(models.TrainingMacro.date_from).first()
+        if macro:
+            macro_id = macro.id
+            macro_name = macro.name
+
+    thread_name = f"Season Plan{f' — {macro_name}' if macro_name else ''}"
+    thread = models.AIThread(name=thread_name, thread_type="season_plan", macro_id=macro_id)
+    db.add(thread)
+    db.commit()
+    db.refresh(thread)
+    return {
+        "id": thread.id,
+        "name": thread.name,
+        "thread_type": thread.thread_type,
+        "macro_id": thread.macro_id,
+        "created_at": thread.created_at,
+        "message_count": 0,
+        "is_new": True,
+    }
+
+
+@router.post("/threads/athlete-planning")
+def get_or_create_athlete_plan_thread(body: dict = Body(default={}), db: DBSession = Depends(get_db)):
+    """Get the existing athlete planning thread, or create one."""
+    existing = db.query(models.AIThread).filter(
+        models.AIThread.thread_type == "athlete_planning"
+    ).order_by(models.AIThread.created_at.desc()).first()
+
+    if existing:
+        msg_count = db.query(models.CoachAIMessage).filter(
+            models.CoachAIMessage.thread_id == existing.id
+        ).count()
+        return {
+            "id": existing.id,
+            "name": existing.name,
+            "thread_type": existing.thread_type,
+            "created_at": existing.created_at,
+            "message_count": msg_count,
+            "is_new": False,
+        }
+
+    thread = models.AIThread(name="Athletes", thread_type="athlete_planning")
+    db.add(thread)
+    db.commit()
+    db.refresh(thread)
+    return {
+        "id": thread.id,
+        "name": thread.name,
+        "thread_type": thread.thread_type,
+        "created_at": thread.created_at,
+        "message_count": 0,
+        "is_new": True,
+    }
 
 
 @router.patch("/threads/{thread_id}")
@@ -94,6 +438,7 @@ def get_messages(thread_id: Optional[int] = None, db: DBSession = Depends(get_db
 def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     text = body.get("message", "").strip()
     thread_id = body.get("thread_id")
+    brief = body.get("brief", False)
     if not text:
         raise HTTPException(status_code=400, detail="Message required")
 
@@ -109,11 +454,295 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     recent = all_msgs[-MAX_HISTORY:]
     messages = [{"role": m.role, "content": m.message} for m in recent]
 
-    # Base system prompt (squad snapshot + recent sessions + active coaching notes)
-    system = get_system_prompt(db)
+    # Choose system prompt based on thread type
+    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
+    is_season_plan_thread = thread_obj and thread_obj.thread_type == "season_plan"
+    is_athlete_plan_thread = thread_obj and thread_obj.thread_type == "athlete_planning"
+
+    if is_season_plan_thread:
+        from backend.services.claude_service import get_season_plan_system_prompt
+        system = get_season_plan_system_prompt(db, macro_id=thread_obj.macro_id)
+    elif is_athlete_plan_thread:
+        from backend.services.claude_service import get_athlete_plan_system_prompt
+        system = get_athlete_plan_system_prompt(db)
+    else:
+        system = get_system_prompt(db)
+        if brief:
+            system += "\n\nPOOLSIDE MODE: The coach is at the pool. Keep all responses under 5 sentences. Use bullet points. Lead with the most actionable finding. No background context, no caveats unless critical."
 
     # Detect topics from current message + recent history to decide what extra context to inject
     topics = detect_topics(text, messages[:-1])
+
+    # Build thread context string to pass to specialist skills
+    from backend.routers.skills import _format_thread_context
+    thread_context = _format_thread_context(messages[:-1]) if len(messages) > 1 else None
+
+    # --- Season Plan Navigation (general thread only) ---
+    if not is_season_plan_thread and not is_athlete_plan_thread and _is_season_plan_navigation(text):
+        reply = "Opening the season planning chat for you."
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["season_plan_navigation"],
+            "suggested_action": {"type": "open_season_plan_thread"},
+            "intent": {"type": "season_plan_navigation"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": None,
+        }
+
+    # --- Athlete Plan Navigation (general thread only) ---
+    if not is_season_plan_thread and not is_athlete_plan_thread and _is_athlete_plan_navigation(text):
+        reply = "Opening the athlete planning chat for you."
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["athlete_plan_navigation"],
+            "suggested_action": {"type": "open_athlete_plan_thread"},
+            "intent": {"type": "athlete_plan_navigation"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": None,
+        }
+
+    # In a season plan thread, also route plan_macro requests
+    if is_season_plan_thread and _is_macro_plan(text):
+        from backend.routers.skills import run_plan_macro
+        try:
+            result = run_plan_macro(text, db, coach_context=thread_context)
+            reply = result["reply"]
+            draft = result.get("draft")
+        except Exception as e:
+            reply = f"I had trouble planning the macro: {str(e)}."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["macro_plan"],
+            "suggested_action": None,
+            "intent": {"type": "macro_plan"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "macro_plan", "draft": draft} if draft else None,
+        }
+
+    # --- Taper Planning Skill ---
+    taper_swimmer_name = _is_taper_plan(text, db)
+    if taper_swimmer_name:
+        from backend.routers.skills import run_plan_taper
+        try:
+            result = run_plan_taper(taper_swimmer_name, db, coach_context=thread_context, brief=brief)
+            reply = result["reply"]
+        except Exception as e:
+            reply = f"I had trouble planning the taper: {str(e)}."
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [taper_swimmer_name],
+            "topics_detected": ["taper_plan"],
+            "suggested_action": None,
+            "intent": {"type": "taper_plan", "swimmer_name": taper_swimmer_name},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {
+                "type": "taper_plan",
+                "swimmer_id": result.get("swimmer_id"),
+                "swimmer_name": result.get("swimmer_name"),
+            },
+        }
+
+    # --- Meso Planning Skill ---
+    # "What should the next block be?" type requests get the periodization specialist.
+    if _is_meso_plan(text):
+        from backend.routers.skills import run_plan_meso
+        try:
+            result = run_plan_meso(text, db, coach_context=thread_context, brief=brief)
+            reply = result["reply"]
+            draft = result.get("draft")
+        except Exception as e:
+            reply = f"I had trouble planning the meso: {str(e)}."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["meso_planning"],
+            "suggested_action": None,
+            "intent": {"type": "meso_planning"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "meso_plan", "draft": draft} if draft else None,
+        }
+
+    # --- Group Composition Skill ---
+    if _is_suggest_groups(text):
+        from backend.routers.skills import run_suggest_groups
+        try:
+            result = run_suggest_groups(text, db, coach_context=thread_context)
+            reply = result["reply"]
+            draft = result.get("draft")
+        except Exception as e:
+            reply = f"I had trouble analysing group composition: {str(e)}."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["suggest_groups"],
+            "suggested_action": None,
+            "intent": {"type": "suggest_groups"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "suggest_groups", "draft": draft} if draft else None,
+        }
+
+    # --- Micro Planning Skill ---
+    if _is_micro_plan(text):
+        from backend.routers.skills import run_plan_micro
+        target_date = _extract_target_date(text)
+        try:
+            result = run_plan_micro(text, db, week_start=target_date, coach_context=thread_context)
+            reply = result["reply"]
+            draft = result.get("draft")
+        except Exception as e:
+            reply = f"I had trouble planning the week: {str(e)}."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["micro_plan"],
+            "suggested_action": None,
+            "intent": {"type": "micro_plan"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "micro_plan", "draft": draft} if draft else None,
+        }
+
+    # --- Race Analysis Skill ---
+    # "How did we do at the meet?" type requests get the specialist post-meet analysis.
+    race_meet_id = _is_race_analysis(text, db)
+    if race_meet_id:
+        from backend.routers.skills import run_race_analysis
+        try:
+            result = run_race_analysis(race_meet_id, db, coach_context=thread_context, brief=brief)
+            reply = result["reply"]
+        except Exception as e:
+            reply = f"I had trouble running the race analysis: {str(e)}."
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [result.get("meet_name", "meet")],
+            "topics_detected": ["race_analysis"],
+            "suggested_action": None,
+            "intent": {"type": "race_analysis", "meet_id": race_meet_id},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {
+                "type": "race_analysis",
+                "meet_id": race_meet_id,
+                "meet_name": result.get("meet_name"),
+            },
+        }
+
+    # --- Block Review Skill ---
+    # "How did the last block go?" type requests get the squad-level meso analysis.
+    review_block_id = _is_block_review(text, db)
+    if review_block_id:
+        from backend.routers.skills import run_block_review
+        try:
+            result = run_block_review(review_block_id, db, coach_context=thread_context, brief=brief)
+            reply = result["reply"]
+        except Exception as e:
+            reply = f"I had trouble running the block review: {str(e)}."
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [result.get("block_name", "block")],
+            "topics_detected": ["block_review"],
+            "suggested_action": None,
+            "intent": {"type": "block_review", "block_id": review_block_id},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {
+                "type": "block_review",
+                "block_id": review_block_id,
+                "block_name": result.get("block_name"),
+            },
+        }
+
+    # --- Swimmer Adaptation Review Skill ---
+    # "How is [name] doing?" type requests get the systematic framework, not a general answer.
+    review_swimmer_name = _is_swimmer_review(text, db)
+    if review_swimmer_name:
+        from backend.routers.skills import run_adaptation_review
+        try:
+            result = run_adaptation_review(review_swimmer_name, db, save_to_profile=True, coach_context=thread_context, brief=brief)
+            reply = result["reply"]
+        except Exception as e:
+            reply = f"I had trouble running the adaptation review: {str(e)}."
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [review_swimmer_name],
+            "topics_detected": ["adaptation_review"],
+            "suggested_action": None,
+            "intent": {"type": "adaptation_review", "swimmer_name": review_swimmer_name},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {
+                "type": "adaptation_review",
+                "swimmer_id": result.get("swimmer_id"),
+                "swimmer_name": result.get("swimmer_name"),
+            },
+        }
+
+    # --- Session Planning Skill ---
+    # Explicit "generate a session" requests go to the specialized skill, not the general AI.
+    if _is_session_generation(text):
+        from backend.routers.skills import run_plan_session
+        target_date = _extract_target_date(text)
+        try:
+            skill_result = run_plan_session(text, db, target_date=target_date, coach_context=thread_context, brief=brief)
+            reply = skill_result["reply"]
+            draft = skill_result["draft"]
+        except Exception as e:
+            reply = f"I had trouble generating the session: {str(e)}. Try asking again or use the manual session form."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["session_planning"],
+            "suggested_action": None,
+            "intent": {"type": "session_planning"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "session_plan", "draft": draft} if draft else None,
+        }
 
     if 'competition' in topics:
         meets_ctx = build_meets_context(db)
@@ -205,7 +834,11 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     db.commit()
 
     # Secondary operations — none of these should crash the endpoint after reply is saved
-    WRITE_TOOLS = {"update_swimmer_status", "add_swimmer_observation"}
+    WRITE_TOOLS = {
+        "update_swimmer_status", "add_swimmer_observation",
+        "update_season_plan", "add_meso", "update_meso", "delete_meso",
+        "update_session", "create_season_plan",
+    }
     already_handled = tools_called & WRITE_TOOLS
     intent = {"intent": "general", "suggested_action": None}
     saved_benchmarks = []
@@ -261,9 +894,21 @@ Return JSON:
   "groups": [
     {{
       "group_number": 1,
-      "description": "who is in this group and why",
-      "sets": ["set description 1", "set description 2"],
-      "swimmer_names": ["first names of swimmers assigned to this group"]
+      "description": "Overall group description and load level",
+      "sub_groups": [
+        {{
+          "label": "A",
+          "aim": "Sprint focus — stroke rate and underwaters",
+          "sets": ["8x50 @ race pace 1:00", "4x25 fast + 25 easy"],
+          "swimmer_names": ["Tom", "Jake"]
+        }},
+        {{
+          "label": "B",
+          "aim": "Distance base — aerobic engine",
+          "sets": ["4x200 @ threshold 30s", "8x100 descending"],
+          "swimmer_names": ["Sarah", "Emily"]
+        }}
+      ]
     }}
   ]
 }}
@@ -272,7 +917,45 @@ Rules:
 - Include all groups discussed (typically 1-3)
 - Sets should be as specific as the conversation allows — use the actual distances/reps/rest if mentioned
 - If a set wasn't fleshed out, mark it as "TBC"
+- Create sub-groups within each group when swimmers have different event profiles (sprint vs distance), different training needs, or different sets were discussed. Use gender, age, target events, and any individual notes from the conversation to cluster. If all swimmers in a group are doing the same sets, one sub-group is fine.
+- If no sub-groups were discussed, still output one sub-group per group with all swimmers in it (label "A")
 - Return only valid JSON"""
+
+
+def _parse_sub_group_volumes(sets: list) -> dict:
+    """Parse a list of set descriptions and estimate metres per energy system."""
+    import json
+    if not sets:
+        return {}
+    prompt = f"""Parse these swimming training sets and estimate the total metres for each energy system category.
+
+Sets:
+{chr(10).join(f'- {s}' for s in sets)}
+
+Return JSON only with these exact keys (use 0 for categories not present):
+{{"aerobic": 0, "threshold": 0, "vo2": 0, "race_pace": 0, "lact_tol": 0, "short_race_pace": 0, "kicking": 0, "sprint": 0}}
+
+Guidelines:
+- aerobic: steady-state, long reps, low intensity (e.g. 400s/800s easy, long sets)
+- threshold: controlled hard effort, 3-5 min pace (e.g. "threshold", "T-pace", cruise intervals)
+- vo2: hard intervals, 2-3 min pace (e.g. "VO2", hard 200s/400s with recovery)
+- race_pace: event-specific pace (e.g. "race pace", "RP", "competition pace")
+- lact_tol: very hard repeated efforts with incomplete recovery (e.g. "lact tol", "LT", red sets)
+- short_race_pace: fast short efforts 10-50m at race pace or faster
+- kicking: kick sets of any intensity (count the distance kicked)
+- sprint: maximal effort sprints, usually ≤50m (e.g. "all out", "max effort", "blast")
+
+If a set says "8x100" assume 100m per rep. Count warm-up/cool-down as aerobic.
+Return only valid JSON, no explanation."""
+
+    try:
+        response = get_client().messages.create(
+            model=MODEL, max_tokens=300,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return json.loads(_strip_json(response.content[0].text))
+    except Exception:
+        return {}
 
 
 def _save_session_from_data(data: dict, db: DBSession) -> int:
@@ -292,6 +975,7 @@ def _save_session_from_data(data: dict, db: DBSession) -> int:
         squad=data.get("squad"),
         energy_system_focus=data.get("energy_system_focus"),
         coach_intent=data.get("coach_intent"),
+        individual_mods=data.get("individual_mods") or None,
         source="ai_chat",
     )
     db.add(session)
@@ -305,14 +989,37 @@ def _save_session_from_data(data: dict, db: DBSession) -> int:
             name_map[first] = s.id
 
     for grp in (data.get("groups") or []):
-        swimmer_ids = [name_map[n.lower()] for n in (grp.get("swimmer_names") or []) if n.lower() in name_map]
-        db.add(models.SessionGroup(
+        # Collect all swimmer names across sub-groups for the group-level target_swimmer_ids
+        all_sg_swimmer_names = []
+        for sg_data in (grp.get("sub_groups") or []):
+            all_sg_swimmer_names.extend(sg_data.get("swimmer_names") or [])
+        # Fall back to group-level swimmer_names if sub_groups not present
+        group_swimmer_names = grp.get("swimmer_names") or all_sg_swimmer_names
+        swimmer_ids = [name_map[n.lower()] for n in group_swimmer_names if n.lower() in name_map]
+
+        group_obj = models.SessionGroup(
             session_id=session.id,
             group_number=grp.get("group_number", 1),
             description=grp.get("description", ""),
             sets=grp.get("sets") or [],
-            target_swimmers=swimmer_ids,
-        ))
+            target_swimmer_ids=swimmer_ids,
+            volume_breakdown=grp.get("volume_breakdown") or None,
+        )
+        db.add(group_obj)
+        db.flush()  # get group_obj.id
+
+        for sg_data in (grp.get("sub_groups") or []):
+            swimmer_ids_sg = [name_map[n.lower()] for n in (sg_data.get("swimmer_names") or []) if n.lower() in name_map]
+            sets_list = sg_data.get("sets") or []
+            volumes = _parse_sub_group_volumes(sets_list)
+            db.add(models.SessionSubGroup(
+                session_group_id=group_obj.id,
+                label=sg_data.get("label", "A"),
+                aim=sg_data.get("aim"),
+                sets=sets_list,
+                swimmer_ids=swimmer_ids_sg,
+                volume_breakdown=volumes,
+            ))
 
     db.commit()
     db.refresh(session)
@@ -751,7 +1458,18 @@ def submit_register(body: dict = Body(...), db: DBSession = Depends(get_db)):
         ))
 
     db.commit()
-    return {"saved": len(attendance), "session_id": session_id}
+
+    # Feedback loop — if this session was AI-planned, prompt the coach for a quality check
+    feedback_prompt = None
+    if session.source in ("ai_chat", "skill") and session.coach_intent:
+        attended_count = sum(1 for e in attendance if e.get("present", False))
+        feedback_prompt = (
+            f"Register saved ({attended_count} attended). "
+            f"The session intent was: *{session.coach_intent[:150]}* — "
+            f"how did it go? Did the session achieve what was planned?"
+        )
+
+    return {"saved": len(attendance), "session_id": session_id, "feedback_prompt": feedback_prompt}
 
 
 @router.post("/pin-to-sessions")

@@ -30,6 +30,7 @@ class SessionCreate(BaseModel):
     energy_system_focus: Optional[str] = None
     coach_notes: Optional[str] = None
     groups: Optional[dict] = None   # {1: {description, sets}, 2: ..., 3: ...}
+    individual_mods: Optional[dict] = None  # {"swimmer_name": "modification note"}
     pool_slot_id: Optional[int] = None
     status: Optional[str] = 'completed'
     course: Optional[str] = None   # SCM / LCM
@@ -50,7 +51,10 @@ class CalendarCancel(BaseModel):
 class RegisterEntry(BaseModel):
     swimmer_id: int
     attended: bool
+    group_planned: Optional[int] = None
+    sub_group_planned: Optional[str] = None
     group_done: Optional[int] = None
+    sub_group_done: Optional[str] = None
     coach_observation: Optional[str] = None
 
 
@@ -89,6 +93,7 @@ def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
         energy_system_focus=body.energy_system_focus,
         coach_notes=body.coach_notes,
         planned_content=body.groups,
+        individual_mods=body.individual_mods,
         pool_slot_id=body.pool_slot_id,
         status=body.status or 'completed',
         course=body.course,
@@ -104,6 +109,7 @@ def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
                 group_number=int(group_num),
                 description=content.get("description", ""),
                 sets={"raw": content.get("sets", "")},
+                volume_breakdown=content.get("volume_breakdown") or None,
             )
             db.add(sg)
 
@@ -252,8 +258,16 @@ def update_session(
     for k, v in body.items():
         if k in allowed:
             setattr(session, k, v)
+    # Allow updating group volume_breakdown per group
+    if "groups" in body:
+        groups = db.query(models.SessionGroup).filter(models.SessionGroup.session_id == session_id).all()
+        group_map = {g.group_number: g for g in groups}
+        for group_num_str, content in body["groups"].items():
+            gnum = int(group_num_str)
+            if gnum in group_map and "volume_breakdown" in content:
+                group_map[gnum].volume_breakdown = content["volume_breakdown"] or None
     db.commit()
-    return _session_summary(session)
+    return _session_detail(session, db)
 
 
 # ---------------------------------------------------------------------------
@@ -344,12 +358,39 @@ async def import_photo(
 @router.get("/{session_id}/register")
 def get_register(session_id: int, db: DBSession = Depends(get_db)):
     """Return all active swimmers with existing entries pre-populated."""
-    _get_or_404(session_id, db)
+    session = _get_or_404(session_id, db)
     swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).order_by(models.Swimmer.name).all()
     existing_entries = {
         e.swimmer_id: e
         for e in db.query(models.SessionEntry).filter(models.SessionEntry.session_id == session_id).all()
     }
+    # Build planned group from macro group_definitions (primary source)
+    planned_group_map = {}   # swimmer_id -> group_number
+    planned_subgroup_map = {}  # swimmer_id -> sub_group_label
+
+    # Look up current macro covering this session's date
+    current_macro = db.query(models.TrainingMacro).filter(
+        models.TrainingMacro.date_from <= session.date,
+        models.TrainingMacro.date_to >= session.date,
+    ).order_by(models.TrainingMacro.date_from).first()
+    if current_macro and current_macro.group_definitions:
+        for g_label, defn in current_macro.group_definitions.items():
+            # Map "G1" -> 1, "G2" -> 2, etc.
+            try:
+                g_num = int(g_label.replace("G", "").replace("g", ""))
+            except ValueError:
+                continue
+            for sid in (defn.get("swimmer_ids") or []):
+                planned_group_map[sid] = g_num
+
+    # Also pull sub-group pre-assignment from session sub_groups (finer detail)
+    for g in (session.groups or []):
+        for sg in (g.sub_groups or []):
+            for sid in (sg.swimmer_ids or []):
+                if sid not in planned_group_map:
+                    planned_group_map[sid] = g.group_number
+                planned_subgroup_map[sid] = sg.label
+
     result = []
     for s in swimmers:
         e = existing_entries.get(s.id)
@@ -358,7 +399,10 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
             "swimmer_name": s.name,
             "squad": s.squad,
             "attended": e.attended if e else None,
+            "group_planned": (e.group_planned if e and e.group_planned else planned_group_map.get(s.id)),
+            "sub_group_planned": (e.sub_group_planned if e and e.sub_group_planned else planned_subgroup_map.get(s.id)),
             "group_done": e.group_done if e else None,
+            "sub_group_done": e.sub_group_done if e else None,
             "coach_observation": e.coach_observation if e else None,
             "ai_characterisation": e.ai_characterisation if e else None,
             "ai_expected_response": e.ai_expected_response if e else None,
@@ -397,7 +441,10 @@ def submit_register(
             db.add(entry)
 
         entry.attended = entry_data.attended
+        entry.group_planned = entry_data.group_planned
+        entry.sub_group_planned = entry_data.sub_group_planned
         entry.group_done = entry_data.group_done
+        entry.sub_group_done = entry_data.sub_group_done
         entry.coach_observation = entry_data.coach_observation
         db.flush()
 
@@ -457,6 +504,52 @@ def submit_register(
             "attended": entry.attended,
             "ai_characterisation": entry.ai_characterisation,
         })
+
+    # Create SwimmerSessionLoad records for attended swimmers
+    for entry_data in body.entries:
+        if not entry_data.attended or not entry_data.group_done:
+            continue
+        group = next((g for g in session.groups if g.group_number == entry_data.group_done), None)
+        if not group:
+            continue
+
+        # Resolve volume: prefer sub-group breakdown, fall back to group-level breakdown
+        volume = None
+        sub_label = None
+        if group.sub_groups:
+            if entry_data.sub_group_done:
+                sub = next((sg for sg in group.sub_groups if sg.label == entry_data.sub_group_done), None)
+            else:
+                sub = next(
+                    (sg for sg in group.sub_groups if entry_data.swimmer_id in (sg.swimmer_ids or [])),
+                    group.sub_groups[0] if group.sub_groups else None,
+                )
+            if sub and sub.volume_breakdown:
+                volume = sub.volume_breakdown
+                sub_label = sub.label
+
+        if not volume and group.volume_breakdown:
+            volume = group.volume_breakdown
+
+        if not volume:
+            continue
+
+        existing_load = db.query(models.SwimmerSessionLoad).filter(
+            models.SwimmerSessionLoad.swimmer_id == entry_data.swimmer_id,
+            models.SwimmerSessionLoad.session_id == session_id,
+        ).first()
+        if existing_load:
+            existing_load.volume_breakdown = volume
+            existing_load.sub_group_label = sub_label
+        else:
+            db.add(models.SwimmerSessionLoad(
+                swimmer_id=entry_data.swimmer_id,
+                session_id=session_id,
+                session_date=session.date,
+                group_number=entry_data.group_done,
+                sub_group_label=sub_label,
+                volume_breakdown=volume,
+            ))
 
     db.commit()
     return results
@@ -684,12 +777,26 @@ def _session_detail(s: models.Session, db: DBSession) -> dict:
         **_session_summary(s),
         "coach_notes": s.coach_notes,
         "planned_content": s.planned_content,
+        "individual_mods": s.individual_mods,
         "groups": [
             {
+                "id": g.id,
                 "group_number": g.group_number,
                 "description": g.description,
                 "sets": g.sets,
+                "volume_breakdown": g.volume_breakdown,
                 "target_swimmer_ids": g.target_swimmer_ids,
+                "sub_groups": [
+                    {
+                        "id": sg.id,
+                        "label": sg.label,
+                        "aim": sg.aim,
+                        "sets": sg.sets,
+                        "swimmer_ids": sg.swimmer_ids,
+                        "volume_breakdown": sg.volume_breakdown,
+                    }
+                    for sg in (g.sub_groups or [])
+                ],
             }
             for g in sorted(groups, key=lambda g: g.group_number)
         ],

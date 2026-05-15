@@ -28,15 +28,17 @@ BOOL_COLS = {
 }
 
 TABLES = [
-    "swimmers", "meets", "pool_slots", "training_blocks",
+    "swimmers", "meets", "pool_slots", "training_blocks", "training_macros", "season_blocks",
     "swim_times", "meet_targets", "swimmer_slots", "swimmer_exceptions",
     "schedules", "swimmer_load_events", "swimmer_profile_versions",
     "training_history_narratives", "profile_conversations",
-    "sessions", "session_groups", "session_entries",
+    "sessions", "session_groups", "session_sub_groups", "session_entries",
+    "swimmer_session_loads",
     "swimmer_observations", "periodization_plans", "ai_analyses",
     "coaching_profiles", "coaching_conversations",
     "ai_threads", "coach_ai_messages", "coaching_notes",
     "benchmark_logs", "swimmer_targets",
+    "skill_outputs",
 ]
 
 sqlite_conn = sqlite3.connect(SQLITE_PATH)

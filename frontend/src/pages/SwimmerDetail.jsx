@@ -7,6 +7,171 @@ import ObservationsTab from '../components/ObservationsTab'
 
 const TABS = ['Overview', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Context']
 
+const VOLUME_COLOURS = {
+  aerobic: 'bg-blue-500', threshold: 'bg-yellow-500', vo2: 'bg-orange-500',
+  race_pace: 'bg-purple-500', lact_tol: 'bg-red-500', short_race_pace: 'bg-pink-500',
+  kicking: 'bg-teal-500', sprint: 'bg-green-500',
+}
+const VOLUME_LABELS = {
+  aerobic: 'Aer', threshold: 'Thr', vo2: 'VO2', race_pace: 'RP',
+  lact_tol: 'LT', short_race_pace: 'SRP', kicking: 'Kck', sprint: 'Spr',
+}
+const PHASE_COLOURS = {
+  base: 'text-blue-300', build: 'text-green-300', peak: 'text-orange-300',
+  taper: 'text-yellow-300', competition: 'text-red-300', recovery: 'text-teal-300',
+}
+
+function fmtTime(s) {
+  if (!s) return '—'
+  const mins = Math.floor(s / 60)
+  const secs = (s % 60).toFixed(2).padStart(5, '0')
+  return mins > 0 ? `${mins}:${secs}` : `${secs}s`
+}
+
+function BlockStatusCard({ status }) {
+  const { current_meso, group, group_intent, weeks, benchmarks, recent_observations } = status
+  const [expandedWeek, setExpandedWeek] = useState(null)
+
+  const recentWeeks = weeks.slice(-6)
+  const activeWeeks = recentWeeks.filter(w => w.total > 0)
+
+  // Trend: compare last 2 active weeks
+  let loadTrend = null
+  if (activeWeeks.length >= 2) {
+    const last = activeWeeks[activeWeeks.length - 1].total
+    const prev = activeWeeks[activeWeeks.length - 2].total
+    const pct = prev > 0 ? Math.round(((last - prev) / prev) * 100) : null
+    if (pct !== null) loadTrend = { pct, up: pct >= 5, down: pct <= -5 }
+  }
+
+  return (
+    <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h3 className="font-semibold text-sm text-pool-200">Current Block</h3>
+          {current_meso ? (
+            <p className={`text-xs mt-0.5 ${PHASE_COLOURS[current_meso.phase_type] || 'text-pool-400'}`}>
+              {current_meso.name} · Week {current_meso.week_in}/{current_meso.total_weeks}
+            </p>
+          ) : (
+            <p className="text-xs text-pool-500 mt-0.5">No active block</p>
+          )}
+        </div>
+        {group && (
+          <span className="text-xs font-semibold bg-accent-600/30 text-accent-300 rounded-full px-2 py-0.5">{group}</span>
+        )}
+      </div>
+
+      {/* Group intent */}
+      {group_intent && (
+        <p className="text-xs text-pool-300 leading-relaxed border-l-2 border-accent-600/50 pl-3">
+          {group_intent}
+        </p>
+      )}
+
+      {/* Weekly load */}
+      {activeWeeks.length > 0 && (
+        <div>
+          <div className="flex items-center justify-between mb-1.5">
+            <p className="text-xs text-pool-500">Weekly load (last 6 weeks)</p>
+            {loadTrend && (
+              <span className={`text-xs font-semibold ${loadTrend.up ? 'text-green-400' : loadTrend.down ? 'text-red-400' : 'text-pool-400'}`}>
+                {loadTrend.up ? '↑' : loadTrend.down ? '↓' : '→'} {Math.abs(loadTrend.pct)}% vs prev week
+              </span>
+            )}
+          </div>
+          <div className="flex gap-1.5">
+            {recentWeeks.map(w => (
+              <button
+                key={w.week}
+                onClick={() => setExpandedWeek(expandedWeek === w.week ? null : w.week)}
+                className={`flex-1 rounded-lg p-1.5 text-center transition-colors ${expandedWeek === w.week ? 'bg-pool-600' : 'bg-pool-700/60'}`}
+              >
+                <p className="text-xs text-pool-500 mb-1">{w.week.replace(/\d{4}-W/, 'W')}</p>
+                {w.total > 0 ? (
+                  <>
+                    {/* Stacked colour bar */}
+                    <div className="flex rounded-sm overflow-hidden h-1.5 mb-1">
+                      {Object.entries(w.volumes).map(([k, v]) =>
+                        v > 0 ? (
+                          <div
+                            key={k}
+                            className={VOLUME_COLOURS[k] || 'bg-pool-500'}
+                            style={{ width: `${(v / w.total) * 100}%` }}
+                          />
+                        ) : null
+                      )}
+                    </div>
+                    <p className="text-xs font-semibold text-pool-200">{(w.total / 1000).toFixed(1)}k</p>
+                    <p className="text-xs text-pool-500">{w.sessions}s</p>
+                  </>
+                ) : (
+                  <p className="text-xs text-pool-700">—</p>
+                )}
+              </button>
+            ))}
+          </div>
+          {/* Expanded week breakdown */}
+          {expandedWeek && (() => {
+            const w = recentWeeks.find(x => x.week === expandedWeek)
+            if (!w || w.total === 0) return null
+            return (
+              <div className="mt-2 bg-pool-700/40 rounded-lg p-2 flex flex-wrap gap-2">
+                {Object.entries(w.volumes).map(([k, v]) =>
+                  v > 0 ? (
+                    <div key={k} className="flex items-center gap-1">
+                      <span className={`w-2 h-2 rounded-full ${VOLUME_COLOURS[k]}`} />
+                      <span className="text-xs text-pool-300">{VOLUME_LABELS[k]} {v.toLocaleString()}m</span>
+                    </div>
+                  ) : null
+                )}
+              </div>
+            )
+          })()}
+        </div>
+      )}
+
+      {/* Benchmarks */}
+      {benchmarks.length > 0 && (
+        <div>
+          <p className="text-xs text-pool-500 mb-1.5">Benchmarks</p>
+          <div className="space-y-1.5">
+            {benchmarks.slice(0, 3).map(bm => (
+              <div key={bm.category} className="flex items-center justify-between">
+                <span className="text-xs text-pool-300 capitalize">{bm.category}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-pool-200">{fmtTime(bm.entries[0]?.time_seconds)}</span>
+                  {bm.trend && (
+                    <span className={`text-xs ${bm.trend === 'improving' ? 'text-green-400' : bm.trend === 'slower' ? 'text-red-400' : 'text-pool-500'}`}>
+                      {bm.trend === 'improving' ? '↑' : bm.trend === 'slower' ? '↓' : '→'}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Recent observations */}
+      {recent_observations.length > 0 && (
+        <div>
+          <p className="text-xs text-pool-500 mb-1.5">Recent observations</p>
+          <div className="space-y-1">
+            {recent_observations.slice(0, 2).map((o, i) => (
+              <div key={i} className="flex gap-2">
+                <span className="text-xs text-pool-600 shrink-0 w-16">{o.date?.slice(5)}</span>
+                <span className="text-xs text-pool-400 leading-relaxed line-clamp-2">{o.content}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function SwimmerDetail() {
   const { id } = useParams()
   const [swimmer, setSwimmer] = useState(null)
@@ -64,6 +229,13 @@ export default function SwimmerDetail() {
   const [addingMeetObs, setAddingMeetObs] = useState(false)
   const [benchmarks, setBenchmarks] = useState([])
   const [targets, setTargets] = useState([])
+  const [blockStatus, setBlockStatus] = useState(null)
+  const [adaptationReview, setAdaptationReview] = useState(null)
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [taperResult, setTaperResult] = useState(null)
+  const [taperLoading, setTaperLoading] = useState(false)
+  const [skillHistory, setSkillHistory] = useState(null)
+  const [skillHistoryLoading, setSkillHistoryLoading] = useState(false)
   const [showBenchmarkForm, setShowBenchmarkForm] = useState(false)
   const [benchmarkForm, setBenchmarkForm] = useState({ distance: 100, stroke: 'free', effort: 'max', time_seconds: '', date: new Date().toISOString().split('T')[0], notes: '' })
   const [savingBenchmark, setSavingBenchmark] = useState(false)
@@ -99,6 +271,7 @@ export default function SwimmerDetail() {
       api.getAttendanceStats(id).then(setAttendanceStats).catch(() => {})
       api.getCurrentBenchmarks(id).then(setBenchmarks).catch(() => {})
       api.getTargets(id).then(setTargets).catch(() => {})
+      api.getBlockStatus(id).then(setBlockStatus).catch(() => {})
     }
     if (tab === 'Context') {
       api.getSwimmerContext(id).then(setSwimmerContext)
@@ -237,6 +410,123 @@ export default function SwimmerDetail() {
       <div className="flex-1 overflow-y-auto p-4">
         {tab === 'Overview' && (
           <div className="space-y-4">
+
+            {/* Block Status */}
+            {blockStatus && (
+              <BlockStatusCard status={blockStatus} />
+            )}
+
+            {/* Adaptation Review */}
+            {!adaptationReview && (
+              <button
+                onClick={async () => {
+                  setReviewLoading(true)
+                  try {
+                    const res = await api.reviewSwimmerSkill({ swimmer_id: swimmer.id })
+                    setAdaptationReview(res.reply)
+                  } catch (e) {
+                    alert(`Review failed: ${e.message}`)
+                  }
+                  setReviewLoading(false)
+                }}
+                disabled={reviewLoading}
+                className="w-full bg-pool-800 hover:bg-pool-700 border border-pool-700 hover:border-accent-600/50 rounded-xl py-3 text-sm font-medium text-pool-300 disabled:opacity-40 transition-colors"
+              >
+                {reviewLoading ? 'Generating adaptation review…' : 'Adaptation Review'}
+              </button>
+            )}
+            {adaptationReview && (
+              <div className="bg-pool-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-accent-400 uppercase tracking-wide">Adaptation Review</p>
+                  <button onClick={() => setAdaptationReview(null)} className="text-xs text-pool-500 hover:text-pool-300">Dismiss</button>
+                </div>
+                <div className="text-sm text-pool-200 leading-relaxed whitespace-pre-wrap space-y-1">
+                  {adaptationReview.split('\n').map((line, i) => {
+                    if (line.startsWith('**') && line.endsWith('**')) {
+                      return <p key={i} className="font-semibold text-white mt-3 first:mt-0">{line.replace(/\*\*/g, '')}</p>
+                    }
+                    return line.trim() ? <p key={i} className="text-pool-300">{line}</p> : null
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Taper Planning */}
+            {!taperResult && (
+              <button
+                onClick={async () => {
+                  setTaperLoading(true)
+                  try {
+                    const res = await api.planTaperSkill({ swimmer_id: swimmer.id })
+                    setTaperResult(res.reply)
+                  } catch (e) {
+                    alert(`Taper planning failed: ${e.message}`)
+                  }
+                  setTaperLoading(false)
+                }}
+                disabled={taperLoading}
+                className="w-full bg-pool-800 hover:bg-pool-700 border border-pool-700 hover:border-yellow-600/50 rounded-xl py-3 text-sm font-medium text-pool-300 disabled:opacity-40 transition-colors"
+              >
+                {taperLoading ? 'Generating taper plan…' : 'Plan Taper'}
+              </button>
+            )}
+            {taperResult && (
+              <div className="bg-pool-800 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-yellow-400 uppercase tracking-wide">Taper Plan</p>
+                  <button onClick={() => setTaperResult(null)} className="text-xs text-pool-500 hover:text-pool-300">Dismiss</button>
+                </div>
+                <div className="text-sm text-pool-200 leading-relaxed whitespace-pre-wrap space-y-1">
+                  {taperResult.split('\n').map((line, i) => {
+                    if (line.startsWith('**') && line.endsWith('**')) {
+                      return <p key={i} className="font-semibold text-white mt-3 first:mt-0">{line.replace(/\*\*/g, '')}</p>
+                    }
+                    return line.trim() ? <p key={i} className="text-pool-300">{line}</p> : null
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Skill History */}
+            <div className="bg-pool-800 rounded-xl overflow-hidden">
+              <button
+                onClick={async () => {
+                  if (skillHistory !== null) { setSkillHistory(null); return }
+                  setSkillHistoryLoading(true)
+                  try {
+                    const res = await api.getSwimmerSkillHistory(swimmer.id)
+                    setSkillHistory(res)
+                  } catch (e) {
+                    setSkillHistory([])
+                  }
+                  setSkillHistoryLoading(false)
+                }}
+                className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-pool-300 hover:text-pool-100 transition-colors"
+              >
+                <span>Skill History</span>
+                <span className="text-pool-500 text-xs">{skillHistory !== null ? '▲ Hide' : skillHistoryLoading ? 'Loading…' : '▼ Show'}</span>
+              </button>
+              {skillHistory !== null && (
+                <div className="px-4 pb-4 space-y-3 border-t border-pool-700">
+                  {skillHistory.length === 0 ? (
+                    <p className="text-xs text-pool-500 pt-3">No skill outputs recorded yet.</p>
+                  ) : (
+                    skillHistory.map((item) => (
+                      <div key={item.id} className="pt-3 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-accent-400 capitalize">{item.skill_type.replace(/_/g, ' ')}</span>
+                          <span className="text-xs text-pool-500">{new Date(item.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</span>
+                        </div>
+                        <p className="text-xs text-pool-300 leading-relaxed whitespace-pre-wrap">
+                          {item.brief_output || item.full_output?.slice(0, 300) + (item.full_output?.length > 300 ? '…' : '')}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Attendance Stats */}
             {attendanceStats && attendanceStats.overall_total > 0 && (

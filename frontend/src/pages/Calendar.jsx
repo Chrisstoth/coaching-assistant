@@ -115,6 +115,17 @@ function SessionActionSheet({ item, dayDate, onClose, onDeleted, onStart, onCanc
           </button>
         )}
 
+        <button
+          onClick={() => {
+            const dayLabel = new Date(dayDate).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+            const slotInfo = item.label ? ` (${item.label})` : ''
+            navigate('/ai', { state: { initialMessage: `Plan a session for ${dayLabel}${slotInfo}` } })
+          }}
+          className="w-full bg-pool-700 border border-pool-600 rounded-xl py-3 font-semibold text-sm text-accent-300"
+        >
+          Plan with AI
+        </button>
+
         {item.status !== 'cancelled' && item.slot_id && (
           <button
             onClick={() => { onClose(); onCancel() }}

@@ -58,9 +58,15 @@ You have direct access to the coaching database via tools. Use them proactively:
 - get_swimmer_detail: fetch a swimmer's full profile, times, and observations — use when discussing a specific swimmer
 - update_swimmer_status: directly update a swimmer to sabbatical/injury/active — do this immediately when the coach states it, confirm in your reply
 - add_swimmer_observation: save a coaching observation or intent to a swimmer's profile — use when the coach makes a meaningful observation worth keeping
-- get_season_plan: fetch current block, emphasis, upcoming meets
+- get_season_plan: fetch full macro/meso plan with IDs, group definitions, upcoming meets — always call this before creating or editing a plan
+- create_season_plan: build a new macro with meso phases from a coach description
+- update_season_plan: edit an existing macro (narrative, dates, group definitions)
+- add_meso: add a phase to an existing macro
+- update_meso: edit a meso's dates, phase type, or group intents
+- delete_meso: remove a phase (only when explicitly asked)
+- update_session: edit a session's title, coach intent, notes, or group content
 
-Do not wait to be asked to use tools — if a question implies needing data you don't have in context, fetch it. If the coach states a status change or observation worth saving, save it.
+Do not wait to be asked to use tools — if a question implies needing data you don't have in context, fetch it. If the coach states a status change or observation worth saving, save it. When editing a plan, always call get_season_plan first to get the correct IDs.
 """
 
 
@@ -117,11 +123,129 @@ def get_tools() -> list:
         },
         {
             "name": "get_season_plan",
-            "description": "Get the current season plan: active training block, phase, emphasis percentages, upcoming meets. Use when the coach asks about the season structure, current block, or upcoming competitions.",
+            "description": "Get the full season plan: all macros with their meso phases, group definitions, upcoming meets. Always call this before creating or editing a plan so you know what already exists.",
             "input_schema": {
                 "type": "object",
                 "properties": {},
                 "required": []
+            }
+        },
+        {
+            "name": "update_season_plan",
+            "description": "Update an existing macro's name, narrative, dates, or group definitions. Use when the coach wants to change something about the overall macro plan.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "macro_id": {"type": "integer", "description": "ID of the macro to update (from get_season_plan)"},
+                    "name": {"type": "string"},
+                    "narrative": {"type": "string"},
+                    "date_from": {"type": "string", "description": "YYYY-MM-DD"},
+                    "date_to": {"type": "string", "description": "YYYY-MM-DD"},
+                    "group_definitions": {"type": "object", "description": "Full updated group definitions — replaces existing"}
+                },
+                "required": ["macro_id"]
+            }
+        },
+        {
+            "name": "add_meso",
+            "description": "Add a new meso phase to an existing macro.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "macro_id": {"type": "integer", "description": "ID of the parent macro"},
+                    "name": {"type": "string"},
+                    "phase_type": {"type": "string", "enum": ["base", "build", "peak", "taper", "competition", "recovery", "transition"]},
+                    "date_from": {"type": "string", "description": "YYYY-MM-DD"},
+                    "date_to": {"type": "string", "description": "YYYY-MM-DD"},
+                    "group_intents": {"type": "object", "description": "Intent per group: {G1: '...', G2: '...'}"},
+                    "notes": {"type": "string"}
+                },
+                "required": ["macro_id", "name", "phase_type", "date_from", "date_to"]
+            }
+        },
+        {
+            "name": "update_meso",
+            "description": "Edit an existing meso phase — change its dates, phase type, group intents, or notes.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "meso_id": {"type": "integer", "description": "ID of the meso to update (from get_season_plan)"},
+                    "name": {"type": "string"},
+                    "phase_type": {"type": "string", "enum": ["base", "build", "peak", "taper", "competition", "recovery", "transition"]},
+                    "date_from": {"type": "string", "description": "YYYY-MM-DD"},
+                    "date_to": {"type": "string", "description": "YYYY-MM-DD"},
+                    "group_intents": {"type": "object"},
+                    "notes": {"type": "string"}
+                },
+                "required": ["meso_id"]
+            }
+        },
+        {
+            "name": "delete_meso",
+            "description": "Delete a meso phase from a macro. Use only when the coach explicitly asks to remove a phase.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "meso_id": {"type": "integer", "description": "ID of the meso to delete"}
+                },
+                "required": ["meso_id"]
+            }
+        },
+        {
+            "name": "update_session",
+            "description": "Edit an existing session — update its title, coach intent, energy system focus, notes, or group content/sets. Use when the coach wants to change something about a specific session.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "integer", "description": "ID of the session to update (from get_recent_sessions)"},
+                    "title": {"type": "string"},
+                    "coach_intent": {"type": "string"},
+                    "energy_system_focus": {"type": "string"},
+                    "coach_notes": {"type": "string"},
+                    "groups": {
+                        "type": "object",
+                        "description": "Updated group content keyed by group number string. Each value: {description, sets}. Only include groups you want to change."
+                    }
+                },
+                "required": ["session_id"]
+            }
+        },
+        {
+            "name": "create_season_plan",
+            "description": "Create a macro training plan with meso blocks inside it. Use this when the coach describes their season plan and wants it saved as a blueprint — with macro dates, narrative intent, group definitions (who is in each group), and the meso phases within the macro. Always call get_season_plan first to check what already exists before creating.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Macro name, e.g. 'Spring 2026 — County Prep'"},
+                    "squad": {"type": "string", "description": "Squad name, e.g. 'Silver 1'"},
+                    "date_from": {"type": "string", "description": "Start date YYYY-MM-DD"},
+                    "date_to": {"type": "string", "description": "End date YYYY-MM-DD"},
+                    "narrative": {"type": "string", "description": "Overall coaching narrative for the macro — what you're trying to achieve across the full period"},
+                    "group_definitions": {
+                        "type": "object",
+                        "description": "Group assignments — keys are G1/G2/G3, values have description and swimmer_ids (use swimmer IDs from the squad snapshot). Example: {G1: {description: 'Top tier', swimmer_ids: [1,5,8]}}",
+                    },
+                    "mesos": {
+                        "type": "array",
+                        "description": "The meso phases within this macro, in order",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string"},
+                                "phase_type": {"type": "string", "enum": ["base", "build", "peak", "taper", "competition", "recovery", "transition"]},
+                                "date_from": {"type": "string"},
+                                "date_to": {"type": "string"},
+                                "group_intents": {
+                                    "type": "object",
+                                    "description": "Free-text intent per group for this meso. Keys: G1, G2, G3"
+                                },
+                                "notes": {"type": "string"}
+                            },
+                            "required": ["name", "phase_type", "date_from", "date_to"]
+                        }
+                    }
+                },
+                "required": ["name", "date_from", "date_to", "mesos"]
             }
         },
     ]
@@ -225,49 +349,172 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
         db.commit()
         return f"Saved {tool_input.get('obs_type', 'general')} observation for {swimmer.name}: {tool_input.get('content', '')[:100]}"
 
+    elif tool_name == "update_season_plan":
+        macro_id = tool_input.get("macro_id")
+        macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+        if not macro:
+            return f"Macro ID {macro_id} not found."
+        for field in ("name", "narrative", "date_from", "date_to", "group_definitions"):
+            if field in tool_input:
+                setattr(macro, field, tool_input[field])
+        db.commit()
+        return f"Updated macro '{macro.name}'."
+
+    elif tool_name == "add_meso":
+        macro_id = tool_input.get("macro_id")
+        macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+        if not macro:
+            return f"Macro ID {macro_id} not found."
+        meso = models.SeasonBlock(
+            macro_id=macro_id,
+            name=tool_input["name"],
+            squad=macro.squad,
+            phase_type=tool_input.get("phase_type"),
+            date_from=tool_input["date_from"],
+            date_to=tool_input["date_to"],
+            group_intents=tool_input.get("group_intents"),
+            notes=tool_input.get("notes"),
+        )
+        db.add(meso)
+        db.commit()
+        return f"Added meso '{meso.name}' ({meso.date_from} → {meso.date_to}) to macro '{macro.name}'."
+
+    elif tool_name == "update_meso":
+        meso_id = tool_input.get("meso_id")
+        meso = db.query(models.SeasonBlock).filter(models.SeasonBlock.id == meso_id).first()
+        if not meso:
+            return f"Meso ID {meso_id} not found."
+        for field in ("name", "phase_type", "date_from", "date_to", "group_intents", "notes"):
+            if field in tool_input:
+                setattr(meso, field, tool_input[field])
+        db.commit()
+        return f"Updated meso '{meso.name}'."
+
+    elif tool_name == "delete_meso":
+        meso_id = tool_input.get("meso_id")
+        meso = db.query(models.SeasonBlock).filter(models.SeasonBlock.id == meso_id).first()
+        if not meso:
+            return f"Meso ID {meso_id} not found."
+        name = meso.name
+        db.delete(meso)
+        db.commit()
+        return f"Deleted meso '{name}'."
+
+    elif tool_name == "update_session":
+        session_id = tool_input.get("session_id")
+        session = db.query(models.Session).filter(models.Session.id == session_id).first()
+        if not session:
+            return f"Session ID {session_id} not found."
+        for field in ("title", "coach_intent", "energy_system_focus", "coach_notes"):
+            if field in tool_input:
+                setattr(session, field, tool_input[field])
+        if "groups" in tool_input:
+            for group_num_str, content in tool_input["groups"].items():
+                group_num = int(group_num_str)
+                group = next((g for g in session.groups if g.group_number == group_num), None)
+                if group:
+                    if "description" in content:
+                        group.description = content["description"]
+                    if "sets" in content:
+                        group.sets = {"raw": content["sets"]}
+                else:
+                    new_group = models.SessionGroup(
+                        session_id=session.id,
+                        group_number=group_num,
+                        description=content.get("description", ""),
+                        sets={"raw": content.get("sets", "")},
+                    )
+                    db.add(new_group)
+        db.commit()
+        return f"Updated session '{session.title or session.date}'."
+
     elif tool_name == "get_season_plan":
         today = date_type.today()
         lines = []
-        current_block = (
-            db.query(models.SeasonBlock)
-            .filter(models.SeasonBlock.date_from <= today, models.SeasonBlock.date_to >= today)
-            .first()
-        )
-        if current_block:
-            total_days = (current_block.date_to - current_block.date_from).days + 1
-            total_weeks = max(1, round(total_days / 7))
-            week_in = min(total_weeks, (today - current_block.date_from).days // 7 + 1)
-            lines.append(f"CURRENT BLOCK: {current_block.name} (Week {week_in} of {total_weeks} | {current_block.date_from} – {current_block.date_to})")
-            if current_block.phase_type:
-                lines.append(f"  Phase: {current_block.phase_type}")
-            if current_block.emphasis:
-                emp_str = ", ".join(f"{k} {v}%" for k, v in current_block.emphasis.items() if v)
-                lines.append(f"  Emphasis: {emp_str}")
-            if current_block.notes:
-                lines.append(f"  Notes: {current_block.notes[:150]}")
+
+        # Full macro/meso structure with IDs for editing
+        macros = db.query(models.TrainingMacro).order_by(models.TrainingMacro.date_from).all()
+        if macros:
+            lines.append("SEASON PLAN (macros and meso phases):")
+            for macro in macros:
+                status = "CURRENT" if macro.date_from <= today <= macro.date_to else ("PAST" if macro.date_to < today else "UPCOMING")
+                lines.append(f"\nMACRO [id={macro.id}] {macro.name} | {macro.squad or 'no squad'} | {macro.date_from} → {macro.date_to} | {status}")
+                if macro.narrative:
+                    lines.append(f"  Narrative: {macro.narrative[:200]}")
+                if macro.group_definitions:
+                    for g, defn in macro.group_definitions.items():
+                        desc = defn.get("description", "")
+                        names = defn.get("swimmer_names") or [str(i) for i in (defn.get("swimmer_ids") or [])]
+                        lines.append(f"  {g}: {desc} — {', '.join(names) if names else 'no swimmers assigned'}")
+                mesos = db.query(models.SeasonBlock).filter(
+                    models.SeasonBlock.macro_id == macro.id
+                ).order_by(models.SeasonBlock.date_from).all()
+                for meso in mesos:
+                    total_days = (meso.date_to - meso.date_from).days + 1
+                    total_weeks = max(1, round(total_days / 7))
+                    meso_status = "NOW" if meso.date_from <= today <= meso.date_to else ""
+                    lines.append(f"  MESO [id={meso.id}] {meso.name} | {meso.phase_type} | {meso.date_from} → {meso.date_to} ({total_weeks}w) {meso_status}")
+                    if meso.group_intents:
+                        for g, intent in meso.group_intents.items():
+                            if intent:
+                                lines.append(f"    {g}: {intent[:100]}")
         else:
-            lines.append("No current training block defined.")
-        next_block = (
-            db.query(models.SeasonBlock)
-            .filter(models.SeasonBlock.date_from > today)
-            .order_by(models.SeasonBlock.date_from)
-            .first()
-        )
-        if next_block:
-            weeks_away = (next_block.date_from - today).days // 7
-            lines.append(f"NEXT BLOCK: {next_block.name} starts {next_block.date_from} ({weeks_away}w away)")
-        meets = (
-            db.query(models.Meet)
-            .filter(models.Meet.date >= today, models.Meet.date <= today + timedelta(days=90))
-            .order_by(models.Meet.date)
-            .all()
-        )
+            lines.append("No macros defined yet.")
+            # Fall back to orphan mesos
+            current_block = db.query(models.SeasonBlock).filter(
+                models.SeasonBlock.date_from <= today, models.SeasonBlock.date_to >= today
+            ).first()
+            if current_block:
+                lines.append(f"Current block [id={current_block.id}]: {current_block.name} ({current_block.phase_type})")
+
+        # Upcoming meets
+        meets = db.query(models.Meet).filter(
+            models.Meet.date >= today, models.Meet.date <= today + timedelta(days=120)
+        ).order_by(models.Meet.date).all()
         if meets:
-            lines.append("UPCOMING MEETS (90 days):")
+            lines.append("\nUPCOMING MEETS (120 days):")
             for m in meets:
-                course = f" ({m.course})" if m.course else ""
-                lines.append(f"  {m.date} | {m.name}{course} | {m.location or ''}")
+                lines.append(f"  [id={m.id}] {m.date} | {m.name} | {m.location or ''}")
+
         return "\n".join(lines) if lines else "No season plan data available."
+
+    elif tool_name == "create_season_plan":
+        try:
+            macro = models.TrainingMacro(
+                name=tool_input["name"],
+                squad=tool_input.get("squad"),
+                date_from=tool_input["date_from"],
+                date_to=tool_input["date_to"],
+                narrative=tool_input.get("narrative"),
+                group_definitions=tool_input.get("group_definitions"),
+            )
+            db.add(macro)
+            db.flush()
+
+            meso_names = []
+            for meso_data in tool_input.get("mesos", []):
+                meso = models.SeasonBlock(
+                    macro_id=macro.id,
+                    name=meso_data["name"],
+                    squad=tool_input.get("squad"),
+                    phase_type=meso_data.get("phase_type"),
+                    date_from=meso_data["date_from"],
+                    date_to=meso_data["date_to"],
+                    group_intents=meso_data.get("group_intents"),
+                    notes=meso_data.get("notes"),
+                )
+                db.add(meso)
+                meso_names.append(f"{meso_data['name']} ({meso_data['date_from']} → {meso_data['date_to']})")
+
+            db.commit()
+            return (
+                f"Season plan created: '{macro.name}' ({macro.date_from} → {macro.date_to})\n"
+                f"Mesos: {', '.join(meso_names)}\n"
+                f"Group definitions saved: {list((tool_input.get('group_definitions') or {}).keys())}"
+            )
+        except Exception as e:
+            db.rollback()
+            return f"Failed to create season plan: {str(e)}"
 
     return f"Unknown tool: {tool_name}"
 
@@ -310,9 +557,240 @@ def get_system_prompt(db: DBSession, extra: str = "") -> str:
             note_lines.append(f"\n[{n.title}{swimmers_str} | {n.date_from} to {n.date_to}]\n{n.body}")
         parts.append("---\n" + "\n".join(note_lines))
 
+    # Approaching swimmer targets — surface any unachieved targets with deadlines in the next 8 weeks
+    approaching_targets = _build_approaching_targets(db, today)
+    if approaching_targets:
+        parts.append(f"---\n{approaching_targets}")
+
     if extra:
         parts.append(f"---\n{extra}")
     return "\n\n".join(parts)
+
+
+SEASON_PLAN_BASE = """You are a specialist season planning assistant for competitive swimming. Your role is different from the poolside coaching assistant — you are here to help the coach build and refine the season's training structure from the top down.
+
+You work through a hierarchy:
+  MACRO (season arc, 9-12 months) → MESO (training blocks, 3-6 weeks each) → MICRO (weekly session sequence)
+
+Session writing is NOT done here. If the coach asks to write a specific session, direct them to the main coaching chat or the Calendar. Your job is the structure above that.
+
+HOW TO WORK:
+- Be progressive. Build the macro first, then drill into mesos, then micros.
+- At each level, ask what you need before proposing — especially about key competitions and how the block before went.
+- When a level is agreed, confirm it before moving down. "Happy with that macro structure? I'll now plan the first block."
+- Reference what was already decided in this conversation. If the macro has been agreed, the mesos must fit inside it.
+- Keep replies planning-focused and strategic. No poolside-style responses.
+
+WHAT YOU CAN DO:
+- Plan the macro (full season arc)
+- Plan individual meso blocks within the macro
+- Plan micro cycles (weekly session sequences) within a meso
+- Suggest group composition
+- Adjust any level based on coach feedback
+
+WHAT YOU CANNOT DO (redirect to main chat):
+- Write specific session sets
+- Log observations or benchmark times
+- Answer questions about individual swimmers' form or technique today
+
+Always show where you are in the hierarchy. If you're planning a meso, say which macro phase it sits in. If you're planning a micro, say which week of which meso."""
+
+
+def get_season_plan_system_prompt(db: DBSession, macro_id: int = None) -> str:
+    """Build the system prompt for a season planning thread — includes macro/meso context."""
+    from datetime import date as date_type
+    parts = [SEASON_PLAN_BASE]
+
+    # Coaching philosophy
+    profile = (
+        db.query(models.CoachingProfile)
+        .filter(models.CoachingProfile.is_current == True)
+        .first()
+    )
+    if profile and profile.summary:
+        parts.append(f"---\nCOACHING CONTEXT:\n{profile.summary}")
+
+    # Current macro and its phases
+    today = date_type.today()
+    macro = None
+    if macro_id:
+        macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+    if not macro:
+        macro = db.query(models.TrainingMacro).filter(
+            models.TrainingMacro.date_from <= today,
+            models.TrainingMacro.date_to >= today,
+        ).order_by(models.TrainingMacro.date_from).first()
+
+    if macro:
+        macro_lines = [f"CURRENT MACRO: {macro.name} | {macro.date_from} to {macro.date_to}"]
+        if macro.narrative:
+            macro_lines.append(f"Season narrative: {macro.narrative[:400]}")
+        if macro.group_definitions:
+            macro_lines.append("Groups:")
+            for g_label, defn in macro.group_definitions.items():
+                desc = defn.get("description", "") if isinstance(defn, dict) else str(defn)
+                macro_lines.append(f"  {g_label}: {desc}")
+
+        mesos = db.query(models.SeasonBlock).filter(
+            models.SeasonBlock.macro_id == macro.id
+        ).order_by(models.SeasonBlock.date_from).all()
+
+        if mesos:
+            macro_lines.append("Phases in this macro:")
+            for m in mesos:
+                weeks = max(1, round((m.date_to - m.date_from).days / 7))
+                status = "CURRENT" if m.date_from <= today <= m.date_to else ("PAST" if m.date_to < today else "FUTURE")
+                macro_lines.append(f"  [{status}] {m.phase_type or '?'} — {m.name} | {m.date_from} to {m.date_to} ({weeks}w)")
+        else:
+            macro_lines.append("No phases planned yet in this macro.")
+
+        parts.append("---\n" + "\n".join(macro_lines))
+
+    # Upcoming meets (next 52 weeks)
+    from datetime import timedelta
+    cutoff = today + timedelta(weeks=52)
+    meets = db.query(models.Meet).filter(
+        models.Meet.date >= today,
+        models.Meet.date <= cutoff,
+    ).order_by(models.Meet.date).all()
+
+    if meets:
+        meet_lines = ["KEY COMPETITIONS (next 12 months — the macro must be built around these):"]
+        for m in meets:
+            weeks_out = (m.date - today).days // 7
+            priority = f" | Priority: {m.level}" if m.level else ""
+            meet_lines.append(f"  {m.date} ({weeks_out}w out): {m.name}{priority}")
+        parts.append("---\n" + "\n".join(meet_lines))
+
+    return "\n\n".join(parts)
+
+
+ATHLETE_PLAN_BASE = """You are the athlete development assistant for a competitive swimming club. Your focus is on individual swimmer development, adaptation, and readiness — helping the coach think through decisions about specific athletes.
+
+YOUR FOCUS:
+- Individual swimmer development pathways and training response
+- Readiness for competition or increased load
+- Group placement decisions and rationale
+- Event selection and target-setting for specific swimmers
+- Recognising who needs more attention, a load change, or a different approach
+- Patterns across the squad — who is thriving, who is plateauing, who might be at risk
+
+THIS IS NOT FOR:
+- Writing session sets (use the main chat for that)
+- Building the season macro/meso/micro structure (use the season planning thread for that)
+
+HOW TO WORK:
+- When the coach mentions a swimmer by name, draw on everything you know about them — profile, recent times, recent sessions, targets
+- Ask targeted questions to fill gaps. The coach's eye is the primary signal — data gives context, not the verdict
+- Think in terms of individual athlete context: training age, developmental stage, event profile, and what the last block has shown
+- Be specific. "Their aerobic markers are plateauing over the last 6 weeks despite consistent attendance" beats "they seem to be doing okay"
+
+CRITICAL: You cannot reliably judge adaptation from times alone. A swimmer may be mid-adaptation, de-loading, or peaking early. Always ask what the coach is observing at the pool before drawing conclusions."""
+
+
+def get_athlete_plan_system_prompt(db: DBSession) -> str:
+    """Build the system prompt for an athlete planning thread."""
+    from datetime import date as date_type, timedelta
+    parts = [ATHLETE_PLAN_BASE]
+
+    # Coaching philosophy
+    profile = (
+        db.query(models.CoachingProfile)
+        .filter(models.CoachingProfile.is_current == True)
+        .first()
+    )
+    if profile and profile.summary:
+        parts.append(f"---\nCOACHING CONTEXT:\n{profile.summary}")
+
+    # Current macro + phase (brief context)
+    today = date_type.today()
+    macro = db.query(models.TrainingMacro).filter(
+        models.TrainingMacro.date_from <= today,
+        models.TrainingMacro.date_to >= today,
+    ).order_by(models.TrainingMacro.date_from).first()
+
+    if macro:
+        lines = [f"CURRENT MACRO: {macro.name} | {macro.date_from} to {macro.date_to}"]
+        if macro.group_definitions:
+            lines.append("Groups:")
+            for g_label, defn in macro.group_definitions.items():
+                desc = defn.get("description", "") if isinstance(defn, dict) else str(defn)
+                lines.append(f"  {g_label}: {desc}")
+        current_meso = db.query(models.SeasonBlock).filter(
+            models.SeasonBlock.macro_id == macro.id,
+            models.SeasonBlock.date_from <= today,
+            models.SeasonBlock.date_to >= today,
+        ).first()
+        if current_meso:
+            weeks_in = max(1, round((today - current_meso.date_from).days / 7))
+            total_weeks = max(1, round((current_meso.date_to - current_meso.date_from).days / 7))
+            lines.append(f"Current phase: {current_meso.phase_type or '?'} — {current_meso.name} (week {weeks_in} of {total_weeks})")
+        parts.append("---\n" + "\n".join(lines))
+
+    # Upcoming meets (next 8 weeks)
+    eight_weeks_ahead = today + timedelta(weeks=8)
+    meets = db.query(models.Meet).filter(
+        models.Meet.date >= today,
+        models.Meet.date <= eight_weeks_ahead,
+    ).order_by(models.Meet.date).all()
+    if meets:
+        meet_lines = ["UPCOMING MEETS:"]
+        for m in meets:
+            days = (m.date - today).days
+            meet_lines.append(f"  {m.name} — {m.date} ({days}d)")
+        parts.append("---\n" + "\n".join(meet_lines))
+
+    return "\n\n".join(parts)
+
+
+def _build_approaching_targets(db: DBSession, today) -> str:
+    """Surface unachieved swimmer targets with deadlines in the next 8 weeks."""
+    from datetime import timedelta
+    from sqlalchemy import desc as _desc
+    cutoff = today + timedelta(weeks=8)
+    targets = (
+        db.query(models.SwimmerTarget)
+        .filter(
+            models.SwimmerTarget.achieved == False,
+            models.SwimmerTarget.deadline != None,
+            models.SwimmerTarget.deadline <= cutoff,
+        )
+        .order_by(models.SwimmerTarget.deadline)
+        .all()
+    )
+    if not targets:
+        return ""
+
+    lines = ["APPROACHING SWIMMER TARGETS (unachieved, deadline within 8 weeks — surface these proactively):"]
+    for tgt in targets:
+        sw = db.query(models.Swimmer).filter(models.Swimmer.id == tgt.swimmer_id).first()
+        if not sw:
+            continue
+        days_left = (tgt.deadline - today).days
+        deadline_str = f"{tgt.deadline} ({days_left}d)"
+
+        if tgt.target_time_seconds and tgt.distance and tgt.stroke and tgt.effort:
+            bm = (
+                db.query(models.BenchmarkLog)
+                .filter(
+                    models.BenchmarkLog.swimmer_id == tgt.swimmer_id,
+                    models.BenchmarkLog.distance == tgt.distance,
+                    models.BenchmarkLog.stroke == tgt.stroke,
+                    models.BenchmarkLog.effort == tgt.effort,
+                )
+                .order_by(_desc(models.BenchmarkLog.date))
+                .first()
+            )
+            if bm:
+                gap = bm.time_seconds - tgt.target_time_seconds
+                status = f"current {bm.time_seconds:.2f}s, {'+' if gap > 0 else ''}{gap:.2f}s to go"
+            else:
+                status = f"target {tgt.target_time_seconds:.2f}s — no benchmark recorded yet"
+            lines.append(f"  {sw.name} | {tgt.label} | {status} | deadline {deadline_str}")
+        else:
+            desc = f" — {tgt.description[:80]}" if tgt.description else ""
+            lines.append(f"  {sw.name} | {tgt.label}{desc} | deadline {deadline_str}")
+    return "\n".join(lines)
 
 
 def build_squad_snapshot(db: DBSession) -> str:
@@ -447,7 +925,13 @@ def get_swimmer_full_context(swimmer: models.Swimmer, db: DBSession) -> str:
     """Full swimmer context block for injection when a swimmer is mentioned by name."""
     profile = build_swimmer_context(swimmer, db)
     group = build_peer_context(swimmer, db)
-    return f"DETAILED PROFILE — {swimmer.name.upper()}:\n{profile}\n\n{group}" if group else f"DETAILED PROFILE — {swimmer.name.upper()}:\n{profile}"
+    block = build_block_status_context(swimmer, db)
+    parts = [f"DETAILED PROFILE — {swimmer.name.upper()}:\n{profile}"]
+    if group:
+        parts.append(group)
+    if block:
+        parts.append(block)
+    return "\n\n".join(parts)
 
 
 def build_peer_context(swimmer: models.Swimmer, db: DBSession) -> str:
@@ -540,6 +1024,97 @@ def build_peer_context(swimmer: models.Swimmer, db: DBSession) -> str:
         lines.append(f"Last 4-week sessions: {swimmer_count} (squad avg {avg:.0f}, {diff_str} vs avg)")
 
     return "GROUP CONTEXT:\n" + "\n".join(f"  {l}" for l in lines) if lines else ""
+
+
+def build_block_status_context(swimmer: models.Swimmer, db: DBSession) -> str:
+    """
+    Current meso, group assignment, group intent, and recent load trend for a swimmer.
+    Appended to get_swimmer_detail so the AI can answer 'how is X doing against the plan?'
+    """
+    from datetime import date as date_type, timedelta
+    from collections import defaultdict
+
+    today = date_type.today()
+    VOLUME_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
+
+    def iso_week(d):
+        yr, wk, _ = d.isocalendar()
+        return f"{yr}-W{wk:02d}"
+
+    lines = []
+
+    # Current meso
+    current_meso = db.query(models.SeasonBlock).filter(
+        models.SeasonBlock.date_from <= today,
+        models.SeasonBlock.date_to >= today,
+    ).order_by(models.SeasonBlock.date_from).first()
+
+    if current_meso:
+        week_in = (today - current_meso.date_from).days // 7 + 1
+        total_weeks = max(1, round((current_meso.date_to - current_meso.date_from).days / 7))
+        lines.append(f"Current meso: {current_meso.name} | {current_meso.phase_type or 'no phase'} | week {week_in}/{total_weeks} | {current_meso.date_from} → {current_meso.date_to}")
+        if current_meso.notes:
+            lines.append(f"  Meso notes: {current_meso.notes[:200]}")
+
+        # Group assignment
+        group_label = None
+        if current_meso.macro_id:
+            macro = db.query(models.TrainingMacro).filter(
+                models.TrainingMacro.id == current_meso.macro_id
+            ).first()
+            if macro and macro.group_definitions:
+                for g, defn in macro.group_definitions.items():
+                    if swimmer.id in (defn.get("swimmer_ids") or []):
+                        group_label = g
+                        desc = defn.get("description", "")
+                        lines.append(f"  Assigned group: {g}" + (f" ({desc})" if desc else ""))
+                        break
+
+        # Group intent for this meso
+        if group_label and current_meso.group_intents:
+            intent = current_meso.group_intents.get(group_label)
+            if intent:
+                lines.append(f"  Group intent this meso: {intent}")
+    else:
+        lines.append("No current meso block defined.")
+
+    # Weekly load — last 6 weeks
+    six_weeks_ago = today - timedelta(weeks=6)
+    loads = db.query(models.SwimmerSessionLoad).filter(
+        models.SwimmerSessionLoad.swimmer_id == swimmer.id,
+        models.SwimmerSessionLoad.session_date >= six_weeks_ago,
+    ).all()
+
+    weekly_totals: dict = defaultdict(float)
+    for load in loads:
+        wk = iso_week(load.session_date)
+        weekly_totals[wk] += sum((load.volume_breakdown or {}).get(k, 0) for k in VOLUME_KEYS)
+
+    # Build ordered week list (last 6 weeks)
+    ordered_weeks = []
+    d = six_weeks_ago
+    seen = set()
+    while d <= today:
+        lbl = iso_week(d)
+        if lbl not in seen:
+            ordered_weeks.append(lbl)
+            seen.add(lbl)
+        d += timedelta(days=7)
+
+    active_weeks = [(wk, weekly_totals[wk]) for wk in ordered_weeks if weekly_totals[wk] > 0]
+    if active_weeks:
+        week_strs = [f"{wk}: {total:.0f}m" for wk, total in active_weeks]
+        lines.append(f"Weekly load (last 6 weeks): {', '.join(week_strs)}")
+        if len(active_weeks) >= 2:
+            last, prev = active_weeks[-1][1], active_weeks[-2][1]
+            if prev > 0:
+                pct = ((last - prev) / prev) * 100
+                trend = f"+{pct:.0f}%" if pct > 5 else (f"{pct:.0f}%" if pct < -5 else "stable")
+                lines.append(f"  Load trend (vs previous active week): {trend}")
+    else:
+        lines.append("No volume load data recorded in last 6 weeks.")
+
+    return "BLOCK STATUS:\n" + "\n".join(f"  {l}" if not l.startswith("  ") else l for l in lines) if lines else ""
 
 
 def build_meets_context(db: DBSession, months_ahead: int = 3) -> str:

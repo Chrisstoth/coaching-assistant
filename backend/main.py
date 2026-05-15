@@ -4,8 +4,27 @@ from contextlib import asynccontextmanager
 
 from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes
-from backend.routers import auth, benchmarks, season
+from backend.routers import auth, benchmarks, season, skills, dashboard
 from backend.auth_dep import verify_token
+
+
+def _migrate_season_blocks():
+    """Add new columns to season_blocks and training_macros if missing."""
+    from sqlalchemy import text, inspect as sa_inspect
+    from backend.database import engine
+    insp = sa_inspect(engine)
+    tables = insp.get_table_names()
+
+    if "season_blocks" in tables:
+        cols = [c["name"] for c in insp.get_columns("season_blocks")]
+        with engine.connect() as conn:
+            if "squad" not in cols:
+                conn.execute(text("ALTER TABLE season_blocks ADD COLUMN squad VARCHAR"))
+            if "group_intents" not in cols:
+                conn.execute(text("ALTER TABLE season_blocks ADD COLUMN group_intents JSON"))
+            if "macro_id" not in cols:
+                conn.execute(text("ALTER TABLE season_blocks ADD COLUMN macro_id INTEGER REFERENCES training_macros(id)"))
+            conn.commit()
 
 
 def _migrate_threads():
@@ -23,6 +42,15 @@ def _migrate_threads():
                 conn.execute(text("ALTER TABLE coach_ai_messages ADD COLUMN thread_id INTEGER REFERENCES ai_threads(id)"))
                 conn.commit()
 
+    if "ai_threads" in insp.get_table_names():
+        thread_cols = [c["name"] for c in insp.get_columns("ai_threads")]
+        with engine.connect() as conn:
+            if "thread_type" not in thread_cols:
+                conn.execute(text("ALTER TABLE ai_threads ADD COLUMN thread_type VARCHAR DEFAULT 'general'"))
+            if "macro_id" not in thread_cols:
+                conn.execute(text("ALTER TABLE ai_threads ADD COLUMN macro_id INTEGER REFERENCES training_macros(id)"))
+            conn.commit()
+
     with OrmSession(engine) as db:
         if db.query(models.AIThread).count() == 0:
             default = models.AIThread(name="Main")
@@ -37,6 +65,7 @@ def _migrate_threads():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    _migrate_season_blocks()
     _migrate_threads()
     yield
 
@@ -71,6 +100,8 @@ app.include_router(ai_chat.router, prefix="/ai-chat", tags=["AI Chat"], dependen
 app.include_router(coaching_notes.router, prefix="/coaching-notes", tags=["Coaching Notes"], dependencies=_auth)
 app.include_router(benchmarks.router, prefix="/benchmarks", tags=["Benchmarks"], dependencies=_auth)
 app.include_router(season.router, prefix="/season", tags=["Season Plan"], dependencies=_auth)
+app.include_router(skills.router, prefix="/skills", tags=["Skills"], dependencies=_auth)
+app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"], dependencies=_auth)
 
 
 @app.get("/health")

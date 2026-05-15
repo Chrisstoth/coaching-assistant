@@ -30,9 +30,12 @@ export default function Register() {
               swimmer_name: r.swimmer_name,
               squad: r.squad,
               attended: r.attended ?? false,
-              normally_attends: exp?.expected ?? null,   // reference only, never auto-ticked
+              normally_attends: exp?.expected ?? null,
               exception_reason: exp?.exception_reason ?? null,
-              group_done: r.group_done ?? null,
+              group_planned: r.group_planned ?? null,
+              sub_group_planned: r.sub_group_planned ?? null,
+              group_done: r.group_done ?? r.group_planned ?? null,
+              sub_group_done: r.sub_group_done ?? null,
               coach_observation: r.coach_observation ?? '',
               ai_characterisation: r.ai_characterisation ?? null,
             }
@@ -55,10 +58,13 @@ export default function Register() {
     setSubmitting(true)
     try {
       const results = await api.submitRegister(id, {
-        entries: entries.map(({ swimmer_id, attended, group_done, coach_observation }) => ({
+        entries: entries.map(({ swimmer_id, attended, group_planned, sub_group_planned, group_done, sub_group_done, coach_observation }) => ({
           swimmer_id,
           attended,
+          group_planned: group_planned ?? null,
+          sub_group_planned: sub_group_planned ?? null,
           group_done: attended ? group_done : null,
+          sub_group_done: attended ? sub_group_done : null,
           coach_observation: attended ? coach_observation : null,
         })),
         run_ai: runAI,
@@ -76,6 +82,14 @@ export default function Register() {
   }
 
   const presentCount = entries.filter((e) => e.attended).length
+
+  // Build lookup: group_number -> sub_group labels available
+  const subGroupsByGroup = {}
+  for (const g of (session?.groups || [])) {
+    if (g.sub_groups?.length > 1) {
+      subGroupsByGroup[g.group_number] = g.sub_groups.map((sg) => sg.label)
+    }
+  }
 
   if (!session || entries.length === 0) {
     return <div className="p-4 text-pool-400">Loading register...</div>
@@ -114,6 +128,11 @@ export default function Register() {
                   {entry.swimmer_name}
                 </p>
                 <p className="text-xs text-pool-500">
+                  {entry.group_planned && (
+                    <span className="text-pool-500">
+                      Planned G{entry.group_planned}{entry.sub_group_planned || ''}
+                    </span>
+                  )}
                   {entry.exception_reason && (
                     <span className="ml-2 text-yellow-500 capitalize">· {entry.exception_reason}</span>
                   )}
@@ -154,6 +173,25 @@ export default function Register() {
                     </button>
                   ))}
                 </div>
+
+                {/* Sub-group selector — only shown when the selected group has multiple sub-groups */}
+                {entry.group_done && subGroupsByGroup[entry.group_done] && (
+                  <div className="flex gap-2">
+                    {subGroupsByGroup[entry.group_done].map((label) => (
+                      <button
+                        key={label}
+                        onClick={() => update(entry.swimmer_id, 'sub_group_done', label)}
+                        className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors ${
+                          entry.sub_group_done === label
+                            ? 'bg-accent-700 text-white'
+                            : 'bg-pool-700 text-pool-500'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
                 {/* Observation */}
                 {expandedId === entry.swimmer_id && (

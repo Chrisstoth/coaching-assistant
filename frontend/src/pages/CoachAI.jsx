@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api'
 
 function useWhisperVoice(onResult) {
@@ -67,6 +67,8 @@ const INTENT_LABELS = {
   session_plan: { label: 'session plan', colour: 'amber' },
   meet_prep: { label: 'session plan', colour: 'amber' },
   season_plan: { label: 'season plan', colour: 'teal' },
+  season_plan_navigation: { label: 'season plan', colour: 'teal' },
+  athlete_plan_navigation: { label: 'athlete planning', colour: 'orange' },
   coaching_intent: { label: 'training intent', colour: 'teal' },
   status_change: { label: 'status update', colour: 'amber' },
 }
@@ -80,6 +82,7 @@ function getDefaultDates() {
 
 export default function CoachAI() {
   const navigate = useNavigate()
+  const location = useLocation()
   const [threads, setThreads] = useState([])
   const [activeThreadId, setActiveThreadId] = useState(null)
   const [messages, setMessages] = useState([])
@@ -117,6 +120,8 @@ export default function CoachAI() {
   const [savedBenchmarksToast, setSavedBenchmarksToast] = useState(null) // [{swimmer_name, label}, ...]
   const [savedIntentsToast, setSavedIntentsToast] = useState(null) // [{swimmer_name, label}, ...]
   const [speakingId, setSpeakingId] = useState(null)
+  const [poolside, setPoolside] = useState(false)
+  const [feedbackPrompt, setFeedbackPrompt] = useState(null) // post-register feedback
   const fileInputRef = useRef(null)
 
   const bottomRef = useRef(null)
@@ -137,21 +142,44 @@ export default function CoachAI() {
     setRegisterData(null)
     setRegisterSaved(false)
     setPinSaved(false)
+    setFeedbackPrompt(null)
     api.getAIChatMessages(threadId).then(setMessages).catch(() => {})
   }
 
   useEffect(() => {
+    const initialMessage = location.state?.initialMessage
+    const targetThreadId = location.state?.threadId
     Promise.all([
       api.getAIChatThreads().catch(() => []),
       api.getAIContextStatus().catch(() => null),
-    ]).then(([threadList, ctx]) => {
+    ]).then(async ([threadList, ctx]) => {
       setThreads(threadList)
       setContext(ctx)
-      if (threadList.length > 0) {
-        const firstId = threadList[0].id
-        setActiveThreadId(firstId)
-        api.getAIChatMessages(firstId).then(setMessages).catch(() => {})
+      if (initialMessage) {
+        // Open a fresh thread pre-seeded with the message
+        try {
+          const thread = await api.createAIChatThread()
+          setThreads(prev => [thread, ...prev])
+          switchToThread(thread.id)
+          setInput(initialMessage)
+          setTimeout(() => textareaRef.current?.focus(), 100)
+        } catch {
+          if (threadList.length > 0) {
+            switchToThread(threadList[0].id)
+          }
+          setInput(initialMessage)
+        }
+      } else if (targetThreadId) {
+        const found = threadList.find(t => t.id === targetThreadId)
+        if (found) {
+          setActiveThreadId(targetThreadId)
+          api.getAIChatMessages(targetThreadId).then(msgs => {
+            setMessages(msgs)
+            requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }))
+          }).catch(() => {})
+        }
       }
+      // Default: start empty — no thread loaded on open
       setLoading(false)
     })
   }, [])
@@ -176,13 +204,28 @@ export default function CoachAI() {
   }
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({ behavior: 'auto' })
   }, [messages, suggestedAction])
 
   const send = async (text) => {
     const msg = (text || input).trim()
     const hasImage = Boolean(attachedImage)
     if ((!msg && !hasImage) || sending) return
+
+    // Ensure active thread — create one if starting fresh
+    let threadId = activeThreadId
+    if (!threadId) {
+      try {
+        const newThread = await api.createAIChatThread()
+        setThreads(prev => [newThread, ...prev])
+        setActiveThreadId(newThread.id)
+        threadId = newThread.id
+      } catch (e) {
+        setMessages(prev => [...prev, { role: 'assistant', message: `Error: ${e.message}`, id: Date.now() }])
+        return
+      }
+    }
+
     setInput('')
     setAttachedImage(null)
     setSending(true)
@@ -198,11 +241,80 @@ export default function CoachAI() {
 
     try {
       const res = hasImage
-        ? await api.sendAIChatMessageWithImage(msg, attachedImage.file, activeThreadId)
-        : await api.sendAIChatMessage(msg, activeThreadId)
+        ? await api.sendAIChatMessageWithImage(msg, attachedImage.file, threadId, poolside)
+        : await api.sendAIChatMessage(msg, threadId, poolside)
       setLastInjected(res.context_injected || [])
       setLastTopics(res.topics_detected || [])
       setMessages(prev => [...prev, { role: 'assistant', message: res.reply, id: Date.now() + 1 }])
+
+      // Skill result — meso plan draft
+      if (res.skill_result?.type === 'meso_plan' && res.skill_result.draft) {
+        setSuggestedAction({
+          label: 'View Season Plan to create this block',
+          type: 'view_season_plan',
+          meso_draft: res.skill_result.draft,
+        })
+      }
+
+      // Skill result — race analysis (analysis already in reply; suggest viewing the meet)
+      if (res.skill_result?.type === 'race_analysis' && res.skill_result.meet_id) {
+        setSuggestedAction({
+          label: `View ${res.skill_result.meet_name || 'meet'} details`,
+          type: 'view_meet',
+          meet_id: res.skill_result.meet_id,
+          meet_name: res.skill_result.meet_name,
+        })
+      }
+
+      // Skill result — block review (analysis already in reply; suggest viewing season plan)
+      if (res.skill_result?.type === 'block_review' && res.skill_result.block_id) {
+        setSuggestedAction({
+          label: 'View Season Plan',
+          type: 'view_season_plan',
+          block_id: res.skill_result.block_id,
+          block_name: res.skill_result.block_name,
+        })
+      }
+
+      // Skill result — adaptation review (analysis already in reply; set suggested action to view profile)
+      if (res.skill_result?.type === 'adaptation_review' && res.skill_result.swimmer_id) {
+        setSuggestedAction({
+          label: `View ${res.skill_result.swimmer_name}'s full profile`,
+          type: 'view_swimmer',
+          swimmer_id: res.skill_result.swimmer_id,
+          swimmer_name: res.skill_result.swimmer_name,
+        })
+      }
+
+      // Skill result — taper plan
+      if (res.skill_result?.type === 'taper_plan' && res.skill_result.swimmer_id) {
+        setSuggestedAction({
+          label: `View ${res.skill_result.swimmer_name}'s profile`,
+          type: 'view_swimmer',
+          swimmer_id: res.skill_result.swimmer_id,
+          swimmer_name: res.skill_result.swimmer_name,
+        })
+      }
+
+      // Skill result — session plan draft
+      if (res.skill_result?.type === 'session_plan' && res.skill_result.draft) {
+        const d = res.skill_result.draft
+        const groupsDict = d.groups || {}
+        setSessionDraft({
+          title: d.title || '',
+          date: d.date || '',
+          coach_intent: d.coach_intent || '',
+          energy_system_focus: d.energy_system_focus || '',
+          groups: Object.entries(groupsDict).map(([num, g]) => ({
+            group_number: parseInt(num),
+            description: g.description || '',
+            sets: g.sets || '',
+            volume_breakdown: g.volume_breakdown || {},
+            sub_groups: [],
+          })),
+        })
+      }
+
       if (res.saved_benchmarks?.length > 0) {
         setSavedBenchmarksToast(res.saved_benchmarks)
         setTimeout(() => setSavedBenchmarksToast(null), 5000)
@@ -214,7 +326,7 @@ export default function CoachAI() {
 
       // Auto-trigger register card if register topic detected
       if ((res.topics_detected || []).includes('register')) {
-        const regData = await api.startRegister(msg, activeThreadId)
+        const regData = await api.startRegister(msg, threadId)
         if (regData.session_id) {
           setRegisterData({ ...regData, attendance: null })
         }
@@ -251,7 +363,40 @@ export default function CoachAI() {
       .join('\n')
 
     try {
-      if (type === 'status_change' && swimmer_id && suggestedAction.new_status) {
+      if (type === 'view_meet' && suggestedAction.meet_id) {
+        navigate(`/meets/${suggestedAction.meet_id}`)
+        return
+      } else if (type === 'open_season_plan_thread') {
+        try {
+          const spThread = await api.getOrCreateSeasonPlanThread()
+          if (!threads.find(t => t.id === spThread.id)) {
+            setThreads(prev => [spThread, ...prev])
+          }
+          switchToThread(spThread.id)
+        } catch (e) {
+          setActionResult('error')
+        }
+        setSuggestedAction(null)
+        return
+      } else if (type === 'open_athlete_plan_thread') {
+        try {
+          const apThread = await api.getOrCreateAthletePlanThread()
+          if (!threads.find(t => t.id === apThread.id)) {
+            setThreads(prev => [apThread, ...prev])
+          }
+          switchToThread(apThread.id)
+        } catch (e) {
+          setActionResult('error')
+        }
+        setSuggestedAction(null)
+        return
+      } else if (type === 'view_season_plan') {
+        navigate('/season')
+        return
+      } else if (type === 'view_swimmer' && swimmer_id) {
+        navigate(`/swimmers/${swimmer_id}`)
+        return
+      } else if (type === 'status_change' && swimmer_id && suggestedAction.new_status) {
         await api.updateSwimmer(swimmer_id, { status: suggestedAction.new_status })
         setActionResult('saved')
         setSuggestedAction(null)
@@ -358,6 +503,7 @@ export default function CoachAI() {
   const colourMap = {
     blue: 'border-blue-700/50 bg-blue-900/20 text-blue-300',
     orange: 'border-orange-700/50 bg-orange-900/20 text-orange-300',
+    'orange-dark': 'border-orange-700/50 bg-orange-900/20 text-orange-300',
     green: 'border-green-700/50 bg-green-900/20 text-green-300',
     purple: 'border-purple-700/50 bg-purple-900/20 text-purple-300',
     amber: 'border-amber-700/50 bg-amber-900/20 text-amber-300',
@@ -377,6 +523,17 @@ export default function CoachAI() {
             <h1 className="text-lg font-bold tracking-tight">Coach's AI</h1>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setPoolside(p => !p)}
+              className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors ${
+                poolside
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-pool-700 text-pool-400 hover:text-pool-200'
+              }`}
+              title="Poolside mode — brief responses only"
+            >
+              {poolside ? 'Poolside' : 'Poolside'}
+            </button>
             {messages.length >= 2 && !sending && (
               <button
                 onClick={openPinModal}
@@ -408,6 +565,12 @@ export default function CoachAI() {
                 No coaching context —{' '}
                 <Link to="/context" className="text-accent-400 underline">build one</Link>
               </span>
+            </div>
+          )}
+          {poolside && (
+            <div className="flex items-center gap-1.5">
+              <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              <span className="text-xs text-amber-400 font-medium">Brief responses</span>
             </div>
           )}
           {lastTopics.length > 0 && (
@@ -457,6 +620,23 @@ export default function CoachAI() {
 
         {!loading && messages.length === 0 && (
           <div className="space-y-4 pt-2">
+            {threads.some(t => t.thread_type === 'general' || !t.thread_type) && (
+              <button
+                onClick={() => {
+                  const last = threads.find(t => t.thread_type === 'general' || !t.thread_type)
+                  if (last) switchToThread(last.id)
+                }}
+                className="w-full text-left bg-pool-800 hover:bg-pool-700 border border-pool-600 rounded-xl px-4 py-3 transition-colors flex items-center justify-between group"
+              >
+                <div>
+                  <p className="text-sm font-medium text-pool-200">Resume last conversation</p>
+                  <p className="text-xs text-pool-400 mt-0.5">Continue where you left off</p>
+                </div>
+                <svg className="w-4 h-4 text-pool-500 group-hover:text-pool-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                </svg>
+              </button>
+            )}
             <p className="text-pool-400 text-sm leading-relaxed">
               Ask Deckxtra anything — swimmer profiles, session planning, competition prep, training science.
               I know your squad and I'll pull in the right context as the conversation develops.
@@ -604,9 +784,10 @@ export default function CoachAI() {
           <RegisterCard
             data={registerData}
             onDismiss={() => setRegisterData(null)}
-            onSaved={(sessionId) => {
+            onSaved={(sessionId, fbPrompt) => {
               setRegisterSaved(true)
               setRegisterData(null)
+              if (fbPrompt) setFeedbackPrompt(fbPrompt)
               navigate(`/sessions/${sessionId}/register`)
             }}
           />
@@ -615,6 +796,28 @@ export default function CoachAI() {
         {registerSaved && !registerData && (
           <div className="border border-green-700/50 bg-green-900/20 rounded-xl px-4 py-3">
             <p className="text-xs text-green-300 font-semibold">Register saved.</p>
+          </div>
+        )}
+
+        {feedbackPrompt && (
+          <div className="border border-accent-700/50 bg-accent-900/20 rounded-xl px-4 py-3 space-y-2.5">
+            <p className="text-xs font-semibold text-accent-300">Session feedback</p>
+            <p className="text-xs text-pool-300 leading-relaxed">{feedbackPrompt}</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setFeedbackPrompt(null); setInput('It went well — session achieved the intent.') }}
+                className="flex-1 bg-accent-700 hover:bg-accent-600 rounded-lg py-2 text-xs font-semibold transition-colors"
+              >
+                It went well
+              </button>
+              <button
+                onClick={() => { setFeedbackPrompt(null); setInput('The session didn\'t quite achieve the intent — ') }}
+                className="flex-1 bg-pool-700 hover:bg-pool-600 rounded-lg py-2 text-xs font-semibold transition-colors"
+              >
+                Not quite
+              </button>
+              <button onClick={() => setFeedbackPrompt(null)} className="px-3 text-xs text-pool-500 hover:text-pool-300">Dismiss</button>
+            </div>
           </div>
         )}
 
@@ -633,30 +836,79 @@ export default function CoachAI() {
 
       {/* Thread tabs */}
       <div className="px-4 pt-2 shrink-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-        {threads.map((t, i) => (
-          <div key={t.id} className="flex items-center shrink-0">
-            <button
-              onClick={() => switchToThread(t.id)}
-              className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
-                activeThreadId === t.id
-                  ? 'bg-accent-600 text-white'
-                  : 'bg-pool-700 text-pool-400 hover:text-pool-200'
-              }`}
-            >
-              {t.name || `Chat ${i + 1}`}
-            </button>
-            {threads.length > 1 && (
+        {threads.map((t, i) => {
+          const isSeasonPlan = t.thread_type === 'season_plan'
+          const isAthletePlan = t.thread_type === 'athlete_planning'
+          return (
+            <div key={t.id} className="flex items-center shrink-0">
               <button
-                onClick={() => deleteThread(t.id)}
-                className="ml-0.5 text-pool-600 hover:text-red-400 text-xs w-4 h-4 flex items-center justify-center transition-colors"
+                onClick={() => switchToThread(t.id)}
+                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                  activeThreadId === t.id
+                    ? isSeasonPlan ? 'bg-teal-600 text-white' : isAthletePlan ? 'bg-orange-600 text-white' : 'bg-accent-600 text-white'
+                    : isSeasonPlan ? 'bg-teal-900/50 text-teal-300 hover:text-teal-100 border border-teal-700/40' : isAthletePlan ? 'bg-orange-900/50 text-orange-300 hover:text-orange-100 border border-orange-700/40' : 'bg-pool-700 text-pool-400 hover:text-pool-200'
+                }`}
+                title={isSeasonPlan ? 'Season planning thread' : isAthletePlan ? 'Athlete planning thread' : undefined}
               >
-                ×
+                {isSeasonPlan && <span className="text-[10px] opacity-75">📋</span>}
+                {isAthletePlan && <span className="text-[10px] opacity-75">🏊</span>}
+                {t.name || `Chat ${i + 1}`}
               </button>
-            )}
-          </div>
-        ))}
+              {threads.length > 1 && (
+                <button
+                  onClick={() => deleteThread(t.id)}
+                  className="ml-0.5 text-pool-600 hover:text-red-400 text-xs w-4 h-4 flex items-center justify-center transition-colors"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          )
+        })}
         <button
-          onClick={createThread}
+          onClick={async () => {
+            try {
+              const spThread = await api.getOrCreateSeasonPlanThread()
+              if (!threads.find(t => t.id === spThread.id)) {
+                setThreads(prev => [spThread, ...prev])
+              }
+              switchToThread(spThread.id)
+            } catch {}
+          }}
+          className="shrink-0 text-xs text-teal-400 hover:text-teal-200 bg-teal-900/40 hover:bg-teal-800/60 border border-teal-700/40 px-2 py-1.5 rounded-lg transition-colors"
+          title="Open season planning chat"
+        >
+          📋 Season
+        </button>
+        <button
+          onClick={async () => {
+            try {
+              const apThread = await api.getOrCreateAthletePlanThread()
+              if (!threads.find(t => t.id === apThread.id)) {
+                setThreads(prev => [apThread, ...prev])
+              }
+              switchToThread(apThread.id)
+            } catch {}
+          }}
+          className="shrink-0 text-xs text-orange-400 hover:text-orange-200 bg-orange-900/40 hover:bg-orange-800/60 border border-orange-700/40 px-2 py-1.5 rounded-lg transition-colors"
+          title="Open athlete planning chat"
+        >
+          🏊 Athletes
+        </button>
+        <button
+          onClick={() => {
+            setActiveThreadId(null)
+            setMessages([])
+            setSuggestedAction(null)
+            setActionResult(null)
+            setSessionDraft(null)
+            setRegisterData(null)
+            setRegisterSaved(false)
+            setPinSaved(false)
+            setFeedbackPrompt(null)
+            setLastInjected([])
+            setLastTopics([])
+          }}
           className="shrink-0 text-xs text-pool-500 hover:text-accent-400 bg-pool-700 hover:bg-pool-600 w-7 h-7 rounded-lg flex items-center justify-center transition-colors font-bold"
           title="New conversation"
         >
@@ -827,6 +1079,10 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
     groups: (draft.groups || []).map(g => ({
       ...g,
       sets: Array.isArray(g.sets) ? g.sets.join('\n') : (g.sets || ''),
+      sub_groups: (g.sub_groups || []).map(sg => ({
+        ...sg,
+        sets: Array.isArray(sg.sets) ? sg.sets.join('\n') : (sg.sets || ''),
+      })),
     })),
   }))
 
@@ -835,12 +1091,23 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
     ...p,
     groups: p.groups.map((g, idx) => idx === i ? { ...g, [key]: val } : g),
   }))
+  const setSubGroup = (gi, si, key, val) => setData(p => ({
+    ...p,
+    groups: p.groups.map((g, gIdx) => gIdx !== gi ? g : {
+      ...g,
+      sub_groups: g.sub_groups.map((sg, sIdx) => sIdx !== si ? sg : { ...sg, [key]: val }),
+    }),
+  }))
 
   const buildSubmit = () => ({
     ...data,
     groups: data.groups.map(g => ({
       ...g,
       sets: typeof g.sets === 'string' ? g.sets.split('\n').map(s => s.trim()).filter(Boolean) : g.sets,
+      sub_groups: (g.sub_groups || []).map(sg => ({
+        ...sg,
+        sets: typeof sg.sets === 'string' ? sg.sets.split('\n').map(s => s.trim()).filter(Boolean) : sg.sets,
+      })),
     })),
   })
 
@@ -894,6 +1161,22 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
         </div>
       )}
 
+      {data.individual_mods && Object.keys(data.individual_mods).length > 0 && (
+        <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-3 space-y-1.5">
+          <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">Individual Modifications</p>
+          {Object.entries(data.individual_mods).map(([name, note]) => (
+            <div key={name} className="flex gap-2 items-start">
+              <span className="text-xs font-medium text-amber-200 shrink-0 w-24 truncate">{name}</span>
+              <input
+                value={note}
+                onChange={e => setField('individual_mods', { ...data.individual_mods, [name]: e.target.value })}
+                className="flex-1 bg-pool-700 border border-pool-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-amber-500"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       {data.groups?.length > 0 && (
         <div className="space-y-2.5">
           <p className="text-xs text-pool-400 font-medium">Groups</p>
@@ -906,14 +1189,51 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
                 placeholder="Description / who this is for"
                 className="w-full bg-pool-700 border border-pool-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-teal-500"
               />
-              <textarea
-                value={typeof g.sets === 'string' ? g.sets : (g.sets || []).join('\n')}
-                onChange={e => setGroup(i, 'sets', e.target.value)}
-                rows={3}
-                placeholder="Sets — one per line"
-                className="w-full bg-pool-700 border border-pool-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-teal-500 resize-none font-mono leading-relaxed"
-              />
-              {g.swimmer_names?.length > 0 && (
+
+              {/* Sub-groups (if present) */}
+              {(g.sub_groups || []).length > 0 ? (
+                <div className="space-y-2 mt-1">
+                  {g.sub_groups.map((sg, si) => (
+                    <div key={si} className="bg-pool-750 border border-pool-600/60 rounded-lg p-2 space-y-1.5 pl-3 border-l-2 border-l-teal-700/60">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-teal-400">Sub-group {sg.label}</span>
+                        {sg.swimmer_names?.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {sg.swimmer_names.map(n => (
+                              <span key={n} className="text-xs bg-teal-900/40 text-teal-300 border border-teal-800/50 rounded-full px-1.5 py-0">{n}</span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <input
+                        value={sg.aim || ''}
+                        onChange={e => setSubGroup(i, si, 'aim', e.target.value)}
+                        placeholder="Aim / focus for this sub-group"
+                        className="w-full bg-pool-700 border border-pool-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-teal-500"
+                      />
+                      <textarea
+                        value={typeof sg.sets === 'string' ? sg.sets : (sg.sets || []).join('\n')}
+                        onChange={e => setSubGroup(i, si, 'sets', e.target.value)}
+                        rows={3}
+                        placeholder="Sets — one per line"
+                        className="w-full bg-pool-700 border border-pool-600 rounded px-2 py-1 text-xs focus:outline-none focus:border-teal-500 resize-none font-mono leading-relaxed"
+                      />
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* No sub-groups: show flat sets textarea */
+                <textarea
+                  value={typeof g.sets === 'string' ? g.sets : (g.sets || []).join('\n')}
+                  onChange={e => setGroup(i, 'sets', e.target.value)}
+                  rows={3}
+                  placeholder="Sets — one per line"
+                  className="w-full bg-pool-700 border border-pool-600 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:border-teal-500 resize-none font-mono leading-relaxed"
+                />
+              )}
+
+              {/* Group-level swimmer names (when no sub-groups) */}
+              {(g.sub_groups || []).length === 0 && g.swimmer_names?.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {g.swimmer_names.map(n => (
                     <span key={n} className="text-xs bg-teal-900/40 text-teal-300 border border-teal-800/50 rounded-full px-2 py-0.5">{n}</span>
@@ -990,8 +1310,8 @@ function RegisterCard({ data, onDismiss, onSaved }) {
   const handleSubmit = async () => {
     setSaving(true)
     try {
-      await api.submitRegister({ session_id: data.session_id, attendance })
-      onSaved(data.session_id)
+      const res = await api.submitRegister({ session_id: data.session_id, attendance })
+      onSaved(data.session_id, res.feedback_prompt || null)
     } catch (err) {
       alert(`Could not save register: ${err.message}`)
       setSaving(false)

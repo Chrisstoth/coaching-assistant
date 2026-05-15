@@ -1,18 +1,92 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+
+const VOL_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
+const VOL_LABELS = { aerobic: 'Aerobic', threshold: 'Threshold', vo2: 'VO2', race_pace: 'Race Pace', lact_tol: 'Lact Tol', short_race_pace: 'Short Race', kicking: 'Kicking', sprint: 'Sprint' }
+const VOL_COLOURS = { aerobic: '#3b82f6', threshold: '#f59e0b', vo2: '#ef4444', race_pace: '#8b5cf6', lact_tol: '#ec4899', short_race_pace: '#06b6d4', kicking: '#10b981', sprint: '#f97316' }
+
+function VolumeEditor({ value = {}, onChange }) {
+  const total = VOL_KEYS.reduce((s, k) => s + (Number(value[k]) || 0), 0)
+  return (
+    <div className="space-y-1">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+        {VOL_KEYS.map(k => (
+          <div key={k} className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: VOL_COLOURS[k] }} />
+            <label className="text-xs text-pool-400 w-20 flex-shrink-0">{VOL_LABELS[k]}</label>
+            <input
+              type="number"
+              min="0"
+              step="50"
+              value={value[k] || ''}
+              onChange={e => onChange({ ...value, [k]: e.target.value === '' ? 0 : Number(e.target.value) })}
+              placeholder="0"
+              className="w-full bg-pool-600 rounded px-2 py-1 text-xs border border-pool-500 focus:border-accent-500 focus:outline-none text-right"
+            />
+            <span className="text-xs text-pool-500 w-5">m</span>
+          </div>
+        ))}
+      </div>
+      {total > 0 && (
+        <p className="text-xs text-pool-400 text-right pt-1">Total: <span className="text-white font-semibold">{(total / 1000).toFixed(2)}km</span></p>
+      )}
+    </div>
+  )
+}
+
+function VolumeDisplay({ breakdown }) {
+  if (!breakdown) return null
+  const entries = VOL_KEYS.map(k => [k, breakdown[k] || 0]).filter(([, v]) => v > 0)
+  if (!entries.length) return null
+  const total = entries.reduce((s, [, v]) => s + v, 0)
+  return (
+    <div className="mt-2 pt-2 border-t border-pool-700">
+      <p className="text-xs text-pool-500 mb-1.5">Volume breakdown</p>
+      <div className="flex flex-wrap gap-1.5">
+        {entries.map(([k, v]) => (
+          <span key={k} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: VOL_COLOURS[k] + '33', color: VOL_COLOURS[k], border: `1px solid ${VOL_COLOURS[k]}55` }}>
+            {VOL_LABELS[k]} {(v / 1000).toFixed(2)}km
+          </span>
+        ))}
+      </div>
+      <p className="text-xs text-pool-500 mt-1">Total: <span className="text-pool-300">{(total / 1000).toFixed(2)}km</span></p>
+    </div>
+  )
+}
 
 export default function SessionDetail() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [session, setSession] = useState(null)
   const [recommending, setRecommending] = useState(false)
   const [recommendations, setRecommendations] = useState(null)
   const [deleting, setDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [editingVolGroup, setEditingVolGroup] = useState(null)
+  const [volDraft, setVolDraft] = useState({})
+  const [savingVol, setSavingVol] = useState(false)
 
   useEffect(() => {
     if (id !== 'new') api.getSession(id).then(setSession)
   }, [id])
+
+  const startEditVol = (g) => {
+    setEditingVolGroup(g.group_number)
+    setVolDraft(g.volume_breakdown || {})
+  }
+
+  const saveVol = async (groupNumber) => {
+    setSavingVol(true)
+    try {
+      const updated = await api.updateSession(id, { groups: { [groupNumber]: { volume_breakdown: volDraft } } })
+      setSession(updated)
+      setEditingVolGroup(null)
+    } catch (e) {
+      alert(`Error: ${e.message}`)
+    }
+    setSavingVol(false)
+  }
 
   const printSheet = () => {
     if (!session) return
@@ -215,13 +289,47 @@ export default function SessionDetail() {
         </div>
       )}
 
+      {session.individual_mods && Object.keys(session.individual_mods).length > 0 && (
+        <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4 space-y-2">
+          <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">Individual Modifications</p>
+          {Object.entries(session.individual_mods).map(([name, note]) => (
+            <div key={name} className="flex gap-2 items-start">
+              <span className="text-xs font-medium text-amber-200 shrink-0 w-24">{name}</span>
+              <span className="text-xs text-pool-300 leading-relaxed">{note}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Groups */}
       {session.groups?.map((g) => (
         <div key={g.group_number} className="bg-pool-800 rounded-xl p-4">
-          <h3 className="font-semibold text-sm text-accent-400 mb-2">Group {g.group_number}</h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-sm text-accent-400">Group {g.group_number}</h3>
+            {editingVolGroup === g.group_number ? (
+              <div className="flex gap-2">
+                <button onClick={() => setEditingVolGroup(null)} className="text-xs text-pool-400">Cancel</button>
+                <button onClick={() => saveVol(g.group_number)} disabled={savingVol} className="text-xs text-accent-400 font-semibold disabled:opacity-40">
+                  {savingVol ? 'Saving...' : 'Save'}
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => startEditVol(g)} className="text-xs text-pool-400 hover:text-pool-200">
+                {g.volume_breakdown ? 'Edit volume' : '+ Add volume'}
+              </button>
+            )}
+          </div>
           {g.description && <p className="text-sm text-pool-200 whitespace-pre-wrap">{g.description}</p>}
           {g.sets?.raw && g.sets.raw !== g.description && (
             <pre className="text-xs text-pool-400 mt-2 whitespace-pre-wrap font-mono">{g.sets.raw}</pre>
+          )}
+          {editingVolGroup === g.group_number ? (
+            <div className="mt-3 pt-3 border-t border-pool-700">
+              <p className="text-xs text-pool-400 mb-2">Volume breakdown (metres per zone)</p>
+              <VolumeEditor value={volDraft} onChange={setVolDraft} />
+            </div>
+          ) : (
+            <VolumeDisplay breakdown={g.volume_breakdown} />
           )}
         </div>
       ))}
@@ -244,9 +352,16 @@ export default function SessionDetail() {
         <button
           onClick={printSheet}
           className="bg-pool-700 hover:bg-pool-600 border border-pool-600 rounded-xl px-4 py-3 text-sm transition-colors"
-          title="Print session sheet"
+          title="Quick print (popup)"
         >
           🖨
+        </button>
+        <button
+          onClick={() => navigate(`/sessions/${id}/print`)}
+          className="bg-pool-700 hover:bg-pool-600 border border-pool-600 rounded-xl px-4 py-3 text-xs font-medium transition-colors text-pool-300"
+          title="Session sheet with sub-groups"
+        >
+          Sheet
         </button>
       </div>
 
@@ -271,6 +386,27 @@ export default function SessionDetail() {
   )
 }
 
+
+function GroupVolumeToggle({ value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const total = VOL_KEYS.reduce((s, k) => s + (Number(value[k]) || 0), 0)
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="text-xs text-pool-400 hover:text-pool-200 flex items-center gap-1"
+      >
+        {open ? '▾' : '▸'} {total > 0 ? `Volume: ${(total/1000).toFixed(2)}km` : 'Add volume breakdown'}
+      </button>
+      {open && (
+        <div className="mt-2">
+          <VolumeEditor value={value} onChange={onChange} />
+        </div>
+      )}
+    </div>
+  )
+}
 
 function NewSession() {
   const [form, setForm] = useState({
@@ -383,6 +519,10 @@ function NewSession() {
               onChange={(e) => setGroup(n, 'sets', e.target.value)}
               rows={3}
               className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none resize-none"
+            />
+            <GroupVolumeToggle
+              value={form.groups[n]?.volume_breakdown || {}}
+              onChange={(v) => setGroup(n, 'volume_breakdown', v)}
             />
           </div>
         ))}

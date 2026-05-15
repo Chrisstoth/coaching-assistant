@@ -39,6 +39,8 @@ export default function MeetDetail() {
   const [scheduleExtracted, setScheduleExtracted] = useState(null)
   const [entriesExtracted, setEntriesExtracted] = useState(null)
   const [combining, setCombining] = useState(false)
+  const [raceAnalysis, setRaceAnalysis] = useState(null)
+  const [analysingMeet, setAnalysingMeet] = useState(false)
 
   const load = async () => {
     const [m, sq] = await Promise.all([api.getMeet(id), api.getSwimmers({ active: true })])
@@ -209,6 +211,46 @@ export default function MeetDetail() {
           <p className="text-sm text-pool-200">{meet.notes}</p>
         </div>
       )}
+
+      {/* Race Analysis */}
+      <div className="bg-pool-800 rounded-xl p-4 space-y-3">
+        {raceAnalysis ? (
+          <>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-accent-400 uppercase tracking-wide">Race Analysis</p>
+              <button onClick={() => setRaceAnalysis(null)} className="text-xs text-pool-500 hover:text-pool-300">Clear</button>
+            </div>
+            <div className="text-xs text-pool-300 leading-relaxed space-y-1">
+              {raceAnalysis.split('\n').map((line, i) => {
+                if (line.startsWith('**') && line.endsWith('**')) {
+                  return <p key={i} className="font-semibold text-white mt-3 first:mt-0">{line.replace(/\*\*/g, '')}</p>
+                }
+                if (line.startsWith('- ')) {
+                  return <p key={i} className="pl-3 text-pool-300">{line}</p>
+                }
+                return line.trim() ? <p key={i}>{line}</p> : null
+              })}
+            </div>
+          </>
+        ) : (
+          <button
+            onClick={async () => {
+              setAnalysingMeet(true)
+              try {
+                const r = await api.analyseMeetSkill({ meet_id: parseInt(id) })
+                setRaceAnalysis(r.analysis)
+              } catch (e) {
+                setRaceAnalysis(`Error: ${e.message}`)
+              }
+              setAnalysingMeet(false)
+            }}
+            disabled={analysingMeet}
+            className="w-full py-2.5 text-sm font-semibold bg-accent-600/80 rounded-xl disabled:opacity-40"
+          >
+            {analysingMeet ? 'Analysing…' : 'Race Analysis'}
+          </button>
+        )}
+      </div>
 
       {/* Document extraction section */}
       <div className="bg-pool-800 rounded-xl p-4 space-y-4">

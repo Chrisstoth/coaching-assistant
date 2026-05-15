@@ -180,6 +180,7 @@ class Session(Base):
     coach_notes = Column(Text, nullable=True)
     coach_intent = Column(Text, nullable=True)           # why this session was planned
     energy_system_focus = Column(String, nullable=True) # aerobic / threshold / speed / recovery
+    individual_mods = Column(JSON, nullable=True)        # {"swimmer_name": "modification note"}
 
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 
@@ -210,6 +211,34 @@ class SessionGroup(Base):
     target_swimmer_ids = Column(JSON, default=list)      # [swimmer_id, ...]
 
     session = relationship("Session", back_populates="groups")
+    sub_groups = relationship("SessionSubGroup", back_populates="group", cascade="all, delete-orphan")
+
+
+class SessionSubGroup(Base):
+    __tablename__ = "session_sub_groups"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_group_id = Column(Integer, ForeignKey("session_groups.id"), nullable=False)
+    label = Column(String, nullable=False)               # "A", "B", "C"
+    aim = Column(Text, nullable=True)                    # "Sprint focus — stroke rate off the wall"
+    sets = Column(JSON, nullable=True)                   # ["8x50 @ race pace 1:00", ...]
+    swimmer_ids = Column(JSON, default=list)             # [1, 2, 5]
+    volume_breakdown = Column(JSON, nullable=True)       # {"aerobic": 2400, "race_pace": 800, ...}
+
+    group = relationship("SessionGroup", back_populates="sub_groups")
+
+
+class SwimmerSessionLoad(Base):
+    __tablename__ = "swimmer_session_loads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
+    session_date = Column(Date, nullable=False)
+    group_number = Column(Integer, nullable=True)
+    sub_group_label = Column(String, nullable=True)
+    volume_breakdown = Column(JSON, nullable=True)       # {"aerobic": 2400, ...}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class SessionEntry(Base):
@@ -220,7 +249,10 @@ class SessionEntry(Base):
     swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
 
     attended = Column(Boolean, nullable=True)
-    group_done = Column(Integer, nullable=True)          # 1 / 2 / 3
+    group_planned = Column(Integer, nullable=True)       # 1 / 2 / 3 — from session plan
+    sub_group_planned = Column(String, nullable=True)    # "A" / "B" — from session plan
+    group_done = Column(Integer, nullable=True)          # 1 / 2 / 3 — actual on the day
+    sub_group_done = Column(String, nullable=True)       # "A" / "B" — actual on the day
     sets_completed = Column(JSON, nullable=True)
     coach_observation = Column(Text, nullable=True)
 
@@ -506,6 +538,22 @@ class AIAnalysis(Base):
     session = relationship("Session", back_populates="analyses")
 
 
+class SkillOutput(Base):
+    """Saved output from a specialist AI skill run — enables history view and audit."""
+    __tablename__ = "skill_outputs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    skill_type = Column(String, nullable=False)   # adaptation_review / block_review / race_analysis / meso_plan / session_plan / taper_plan
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=True)
+    entity_type = Column(String, nullable=True)   # swimmer / block / meet / squad / session
+    entity_id = Column(Integer, nullable=True)
+    entity_name = Column(String, nullable=True)
+    full_output = Column(Text, nullable=False)
+    brief_output = Column(Text, nullable=True)
+    thread_id = Column(Integer, ForeignKey("ai_threads.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class ProfileConversation(Base):
     __tablename__ = "profile_conversations"
 
@@ -568,6 +616,8 @@ class AIThread(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, nullable=True)
+    thread_type = Column(String, default="general")   # general | season_plan
+    macro_id = Column(Integer, ForeignKey("training_macros.id"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     messages = relationship("CoachAIMessage", back_populates="thread", cascade="all, delete-orphan")
@@ -608,13 +658,32 @@ class CoachingNote(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class TrainingMacro(Base):
+    __tablename__ = "training_macros"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    squad = Column(String, nullable=True)
+    date_from = Column(Date, nullable=False)
+    date_to = Column(Date, nullable=False)
+    narrative = Column(Text, nullable=True)       # overall season narrative / intent
+    group_definitions = Column(JSON, nullable=True)  # {G1: {description: "...", swimmer_ids: [...]}, ...}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    mesos = relationship("SeasonBlock", back_populates="macro", cascade="all, delete-orphan")
+
+
 class SeasonBlock(Base):
     __tablename__ = "season_blocks"
     id = Column(Integer, primary_key=True, index=True)
+    macro_id = Column(Integer, ForeignKey("training_macros.id"), nullable=True)
     name = Column(String, nullable=False)
+    squad = Column(String, nullable=True)
     phase_type = Column(String, nullable=True)  # base / build / peak / taper / competition / recovery / transition
     date_from = Column(Date, nullable=False)
     date_to = Column(Date, nullable=False)
-    emphasis = Column(JSON, nullable=True)  # {aerobic:70, threshold:20, speed:5, race_pace:5, endurance:0}
+    emphasis = Column(JSON, nullable=True)
+    group_intents = Column(JSON, nullable=True)  # {G1: "build aerobic base...", G2: "...", G3: "..."}
     notes = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    macro = relationship("TrainingMacro", back_populates="mesos")

@@ -64,6 +64,7 @@ export const api = {
   deleteProfileVersions: (id, profileType) => request('DELETE', `/swimmers/${id}/profile/${profileType}`),
   getSwimmerContext: (id) => request('GET', `/swimmers/${id}/context`),
   getAttendanceStats: (id) => request('GET', `/swimmers/${id}/attendance-stats`),
+  getBlockStatus: (id) => request('GET', `/swimmers/${id}/block-status`),
 
   // Load events
   getLoadEvents: (id) => request('GET', `/swimmers/${id}/load-events`),
@@ -178,15 +179,37 @@ export const api = {
     return request('POST', '/ai-chat/transcribe', fd, true)
   },
 
+  // Dashboard
+  getSquadPulse: () => request('GET', '/dashboard/squad-pulse'),
+  getMeetCountdowns: () => request('GET', '/dashboard/meet-countdowns'),
+
+  // Skills
+  planSessionSkill: (data) => request('POST', '/skills/plan-session', data),
+  reviewSwimmerSkill: (data) => request('POST', '/skills/review-swimmer', data),
+  reviewBlockSkill: (data) => request('POST', '/skills/review-block', data),
+  analyseMeetSkill: (data) => request('POST', '/skills/analyse-meet', data),
+  planMesoSkill: (data) => request('POST', '/skills/plan-meso', data),
+  planMicroSkill: (data) => request('POST', '/skills/plan-micro', data),
+  planMacroSkill: (data) => request('POST', '/skills/plan-macro', data),
+  planTaperSkill: (data) => request('POST', '/skills/plan-taper', data),
+  suggestGroupsSkill: (data) => request('POST', '/skills/suggest-groups', data),
+  getSkillHistory: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request('GET', `/skills/history${qs ? '?' + qs : ''}`)
+  },
+  getSwimmerSkillHistory: (swimmerId) => request('GET', `/skills/history/${swimmerId}`),
+
   // AI Chat threads
   getAIChatThreads: () => request('GET', '/ai-chat/threads'),
-  createAIChatThread: (name) => request('POST', '/ai-chat/threads', { name }),
+  createAIChatThread: (data) => request('POST', '/ai-chat/threads', typeof data === 'string' ? { name: data } : data),
   renameAIChatThread: (id, name) => request('PATCH', `/ai-chat/threads/${id}`, { name }),
   deleteAIChatThread: (id) => request('DELETE', `/ai-chat/threads/${id}`),
+  getOrCreateSeasonPlanThread: (macroId) => request('POST', '/ai-chat/threads/season-plan', macroId ? { macro_id: macroId } : {}),
+  getOrCreateAthletePlanThread: () => request('POST', '/ai-chat/threads/athlete-planning', {}),
 
   // AI Chat messages (thread-aware)
   getAIChatMessages: (threadId) => request('GET', `/ai-chat/messages${threadId != null ? `?thread_id=${threadId}` : ''}`),
-  sendAIChatMessage: (message, threadId) => request('POST', '/ai-chat/messages', { message, thread_id: threadId }),
+  sendAIChatMessage: (message, threadId, brief = false) => request('POST', '/ai-chat/messages', { message, thread_id: threadId, brief }),
   clearAIChat: (threadId) => request('DELETE', `/ai-chat/messages${threadId != null ? `?thread_id=${threadId}` : ''}`),
   getAIContextStatus: () => request('GET', '/ai-chat/context-status'),
 
@@ -202,11 +225,12 @@ export const api = {
   startRegister: (message, threadId) => request('POST', '/ai-chat/start-register', { message, thread_id: threadId }),
   parseRegister: (data) => request('POST', '/ai-chat/parse-register', data),
   submitRegister: (data) => request('POST', '/ai-chat/submit-register', data),
-  sendAIChatMessageWithImage: (message, imageFile, threadId) => {
+  sendAIChatMessageWithImage: (message, imageFile, threadId, brief = false) => {
     const fd = new FormData()
     fd.append('message', message || '')
     fd.append('image', imageFile)
     if (threadId != null) fd.append('thread_id', String(threadId))
+    if (brief) fd.append('brief', 'true')
     return request('POST', '/ai-chat/messages-with-image', fd, true)
   },
 
@@ -242,11 +266,17 @@ export const api = {
   getPlans: (swimmerId) => request('GET', `/periodization/${swimmerId}`),
 
   // Season plan
+  getMacros: () => request('GET', '/season/macros'),
+  createMacro: (data) => request('POST', '/season/macros', data),
+  updateMacro: (id, data) => request('PATCH', `/season/macros/${id}`, data),
+  deleteMacro: (id) => request('DELETE', `/season/macros/${id}`),
   getSeasonBlocks: () => request('GET', '/season/blocks'),
   createSeasonBlock: (data) => request('POST', '/season/blocks', data),
   updateSeasonBlock: (id, data) => request('PATCH', `/season/blocks/${id}`, data),
   deleteSeasonBlock: (id) => request('DELETE', `/season/blocks/${id}`),
   getSeasonSummary: () => request('GET', '/season/summary'),
+  getBlockProgress: (id) => request('GET', `/season/blocks/${id}/progress`),
+  analyseBlock: (id) => request('POST', `/season/blocks/${id}/ai-analysis`),
 
   // Schedule / timetable
   getSlots: () => request('GET', '/schedule/slots'),

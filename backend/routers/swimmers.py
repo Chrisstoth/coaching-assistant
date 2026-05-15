@@ -664,6 +664,153 @@ def get_swimmer_context(swimmer_id: int, db: DBSession = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Block status — individual vs plan
+# ---------------------------------------------------------------------------
+
+@router.get("/{swimmer_id}/block-status")
+def get_block_status(swimmer_id: int, db: DBSession = Depends(get_db)):
+    """
+    Current meso context + weekly load + session counts + benchmark trends
+    for a swimmer — the individual vs plan view.
+    """
+    from datetime import timedelta
+    from collections import defaultdict
+
+    swimmer = _get_or_404(swimmer_id, db)
+    today = date.today()
+
+    VOLUME_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
+
+    def iso_week(d):
+        yr, wk, _ = d.isocalendar()
+        return f"{yr}-W{wk:02d}"
+
+    # Current meso
+    current_meso = db.query(models.SeasonBlock).filter(
+        models.SeasonBlock.date_from <= today,
+        models.SeasonBlock.date_to >= today,
+    ).order_by(models.SeasonBlock.date_from).first()
+
+    meso_out = None
+    group_label = None
+    group_intent = None
+
+    if current_meso:
+        meso_out = {
+            "id": current_meso.id,
+            "name": current_meso.name,
+            "phase_type": current_meso.phase_type,
+            "date_from": current_meso.date_from.isoformat(),
+            "date_to": current_meso.date_to.isoformat(),
+            "week_in": min(
+                max(1, round((current_meso.date_to - current_meso.date_from).days / 7)),
+                (today - current_meso.date_from).days // 7 + 1,
+            ),
+            "total_weeks": max(1, round((current_meso.date_to - current_meso.date_from).days / 7)),
+        }
+        # Find swimmer's group from macro group_definitions
+        if current_meso.macro_id:
+            macro = db.query(models.TrainingMacro).filter(
+                models.TrainingMacro.id == current_meso.macro_id
+            ).first()
+            if macro and macro.group_definitions:
+                for g, defn in macro.group_definitions.items():
+                    ids = defn.get("swimmer_ids") or []
+                    if swimmer_id in ids:
+                        group_label = g
+                        break
+        # Group intent for this meso
+        if group_label and current_meso.group_intents:
+            group_intent = current_meso.group_intents.get(group_label)
+
+    # Weekly load — last 8 weeks
+    eight_weeks_ago = today - timedelta(weeks=8)
+    loads = db.query(models.SwimmerSessionLoad).filter(
+        models.SwimmerSessionLoad.swimmer_id == swimmer_id,
+        models.SwimmerSessionLoad.session_date >= eight_weeks_ago,
+    ).all()
+
+    weekly_load: dict = defaultdict(lambda: {k: 0 for k in VOLUME_KEYS})
+    for load in loads:
+        wk = iso_week(load.session_date)
+        for k in VOLUME_KEYS:
+            weekly_load[wk][k] += (load.volume_breakdown or {}).get(k, 0)
+
+    # Session counts per week (attended sessions)
+    entries = db.query(models.SessionEntry).join(models.Session).filter(
+        models.SessionEntry.swimmer_id == swimmer_id,
+        models.SessionEntry.attended == True,
+        models.Session.date >= eight_weeks_ago,
+    ).all()
+    session_counts: dict = defaultdict(int)
+    for e in entries:
+        session = db.query(models.Session).filter(models.Session.id == e.session_id).first()
+        if session:
+            session_counts[iso_week(session.date)] += 1
+
+    # Build ordered week list
+    all_weeks = []
+    d = eight_weeks_ago
+    seen = set()
+    while d <= today:
+        lbl = iso_week(d)
+        if lbl not in seen:
+            all_weeks.append(lbl)
+            seen.add(lbl)
+        d += timedelta(days=7)
+
+    weeks_out = []
+    for wk in all_weeks:
+        vols = dict(weekly_load[wk])
+        weeks_out.append({
+            "week": wk,
+            "volumes": vols,
+            "total": sum(vols.values()),
+            "sessions": session_counts.get(wk, 0),
+        })
+
+    # Benchmarks — last 3 per category, with trend
+    from sqlalchemy import desc as sa_desc
+    bm_rows = db.query(models.BenchmarkLog).filter(
+        models.BenchmarkLog.swimmer_id == swimmer_id,
+    ).order_by(sa_desc(models.BenchmarkLog.date)).limit(30).all()
+
+    bm_by_cat: dict = defaultdict(list)
+    for b in bm_rows:
+        key = f"{b.distance}m {b.stroke} {b.effort}"
+        bm_by_cat[key].append({"date": b.date.isoformat(), "time_seconds": b.time_seconds, "notes": b.notes})
+
+    benchmarks_out = []
+    for cat, entries_list in bm_by_cat.items():
+        entries_list = entries_list[:3]
+        trend = None
+        if len(entries_list) >= 2:
+            diff = entries_list[0]["time_seconds"] - entries_list[1]["time_seconds"]
+            if diff < -0.5:
+                trend = "improving"
+            elif diff > 0.5:
+                trend = "slower"
+            else:
+                trend = "stable"
+        benchmarks_out.append({"category": cat, "entries": entries_list, "trend": trend})
+
+    # Recent observations (last 4)
+    obs = db.query(models.SwimmerObservation).filter(
+        models.SwimmerObservation.swimmer_id == swimmer_id,
+    ).order_by(models.SwimmerObservation.date.desc()).limit(4).all()
+    obs_out = [{"date": o.date.isoformat() if o.date else None, "type": o.obs_type, "content": o.content} for o in obs]
+
+    return {
+        "current_meso": meso_out,
+        "group": group_label,
+        "group_intent": group_intent,
+        "weeks": weeks_out,
+        "benchmarks": benchmarks_out,
+        "recent_observations": obs_out,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Times summary
 # ---------------------------------------------------------------------------
 
