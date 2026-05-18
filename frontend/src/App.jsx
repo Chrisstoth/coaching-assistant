@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom'
 import Dashboard from './pages/Dashboard'
 import Swimmers from './pages/Swimmers'
@@ -18,6 +19,38 @@ import CoachAI from './pages/CoachAI'
 import Settings from './pages/Settings'
 import SeasonPlan from './pages/SeasonPlan'
 import SessionPrint from './pages/SessionPrint'
+
+function useBackendStatus() {
+  const [status, setStatus] = useState('checking') // checking | online | slow
+
+  useEffect(() => {
+    const slow = setTimeout(() => setStatus('slow'), 2000)
+    fetch('/api/health')
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(() => { clearTimeout(slow); setStatus('online') })
+      .catch(() => { clearTimeout(slow); setStatus('slow') })
+  }, [])
+
+  return status
+}
+
+function StartupBanner({ status }) {
+  if (status !== 'slow') return null
+  return (
+    <div className="fixed top-12 left-0 right-0 z-40 px-4 pt-2">
+      <div className="max-w-lg mx-auto bg-pool-800/95 backdrop-blur border border-pool-600 rounded-xl px-4 py-2.5 flex items-center gap-3">
+        <svg className="w-4 h-4 text-accent-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+        </svg>
+        <div>
+          <p className="text-xs font-medium text-pool-200">Starting up…</p>
+          <p className="text-[11px] text-pool-500">Server wakes from sleep — takes ~30 seconds</p>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 // Pages where the bottom nav should be hidden (full-screen flows)
 const HIDE_NAV_PATHS = ['/sessions/', '/swimmers/new']
@@ -102,9 +135,11 @@ function BottomNav() {
 }
 
 export default function App() {
+  const backendStatus = useBackendStatus()
   return (
     <div className="flex flex-col min-h-screen max-w-lg mx-auto">
       <AppHeader />
+      <StartupBanner status={backendStatus} />
       <main className="flex-1 overflow-y-auto pb-20 pt-12">
         <Routes>
           <Route path="/" element={<Dashboard />} />

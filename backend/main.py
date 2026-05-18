@@ -27,6 +27,61 @@ def _migrate_season_blocks():
             conn.commit()
 
 
+def _migrate_sessions():
+    """Add missing columns to sessions if they don't exist."""
+    from sqlalchemy import text, inspect as sa_inspect
+    from backend.database import engine
+
+    insp = sa_inspect(engine)
+    if "sessions" not in insp.get_table_names():
+        return
+
+    cols = {c["name"] for c in insp.get_columns("sessions")}
+    additions = [
+        ("start_time",        "VARCHAR"),
+        ("end_time",          "VARCHAR"),
+        ("individual_mods",   "JSON"),
+        ("course",            "VARCHAR(3)"),
+        ("status",            "VARCHAR DEFAULT 'completed'"),
+        ("pool_slot_id",      "INTEGER REFERENCES pool_slots(id)"),
+        ("cancel_reason",     "TEXT"),
+        ("created_at",        "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+    ]
+    with engine.connect() as conn:
+        for col, col_type in additions:
+            if col not in cols:
+                conn.execute(text(f"ALTER TABLE sessions ADD COLUMN {col} {col_type}"))
+        conn.commit()
+
+
+def _migrate_session_entries():
+    """Add missing columns to session_entries if they don't exist."""
+    from sqlalchemy import text, inspect as sa_inspect
+    from backend.database import engine
+
+    insp = sa_inspect(engine)
+    if "session_entries" not in insp.get_table_names():
+        return
+
+    cols = {c["name"] for c in insp.get_columns("session_entries")}
+    additions = [
+        ("group_planned",       "INTEGER"),
+        ("sub_group_planned",   "VARCHAR"),
+        ("group_done",          "INTEGER"),
+        ("sub_group_done",      "VARCHAR"),
+        ("sets_completed",      "JSON"),
+        ("coach_observation",   "TEXT"),
+        ("ai_characterisation", "TEXT"),
+        ("ai_expected_response","TEXT"),
+        ("created_at",          "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
+    ]
+    with engine.connect() as conn:
+        for col, col_type in additions:
+            if col not in cols:
+                conn.execute(text(f"ALTER TABLE session_entries ADD COLUMN {col} {col_type}"))
+        conn.commit()
+
+
 def _migrate_threads():
     """Add thread_id column if missing, create default thread, migrate orphan messages."""
     from sqlalchemy.orm import Session as OrmSession
@@ -66,6 +121,8 @@ def _migrate_threads():
 async def lifespan(app: FastAPI):
     init_db()
     _migrate_season_blocks()
+    _migrate_sessions()
+    _migrate_session_entries()
     _migrate_threads()
     yield
 
