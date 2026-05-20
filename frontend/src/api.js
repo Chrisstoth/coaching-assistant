@@ -293,4 +293,16 @@ export const api = {
     const qs = squad ? `?squad=${squad}` : ''
     return request('GET', `/schedule/expected/${date}${qs}`)
   },
+
+  // Profile Wizard
+  profileWizardChat: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/chat`, { messages }),
+  profileWizardSave: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/save`, { messages }),
+
+  // Planning cohorts
+  getCohorts: () => request('GET', '/cohorts'),
+  createCohort: (data) => request('POST', '/cohorts', data),
+  updateCohort: (id, data) => request('PATCH', `/cohorts/${id}`, data),
+  deleteCohort: (id) => request('DELETE', `/cohorts/${id}`),
+  setCohortSwimmers: (cohortId, swimmerIds) => request('PUT', `/cohorts/${cohortId}/swimmers`, { swimmer_ids: swimmerIds }),
+  assignSwimmerCohort: (swimmerId, cohortId) => request('PATCH', `/swimmers/${swimmerId}`, { planning_cohort_id: cohortId }),
 }

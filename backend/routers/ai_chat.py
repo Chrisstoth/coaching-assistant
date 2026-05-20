@@ -811,7 +811,10 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         tool_results = []
         for tu in tool_uses:
             tools_called.add(tu.name)
-            result = execute_tool(tu.name, tu.input, db)
+            try:
+                result = execute_tool(tu.name, tu.input, db)
+            except Exception as e:
+                result = f"Tool '{tu.name}' failed: {str(e)}"
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tu.id,
@@ -830,6 +833,8 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         )
 
     reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
+    if not reply:
+        reply = "Done." if tools_called else "I'm not sure how to respond to that — could you rephrase?"
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 

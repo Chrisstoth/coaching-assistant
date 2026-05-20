@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
@@ -8,6 +8,17 @@ const ENERGY_COLOURS = {
   speed: 'text-red-400',
   recovery: 'text-green-400',
 }
+
+const COHORT_COLOURS = {
+  teal:   { bg: 'bg-teal-900/40 border-teal-700/50',   text: 'text-teal-200',   dot: 'bg-teal-400' },
+  orange: { bg: 'bg-orange-900/40 border-orange-700/50', text: 'text-orange-200', dot: 'bg-orange-400' },
+  blue:   { bg: 'bg-blue-900/40 border-blue-700/50',   text: 'text-blue-200',   dot: 'bg-blue-400' },
+  purple: { bg: 'bg-purple-900/40 border-purple-700/50', text: 'text-purple-200', dot: 'bg-purple-400' },
+  green:  { bg: 'bg-green-900/40 border-green-700/50', text: 'text-green-200',  dot: 'bg-green-400' },
+  red:    { bg: 'bg-red-900/40 border-red-700/50',     text: 'text-red-200',    dot: 'bg-red-400' },
+}
+
+const COLOUR_OPTIONS = ['teal', 'orange', 'blue', 'purple', 'green', 'red']
 
 function CalendarIcon() {
   return (
@@ -66,13 +77,64 @@ export default function PlanHub() {
   const [sessions, setSessions] = useState([])
   const [loadingSessions, setLoadingSessions] = useState(true)
   const [openingPlan, setOpeningPlan] = useState(false)
+  const [cohorts, setCohorts] = useState([])
+  const [showCohortForm, setShowCohortForm] = useState(false)
+  const [newCohort, setNewCohort] = useState({ name: '', colour: 'teal', goals: '' })
+  const [savingCohort, setSavingCohort] = useState(false)
+  const [editingCohort, setEditingCohort] = useState(null) // cohort being edited
+  const [openingAthlete, setOpeningAthlete] = useState(null)
 
   useEffect(() => {
     api.getSessions({ limit: 8 })
       .then(data => setSessions(Array.isArray(data) ? data.slice(0, 8) : []))
       .catch(() => setSessions([]))
       .finally(() => setLoadingSessions(false))
+    api.getCohorts().then(setCohorts).catch(() => {})
   }, [])
+
+  const createCohort = async () => {
+    if (!newCohort.name.trim()) return
+    setSavingCohort(true)
+    try {
+      const c = await api.createCohort(newCohort)
+      setCohorts(prev => [...prev, c])
+      setNewCohort({ name: '', colour: 'teal', goals: '' })
+      setShowCohortForm(false)
+    } catch {}
+    setSavingCohort(false)
+  }
+
+  const saveCohortEdit = async () => {
+    if (!editingCohort) return
+    setSavingCohort(true)
+    try {
+      const updated = await api.updateCohort(editingCohort.id, {
+        name: editingCohort.name,
+        colour: editingCohort.colour,
+        goals: editingCohort.goals,
+      })
+      setCohorts(prev => prev.map(c => c.id === updated.id ? updated : c))
+      setEditingCohort(null)
+    } catch {}
+    setSavingCohort(false)
+  }
+
+  const deleteCohort = async (id) => {
+    if (!window.confirm('Delete this cohort? Swimmers will be unassigned.')) return
+    await api.deleteCohort(id)
+    setCohorts(prev => prev.filter(c => c.id !== id))
+  }
+
+  const openAthletePlan = async (cohort) => {
+    setOpeningAthlete(cohort.id)
+    try {
+      const thread = await api.getOrCreateAthletePlanThread()
+      navigate('/ai', { state: { threadId: thread.id, cohortContext: cohort.name } })
+    } catch {
+      navigate('/ai')
+    }
+    setOpeningAthlete(null)
+  }
 
   const openSeasonPlan = async () => {
     setOpeningPlan(true)
@@ -156,6 +218,164 @@ export default function PlanHub() {
           <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
         </svg>
       </Link>
+
+      {/* Planning Cohorts */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-semibold text-pool-300 uppercase tracking-wide">Development Cohorts</h2>
+          <button
+            onClick={() => { setShowCohortForm(p => !p); setEditingCohort(null) }}
+            className="text-xs text-accent-400 hover:text-accent-300"
+          >
+            {showCohortForm ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+
+        {showCohortForm && (
+          <div className="bg-pool-800 rounded-xl p-4 space-y-3 mb-3 border border-pool-600">
+            <input
+              value={newCohort.name}
+              onChange={e => setNewCohort(p => ({ ...p, name: e.target.value }))}
+              placeholder="Cohort name (e.g. Sprint Development)"
+              className="w-full bg-pool-700 border border-pool-600 rounded-xl px-3 py-2.5 text-sm text-pool-100 placeholder-pool-500 focus:border-accent-500 focus:outline-none"
+            />
+            <textarea
+              value={newCohort.goals}
+              onChange={e => setNewCohort(p => ({ ...p, goals: e.target.value }))}
+              placeholder="Development goals (e.g. Build aerobic base, qualify for nationals in 100/200 sprint events)"
+              rows={2}
+              className="w-full bg-pool-700 border border-pool-600 rounded-xl px-3 py-2.5 text-sm text-pool-100 placeholder-pool-500 focus:border-accent-500 focus:outline-none resize-none"
+            />
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-pool-500">Colour:</span>
+              {COLOUR_OPTIONS.map(col => (
+                <button
+                  key={col}
+                  onClick={() => setNewCohort(p => ({ ...p, colour: col }))}
+                  className={`w-5 h-5 rounded-full ${COHORT_COLOURS[col]?.dot || 'bg-teal-400'} transition-transform ${newCohort.colour === col ? 'scale-125 ring-2 ring-white/40' : ''}`}
+                />
+              ))}
+            </div>
+            <button
+              onClick={createCohort}
+              disabled={savingCohort || !newCohort.name.trim()}
+              className="w-full bg-accent-600 disabled:opacity-40 rounded-xl py-2.5 text-sm font-semibold text-white"
+            >
+              {savingCohort ? 'Creating…' : 'Create cohort'}
+            </button>
+          </div>
+        )}
+
+        {cohorts.length === 0 && !showCohortForm && (
+          <div className="bg-pool-800 rounded-xl px-4 py-5 text-center">
+            <p className="text-pool-400 text-sm">No cohorts yet.</p>
+            <p className="text-pool-500 text-xs mt-1">Group swimmers by shared development goals — sprint group, distance group, competition track etc.</p>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {cohorts.map(c => {
+            const col = COHORT_COLOURS[c.colour] || COHORT_COLOURS.teal
+            if (editingCohort?.id === c.id) {
+              return (
+                <div key={c.id} className={`border rounded-xl p-4 space-y-3 ${col.bg}`}>
+                  <input
+                    value={editingCohort.name}
+                    onChange={e => setEditingCohort(p => ({ ...p, name: e.target.value }))}
+                    className="w-full bg-pool-800 border border-pool-600 rounded-xl px-3 py-2 text-sm text-pool-100 focus:outline-none"
+                  />
+                  <textarea
+                    value={editingCohort.goals || ''}
+                    onChange={e => setEditingCohort(p => ({ ...p, goals: e.target.value }))}
+                    rows={2}
+                    className="w-full bg-pool-800 border border-pool-600 rounded-xl px-3 py-2 text-sm text-pool-100 resize-none focus:outline-none"
+                  />
+                  <div className="flex items-center gap-2">
+                    {COLOUR_OPTIONS.map(col2 => (
+                      <button
+                        key={col2}
+                        onClick={() => setEditingCohort(p => ({ ...p, colour: col2 }))}
+                        className={`w-5 h-5 rounded-full ${COHORT_COLOURS[col2]?.dot || 'bg-teal-400'} ${editingCohort.colour === col2 ? 'scale-125 ring-2 ring-white/40' : ''}`}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => setEditingCohort(null)} className="flex-1 bg-pool-700 rounded-xl py-2 text-sm">Cancel</button>
+                    <button onClick={saveCohortEdit} disabled={savingCohort} className="flex-1 bg-accent-600 disabled:opacity-40 rounded-xl py-2 text-sm font-semibold text-white">Save</button>
+                  </div>
+                </div>
+              )
+            }
+            return (
+              <div key={c.id} className={`border rounded-xl p-4 space-y-2.5 ${col.bg}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2.5 h-2.5 rounded-full shrink-0 ${col.dot}`} />
+                    <p className={`font-semibold text-sm ${col.text}`}>{c.name}</p>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setEditingCohort({ ...c })}
+                      className="text-xs text-pool-500 hover:text-pool-300"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deleteCohort(c.id)}
+                      className="text-xs text-pool-600 hover:text-red-400"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+
+                {c.goals && (
+                  <p className="text-xs text-pool-300 leading-relaxed">{c.goals}</p>
+                )}
+
+                {c.target_meets?.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {c.target_meets.map(m => (
+                      <span key={m.id} className="text-[10px] bg-pool-700/60 text-pool-400 rounded-full px-2 py-0.5">
+                        {m.name}{m.date ? ` · ${m.date}` : ''}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                {c.swimmers?.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {c.swimmers.map(s => (
+                      <span key={s.id} className="text-[10px] bg-pool-700/60 text-pool-300 rounded-full px-2.5 py-0.5">
+                        {s.name}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-pool-500 italic">No swimmers assigned — tap + cohort on the Squad page.</p>
+                )}
+
+                <button
+                  onClick={() => openAthletePlan(c)}
+                  disabled={openingAthlete === c.id}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-xl bg-pool-700/50 hover:bg-pool-700 transition-colors text-xs font-medium text-pool-300"
+                >
+                  {openingAthlete === c.id ? (
+                    <span>Opening…</span>
+                  ) : (
+                    <>
+                      <span>Plan with AI</span>
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                      </svg>
+                    </>
+                  )}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
 
       {/* Recent sessions */}
       <div>

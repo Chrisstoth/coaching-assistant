@@ -100,6 +100,9 @@ class Swimmer(Base):
     physical_profile = Column(JSON, nullable=True)
     psychological_profile = Column(JSON, nullable=True)
 
+    # Planning cohort assignment
+    planning_cohort_id = Column(Integer, ForeignKey("planning_cohorts.id"), nullable=True)
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
@@ -687,3 +690,13 @@ class SeasonBlock(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     macro = relationship("TrainingMacro", back_populates="mesos")
+
+
+class PlanningCohort(Base):
+    __tablename__ = "planning_cohorts"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    colour = Column(String, nullable=True)        # e.g. "teal", "orange", "blue", "purple"
+    goals = Column(Text, nullable=True)           # free-text development goals
+    target_meet_ids = Column(JSON, nullable=True) # [meet_id, ...]
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

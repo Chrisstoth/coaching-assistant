@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes
-from backend.routers import auth, benchmarks, season, skills, dashboard
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts
 from backend.auth_dep import verify_token
 
 
@@ -82,6 +82,35 @@ def _migrate_session_entries():
         conn.commit()
 
 
+def _migrate_planning_cohorts():
+    """Create planning_cohorts table and add planning_cohort_id to swimmers."""
+    from sqlalchemy import text, inspect as sa_inspect
+    from backend.database import engine
+    insp = sa_inspect(engine)
+    tables = insp.get_table_names()
+
+    if "planning_cohorts" not in tables:
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE planning_cohorts (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR NOT NULL,
+                    colour VARCHAR,
+                    goals TEXT,
+                    target_meet_ids JSON,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+
+    if "swimmers" in tables:
+        cols = [c["name"] for c in insp.get_columns("swimmers")]
+        if "planning_cohort_id" not in cols:
+            with engine.connect() as conn:
+                conn.execute(text("ALTER TABLE swimmers ADD COLUMN planning_cohort_id INTEGER REFERENCES planning_cohorts(id)"))
+                conn.commit()
+
+
 def _migrate_threads():
     """Add thread_id column if missing, create default thread, migrate orphan messages."""
     from sqlalchemy.orm import Session as OrmSession
@@ -123,6 +152,7 @@ async def lifespan(app: FastAPI):
     _migrate_season_blocks()
     _migrate_sessions()
     _migrate_session_entries()
+    _migrate_planning_cohorts()
     _migrate_threads()
     yield
 
@@ -159,6 +189,7 @@ app.include_router(benchmarks.router, prefix="/benchmarks", tags=["Benchmarks"],
 app.include_router(season.router, prefix="/season", tags=["Season Plan"], dependencies=_auth)
 app.include_router(skills.router, prefix="/skills", tags=["Skills"], dependencies=_auth)
 app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"], dependencies=_auth)
+app.include_router(cohorts.router, prefix="/cohorts", tags=["Cohorts"], dependencies=_auth)
 
 
 @app.get("/health")

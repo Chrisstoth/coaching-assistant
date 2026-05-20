@@ -740,6 +740,31 @@ def get_athlete_plan_system_prompt(db: DBSession) -> str:
             meet_lines.append(f"  {m.name} — {m.date} ({days}d)")
         parts.append("---\n" + "\n".join(meet_lines))
 
+    # Planning cohorts — shared development goals
+    cohorts = db.query(models.PlanningCohort).order_by(models.PlanningCohort.name).all()
+    if cohorts:
+        active_swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
+        swimmer_map = {s.id: s for s in active_swimmers}
+        cohort_lines = ["PLANNING COHORTS — when a swimmer is mentioned, reference their cohort goals:"]
+        for c in cohorts:
+            members = [s.name for s in active_swimmers if s.planning_cohort_id == c.id]
+            if not members:
+                continue
+            cohort_lines.append(f"  {c.name}: {', '.join(members)}")
+            if c.goals:
+                cohort_lines.append(f"    Development goals: {c.goals}")
+            if c.target_meet_ids:
+                target_meets = []
+                for mid in c.target_meet_ids:
+                    m = db.query(models.Meet).filter(models.Meet.id == mid).first()
+                    if m:
+                        weeks_out = (m.date - today).days // 7 if m.date else None
+                        target_meets.append(f"{m.name} ({m.date}, {weeks_out}w out)" if weeks_out else m.name)
+                if target_meets:
+                    cohort_lines.append(f"    Target meets: {', '.join(target_meets)}")
+        if len(cohort_lines) > 1:
+            parts.append("---\n" + "\n".join(cohort_lines))
+
     return "\n\n".join(parts)
 
 
@@ -810,11 +835,18 @@ def build_squad_snapshot(db: DBSession) -> str:
     if not swimmers:
         return ""
 
+    # Build cohort lookup
+    cohorts = {c.id: c for c in db.query(models.PlanningCohort).all()}
+
     today = date_type.today()
     lines = [f"YOUR SQUAD ({len(swimmers)} active swimmers):"]
 
     for s in swimmers:
         parts = [s.name]
+
+        # Cohort
+        if s.planning_cohort_id and s.planning_cohort_id in cohorts:
+            parts.append(f"[{cohorts[s.planning_cohort_id].name}]")
 
         # Age + gender
         if s.dob:
@@ -872,6 +904,26 @@ def build_squad_snapshot(db: DBSession) -> str:
             parts.append(att_str)
 
         lines.append("  " + " | ".join(parts))
+
+    # Cohort development goals summary
+    if cohorts:
+        lines.append("")
+        lines.append("PLANNING COHORTS (shared development goals):")
+        for cohort in cohorts.values():
+            members = [s.name for s in swimmers if s.planning_cohort_id == cohort.id]
+            if not members:
+                continue
+            lines.append(f"  {cohort.name} ({len(members)} swimmers: {', '.join(members)})")
+            if cohort.goals:
+                lines.append(f"    Goals: {cohort.goals[:200]}")
+            if cohort.target_meet_ids:
+                meet_names = []
+                for mid in cohort.target_meet_ids:
+                    m = db.query(models.Meet).filter(models.Meet.id == mid).first()
+                    if m:
+                        meet_names.append(f"{m.name} ({m.date})" if m.date else m.name)
+                if meet_names:
+                    lines.append(f"    Target meets: {', '.join(meet_names)}")
 
     return "\n".join(lines)
 
@@ -1633,26 +1685,20 @@ CONVERSATION:
 
 Return JSON only:
 {{
-  "intent": one of ["biological_profile","race_profile","training_profile","performance_analysis","session_writing","meet_creation","session_plan","meet_prep","season_plan","coaching_intent","status_change","general"],
+  "intent": one of ["session_writing","meet_creation","season_plan","coaching_intent","status_change","general"],
   "swimmer_name": "first name only, or null if squad-wide discussion",
   "confidence": "high" or "low",
-  "suggested_action": "short label e.g. 'Save to Tom\\'s biological profile' or 'Create this session' — or null if general chat or low confidence",
+  "suggested_action": "short label e.g. 'Create this session' — or null if general chat or low confidence",
   "new_status": "sabbatical, injury, or active — only set when intent is status_change, otherwise null"
 }}
 
 Rules:
-- biological_profile: discussing physiology, adaptation, development, aerobic/anaerobic profile of a specific swimmer
-- race_profile: analysing race tactics, split patterns, competition performance of a specific swimmer
-- training_profile: discussing training response, session tolerance, load management of a specific swimmer
-- performance_analysis: reviewing times data, PBs, progression trends, WA points of a specific swimmer
 - session_writing: actively designing/writing a specific training session (groups, sets, structure) — suggested_action should be "Create this session"
 - meet_creation: adding a new competition meet with swimmer entries and events — suggested_action should be "Create this meet"
-- session_plan: planning a specific upcoming session or short period (days)
-- meet_prep: preparing a swimmer for a specific upcoming competition
 - season_plan: discussing macro/meso structure, annual planning
 - coaching_intent: coach has stated a training direction or priority for a swimmer (e.g. "needs more aerobic work", "should focus on X this block") and the conversation has examined and refined it — suggested_action should be "Save intent to [swimmer name]'s profile"
 - status_change: coach is changing a swimmer's status — sabbatical (taking a break from swimming), injury (injured/unable to train), or returning to active — suggested_action should be "Mark [swimmer name] as sabbatical" / "Mark [swimmer name] as injured" / "Mark [swimmer name] as active"
-- general: general coaching science, no specific save action warranted
+- general: everything else — profile discussions, coaching science, analysis, planning conversations
 - Only return high confidence if the conversation has clearly been building something concrete
 - For session_writing, return high confidence once the session structure/groups/sets have been discussed
 - For meet_creation, return high confidence once meet name/date and at least one swimmer's events have been confirmed
@@ -3970,3 +4016,192 @@ Rules:
         raw = raw.rstrip("`").strip()
 
     return json.loads(raw)
+
+
+# ---------------------------------------------------------------------------
+# Profile Wizard — structured biological interview
+# ---------------------------------------------------------------------------
+
+WIZARD_SYSTEM = """You are running a structured biological profiling interview for a swimming coach.
+
+Your job is to build a deep, evidence-based biological profile of a swimmer by asking targeted questions and interpreting the coach's responses alongside the swimmer's times data.
+
+The profile you build must be useful for:
+- Session and season planning (what training will work for this swimmer)
+- Group allocation decisions (Group 1/2/3 split)
+- Understanding how this swimmer will respond to different stimuli
+
+Profile areas to cover across the conversation:
+1. AEROBIC BASE — how well the swimmer holds pace over distance, how quickly they fatigue in longer sets, what the coach sees in aerobic-dominant sessions
+2. SPRINT / POWER PROFILE — alactic power, max speed, top-end speed quality, 15m burst vs 50m held speed
+3. RACE PATTERNS — split tendency (positive/negative/even), where they fade, how they respond to race stress
+4. FATIGUE & RECOVERY — how long they need between hard efforts, how they look at the end of a hard week, recovery between sessions
+5. TRAINING RESPONSE — what types of training they seem to respond well to, what doesn't seem to work, any notable adaptation patterns the coach has observed
+
+Rules:
+- Ask one focused area at a time. Don't fire a list of questions.
+- Reference the times data when you have it — e.g. "I can see their 200 times have plateaued while their 100 has improved — what do you notice about their endurance in training?"
+- Build on what the coach says — ask follow-up questions to get specifics, not generic answers.
+- When you have enough on an area, move to the next one naturally.
+- Be professional and direct — coaching partner tone, not chatbot.
+- When you've covered all five areas, tell the coach you have enough to synthesise a profile and prompt them to save.
+
+Open the conversation with a brief intro and your first targeted question — using the swimmer's times data to frame it."""
+
+
+def _build_wizard_times_summary(swimmer: models.Swimmer, db: DBSession) -> str:
+    """Compact times summary for the wizard — best time per event with trend indicator."""
+    from datetime import date, timedelta
+    one_year_ago = date.today() - timedelta(days=365)
+
+    all_times = (
+        db.query(models.SwimTime)
+        .filter(models.SwimTime.swimmer_id == swimmer.id)
+        .order_by(models.SwimTime.event, models.SwimTime.date.asc())
+        .all()
+    )
+    if not all_times:
+        return "No times on record."
+
+    by_event: dict = {}
+    for t in all_times:
+        by_event.setdefault(t.event, []).append(t)
+
+    lines = []
+    for event, entries in sorted(by_event.items()):
+        best = min(entries, key=lambda x: x.time_seconds)
+        recent = [t for t in entries if t.date and t.date >= one_year_ago]
+        older  = [t for t in entries if not t.date or t.date < one_year_ago]
+        if recent and older:
+            r_best = min(recent, key=lambda x: x.time_seconds).time_seconds
+            o_best = min(older,  key=lambda x: x.time_seconds).time_seconds
+            delta_pct = (o_best - r_best) / o_best * 100
+            trend = f"+{delta_pct:.1f}% improving" if delta_pct > 1.5 else (f"{delta_pct:.1f}% declining" if delta_pct < -1.0 else "stable")
+        elif recent and not older:
+            trend = "new (<12mo)"
+        else:
+            trend = "no recent data"
+        lines.append(f"  {event}: best {_format_time(best.time_seconds)} ({best.date}) — {trend}")
+
+    return "\n".join(lines)
+
+
+def wizard_chat(
+    swimmer: models.Swimmer,
+    messages: list[dict],
+    db: DBSession,
+) -> str:
+    """
+    Stateless wizard chat. Takes full message history, returns next AI message.
+    If messages is empty, generates the opening question.
+    """
+    times_summary = _build_wizard_times_summary(swimmer, db)
+    age_context = _swimmer_age_context(swimmer) or ""
+    target_events = ", ".join(
+        f"{e['event']} ({e.get('course','?')})" if isinstance(e, dict) else str(e)
+        for e in (swimmer.target_events or [])
+    ) or "not set"
+
+    swimmer_intro = f"""SWIMMER: {swimmer.name}
+Gender: {swimmer.gender or '?'} | Squad: {swimmer.squad or '?'} | Target events: {target_events}
+{age_context}
+
+TIMES DATA:
+{times_summary}
+
+Existing profile notes: {swimmer.profile_notes or 'None'}"""
+
+    system = f"{WIZARD_SYSTEM}\n\n---\n{swimmer_intro}"
+
+    if not messages:
+        api_messages = [{"role": "user", "content": "(Start the profiling interview.)"}]
+    else:
+        api_messages = messages
+
+    response = get_client().messages.create(
+        model=MODEL,
+        max_tokens=800,
+        system=system,
+        messages=api_messages,
+    )
+    return response.content[0].text.strip()
+
+
+def save_wizard_profile(
+    swimmer: models.Swimmer,
+    messages: list[dict],
+    db: DBSession,
+) -> dict:
+    """
+    Synthesise the wizard conversation into physical_profile + psychological_profile JSON
+    and save a SwimmerProfileVersion with type "wizard".
+    """
+    times_summary = _build_wizard_times_summary(swimmer, db)
+    age_context = _swimmer_age_context(swimmer) or ""
+    target_events = ", ".join(
+        f"{e['event']} ({e.get('course','?')})" if isinstance(e, dict) else str(e)
+        for e in (swimmer.target_events or [])
+    ) or "not set"
+
+    conversation_text = "\n".join(
+        f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
+        for m in messages
+    )
+
+    prompt = f"""You have just completed a profiling interview with a coach about their swimmer. Synthesise everything into a structured profile.
+
+SWIMMER: {swimmer.name} | Gender: {swimmer.gender or '?'} | Target events: {target_events}
+{age_context}
+
+TIMES DATA:
+{times_summary}
+
+PROFILING CONVERSATION:
+{conversation_text}
+
+Return a JSON object with exactly these two keys:
+
+"physical": {{
+  "aerobic_base": "short description — e.g. 'Strong aerobic base; holds threshold pace well across long sets'",
+  "sprint_tendency": "alactic/top-speed quality — e.g. 'Good 15m burst but speed drops sharply after 25m'",
+  "race_pattern": "split tendency and race execution — e.g. 'Consistent positive splitter; fades in 3rd 50 of 200'",
+  "fatigue_profile": "how they fatigue intra-session and across the week",
+  "training_response": "what training types work / don't work for this swimmer",
+  "key_limiters": "1-2 physiological factors currently limiting performance",
+  "strengths": "1-2 physiological strengths to build on"
+}}
+
+"psychological": {{
+  "motivation_style": "intrinsic/extrinsic, competition-driven/training-driven etc",
+  "competition_response": "how they respond under race pressure",
+  "response_to_hard_training": "how they handle tough sessions — digs in, backs off, needs encouragement etc",
+  "coachability": "how they take feedback, willingness to change",
+  "notes": "anything else relevant to how to coach this athlete"
+}}
+
+Base everything on what the coach said in the conversation. Where the conversation didn't cover something, write null.
+Return only JSON."""
+
+    response = get_client().messages.create(
+        model=MODEL,
+        max_tokens=1500,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    profile_data = json.loads(_strip_json(response.content[0].text))
+
+    swimmer.physical_profile = profile_data.get("physical", {})
+    swimmer.psychological_profile = profile_data.get("psychological", {})
+
+    version = models.SwimmerProfileVersion(
+        swimmer_id=swimmer.id,
+        profile_type="wizard",
+        data=profile_data,
+        change_summary="Profile built via profiling wizard.",
+        obs_count=len(messages),
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    return _profile_version_out(version)

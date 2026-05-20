@@ -47,6 +47,7 @@ class SwimmerUpdate(BaseModel):
     strengths: Optional[str] = None
     weaknesses: Optional[str] = None
     profile_notes: Optional[str] = None
+    planning_cohort_id: Optional[int] = None
 
 
 class ProfileChatMessage(BaseModel):
@@ -479,6 +480,40 @@ def get_performance_analyses(swimmer_id: int, db: DBSession = Depends(get_db)):
         .all()
     )
     return [_profile_version_out(v) for v in versions]
+
+
+# ---------------------------------------------------------------------------
+# Profile Wizard
+# ---------------------------------------------------------------------------
+
+class WizardMessage(BaseModel):
+    role: str   # "user" | "assistant"
+    content: str
+
+class WizardChatRequest(BaseModel):
+    messages: list[WizardMessage] = []
+
+class WizardSaveRequest(BaseModel):
+    messages: list[WizardMessage]
+
+
+@router.post("/{swimmer_id}/profile-wizard/chat")
+def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depends(get_db)):
+    """Stateless wizard chat — send full message history, get next AI response."""
+    swimmer = _get_or_404(swimmer_id, db)
+    messages = [m.model_dump() for m in body.messages]
+    reply = claude_service.wizard_chat(swimmer, messages, db)
+    return {"reply": reply}
+
+
+@router.post("/{swimmer_id}/profile-wizard/save")
+def wizard_save(swimmer_id: int, body: WizardSaveRequest, db: DBSession = Depends(get_db)):
+    """Synthesise wizard conversation and save to swimmer profile."""
+    swimmer = _get_or_404(swimmer_id, db)
+    if not body.messages:
+        raise HTTPException(status_code=422, detail="No conversation to save.")
+    messages = [m.model_dump() for m in body.messages]
+    return claude_service.save_wizard_profile(swimmer, messages, db)
 
 
 # ---------------------------------------------------------------------------
@@ -941,6 +976,7 @@ def _swimmer_summary(s: models.Swimmer) -> dict:
         "target_events": s.target_events,
         "course_bias": s.course_bias,
         "has_profile": bool(s.physical_profile or s.psychological_profile),
+        "planning_cohort_id": s.planning_cohort_id,
     }
 
 

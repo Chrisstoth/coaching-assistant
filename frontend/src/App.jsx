@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Routes, Route, NavLink, Link, useLocation } from 'react-router-dom'
+import { Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom'
+import { getToken } from './api'
 import Dashboard from './pages/Dashboard'
 import Swimmers from './pages/Swimmers'
 import SwimmerDetail from './pages/SwimmerDetail'
@@ -19,6 +20,12 @@ import CoachAI from './pages/CoachAI'
 import Settings from './pages/Settings'
 import SeasonPlan from './pages/SeasonPlan'
 import SessionPrint from './pages/SessionPrint'
+import Login from './pages/Login'
+import ProfileWizard from './pages/ProfileWizard'
+
+function RequireAuth({ children }) {
+  return getToken() ? children : <Navigate to="/login" replace />
+}
 
 function useBackendStatus() {
   const [status, setStatus] = useState('checking') // checking | online | slow
@@ -138,14 +145,19 @@ export default function App() {
   const backendStatus = useBackendStatus()
   return (
     <div className="flex flex-col min-h-screen max-w-lg mx-auto">
-      <AppHeader />
-      <StartupBanner status={backendStatus} />
-      <main className="flex-1 overflow-y-auto pb-20 pt-12">
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="*" element={
+          <RequireAuth>
+            <AppHeader />
+            <StartupBanner status={backendStatus} />
+            <main className="flex-1 overflow-y-auto pb-20 pt-12">
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
           <Route path="/swimmers" element={<Swimmers />} />
           <Route path="/swimmers/new" element={<NewSwimmer />} />
           <Route path="/swimmers/:id" element={<SwimmerDetail />} />
+          <Route path="/swimmers/:id/profile-wizard" element={<ProfileWizard />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
@@ -160,10 +172,13 @@ export default function App() {
           <Route path="/plan" element={<PlanHub />} />
           <Route path="/session-planner" element={<SessionPlanner />} />
           <Route path="/season" element={<SeasonPlan />} />
-          <Route path="/settings" element={<Settings />} />
-        </Routes>
-      </main>
-      <BottomNav />
+                <Route path="/settings" element={<Settings />} />
+              </Routes>
+            </main>
+            <BottomNav />
+          </RequireAuth>
+        } />
+      </Routes>
     </div>
   )
 }

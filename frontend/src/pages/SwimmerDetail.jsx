@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
 import VoiceInput from '../components/VoiceInput'
@@ -174,6 +174,7 @@ function BlockStatusCard({ status }) {
 
 export default function SwimmerDetail() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [swimmer, setSwimmer] = useState(null)
   const [tab, setTab] = useState('Overview')
   const [conversation, setConversation] = useState([])
@@ -599,23 +600,31 @@ export default function SwimmerDetail() {
 
             {/* Biological Profile — synthesis button + versioned display */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center gap-2">
                 <h3 className="font-semibold text-sm text-green-400">Biological Profile</h3>
-                <button
-                  onClick={async () => {
-                    setSynthBio(true)
-                    setBioError(null)
-                    try {
-                      const v = await api.synthesiseBiologicalProfile(id)
-                      setBiologicalProfiles((prev) => [v, ...prev])
-                    } catch (e) { setBioError(e.message) }
-                    setSynthBio(false)
-                  }}
-                  disabled={synthBio}
-                  className="text-xs text-pool-500 hover:text-pool-300 disabled:opacity-40 transition-colors"
-                >
-                  {synthBio ? 'Updating…' : biologicalProfiles.length > 0 ? 'Re-synthesise' : 'Synthesise from data'}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => navigate(`/swimmers/${id}/profile-wizard`)}
+                    className="text-xs bg-accent-700/40 text-accent-300 hover:bg-accent-700/70 border border-accent-600/30 rounded-lg px-2.5 py-1 transition-colors"
+                  >
+                    {biologicalProfiles.length > 0 ? 'Reassess' : 'Build Profile'}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      setSynthBio(true)
+                      setBioError(null)
+                      try {
+                        const v = await api.synthesiseBiologicalProfile(id)
+                        setBiologicalProfiles((prev) => [v, ...prev])
+                      } catch (e) { setBioError(e.message) }
+                      setSynthBio(false)
+                    }}
+                    disabled={synthBio}
+                    className="text-xs text-pool-500 hover:text-pool-300 disabled:opacity-40 transition-colors"
+                  >
+                    {synthBio ? 'Updating…' : 'Synthesise'}
+                  </button>
+                </div>
               </div>
               {bioError && (
                 <div className="bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2 text-xs text-red-300 leading-relaxed">
