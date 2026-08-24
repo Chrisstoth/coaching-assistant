@@ -19,6 +19,17 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def _portable_column_type(column_type: str, dialect_name: str) -> str:
+    """Translate legacy SQLite migration types for the active database."""
+    if dialect_name == "postgresql":
+        upper = column_type.upper()
+        if upper == "DATETIME":
+            return "TIMESTAMP WITH TIME ZONE"
+        if upper == "BOOLEAN DEFAULT 0":
+            return "BOOLEAN DEFAULT FALSE"
+    return column_type
+
+
 def get_db():
     db = SessionLocal()
     try:
@@ -46,7 +57,8 @@ def _apply_migrations():
         def add_col(table, column, col_type):
             existing = [c["name"] for c in insp.get_columns(table)]
             if column not in existing:
-                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                portable_type = _portable_column_type(col_type, conn.dialect.name)
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {portable_type}"))
                 conn.commit()
 
         if "swimmers" in insp.get_table_names():

@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.database import engine
 from backend.database import SessionLocal
+from backend.database import _portable_column_type
 from backend import models
 from backend.routers.ai_chat import _thread_memory, MAX_HISTORY
 from backend.services.claude_service import FAST_MODEL, execute_tool, record_ai_usage
@@ -68,6 +69,17 @@ class CoreFlowTests(unittest.TestCase):
             db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer.id).delete()
             db.delete(swimmer)
             db.commit()
+
+    def test_raw_migration_types_are_portable_to_postgres(self):
+        self.assertEqual(
+            _portable_column_type("DATETIME", "postgresql"),
+            "TIMESTAMP WITH TIME ZONE",
+        )
+        self.assertEqual(
+            _portable_column_type("BOOLEAN DEFAULT 0", "postgresql"),
+            "BOOLEAN DEFAULT FALSE",
+        )
+        self.assertEqual(_portable_column_type("DATETIME", "sqlite"), "DATETIME")
 
     def test_agent_routes_short_factual_retrieval_to_fast_model(self):
         captured = {}
