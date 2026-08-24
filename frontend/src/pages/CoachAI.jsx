@@ -371,7 +371,9 @@ export default function CoachAI() {
 
       // Auto-trigger register card if register topic detected
       if ((res.topics_detected || []).includes('register')) {
-        const regData = await api.startRegister(msg, threadId)
+        // Newer backends resolve the slot as part of the deterministic chat
+        // response. Keep the fallback for clients talking to an older server.
+        const regData = res.register_data || await api.startRegister(msg, threadId)
         if (regData.session_id) {
           setRegisterData({ ...regData, attendance: null })
         }

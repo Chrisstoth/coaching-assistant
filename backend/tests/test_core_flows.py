@@ -25,7 +25,7 @@ from backend.database import _portable_column_type
 from backend import models
 from backend.routers.ai_chat import (
     ATHLETE_HISTORY, GENERAL_HISTORY, MAX_HISTORY,
-    _conversation_action, _history_limit_for_thread, _thread_memory,
+    _conversation_action, _extract_register_date, _history_limit_for_thread, _thread_memory,
 )
 from backend.services.claude_service import (
     COACHING_CONTEXT_CHAR_LIMIT, FAST_MODEL,
@@ -47,6 +47,73 @@ class CoreFlowTests(unittest.TestCase):
         cls.client_context.__exit__(None, None, None)
         engine.dispose()
         Path(_db_file.name).unlink(missing_ok=True)
+
+    def test_chat_register_resolves_exact_recurring_slot_without_ai_guessing(self):
+        target_date = date.today()
+        day_name = target_date.strftime("%A")
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Register Flow Swimmer", squad="Register Test")
+            pm_slot = models.PoolSlot(
+                day_of_week=target_date.weekday(), time="20:30", end_time="21:30",
+                squad="Register Test", label=f"{day_name} PM", active=True,
+            )
+            am_slot = models.PoolSlot(
+                day_of_week=target_date.weekday(), time="05:30", end_time="07:00",
+                squad="Register Test", label=f"{day_name} AM", active=True,
+            )
+            db.add_all([swimmer, pm_slot, am_slot])
+            db.flush()
+            swimmer_id, pm_slot_id, am_slot_id = swimmer.id, pm_slot.id, am_slot.id
+            db.add(models.SwimmerSlot(swimmer_id=swimmer_id, pool_slot_id=pm_slot_id))
+            db.commit()
+
+        message = f"Can I do a register for {day_name} PM {target_date.strftime('%d %B %Y')}"
+        with patch("backend.routers.ai_chat.get_client") as ai_client:
+            response = self.client.post(
+                "/ai-chat/messages", headers=self.headers,
+                json={"message": message, "thread_id": None},
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["topics_detected"], ["register"])
+        self.assertEqual(payload["model_route"]["tier"], "deterministic")
+        self.assertIn(f"{day_name} PM", payload["reply"])
+        self.assertNotIn("Tuesday PM", payload["reply"] if day_name != "Tuesday" else "")
+        self.assertEqual(payload["register_data"]["session_time"], "20:30")
+        self.assertEqual(payload["register_data"]["attendees"][0]["id"], swimmer_id)
+        self.assertTrue(payload["register_data"]["created_from_slot"])
+        ai_client.assert_not_called()
+
+        second = self.client.post(
+            "/ai-chat/start-register", headers=self.headers,
+            json={"message": message},
+        )
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["session_id"], payload["register_data"]["session_id"])
+        self.assertFalse(second.json()["created_from_slot"])
+
+        with SessionLocal() as db:
+            sessions = db.query(models.Session).filter(
+                models.Session.pool_slot_id == pm_slot_id,
+                models.Session.date == target_date,
+            ).all()
+            self.assertEqual(len(sessions), 1)
+            db.query(models.CoachAIMessage).filter(
+                models.CoachAIMessage.message.in_([message, payload["reply"]]),
+            ).delete(synchronize_session=False)
+            db.query(models.Session).filter(models.Session.id == sessions[0].id).delete()
+            db.query(models.SwimmerSlot).filter(
+                models.SwimmerSlot.pool_slot_id.in_([pm_slot_id, am_slot_id]),
+            ).delete(synchronize_session=False)
+            db.query(models.PoolSlot).filter(
+                models.PoolSlot.id.in_([pm_slot_id, am_slot_id]),
+            ).delete(synchronize_session=False)
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
+
+    def test_register_date_parser_accepts_compact_ordinal_month(self):
+        parsed = _extract_register_date("Monday PM 24thaugust", today=date(2026, 8, 24))
+        self.assertEqual(parsed, date(2026, 8, 24))
 
     def test_agent_read_tools_return_compact_stored_evidence(self):
         with SessionLocal() as db:

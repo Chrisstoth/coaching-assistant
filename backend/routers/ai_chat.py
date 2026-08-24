@@ -1,7 +1,8 @@
 import base64
 import json
 import os
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File, Form
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession
@@ -17,6 +18,7 @@ from backend.services.claude_service import (
     get_tools, execute_tool, save_wizard_profile,
 )
 from backend.services.agent_policy import choose_agent_route
+from backend.services.availability import availability_on_date
 
 router = APIRouter()
 
@@ -585,6 +587,253 @@ def get_messages(thread_id: Optional[int] = None, db: DBSession = Depends(get_db
     return [{"id": m.id, "role": m.role, "message": m.message, "created_at": m.created_at} for m in msgs]
 
 
+_REGISTER_MONTHS = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2,
+    "mar": 3, "march": 3, "apr": 4, "april": 4,
+    "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10, "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+}
+
+
+def _extract_register_date(text: str, today: Optional[date] = None) -> Optional[date]:
+    """Extract an explicit calendar date, including compact input like 24thaugust."""
+    today = today or date.today()
+    value = (text or "").lower()
+
+    iso_match = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", value)
+    if iso_match:
+        try:
+            return date(int(iso_match.group(1)), int(iso_match.group(2)), int(iso_match.group(3)))
+        except ValueError:
+            return None
+
+    numeric_match = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", value)
+    if numeric_match:
+        year = int(numeric_match.group(3)) if numeric_match.group(3) else today.year
+        if year < 100:
+            year += 2000
+        try:
+            return date(year, int(numeric_match.group(2)), int(numeric_match.group(1)))
+        except ValueError:
+            return None
+
+    month_names = "|".join(sorted(_REGISTER_MONTHS, key=len, reverse=True))
+    named_match = re.search(
+        rf"\b(\d{{1,2}})(?:st|nd|rd|th)?\s*({month_names})(?:\s+(\d{{4}}))?\b",
+        value,
+    )
+    if not named_match:
+        return None
+    try:
+        return date(
+            int(named_match.group(3)) if named_match.group(3) else today.year,
+            _REGISTER_MONTHS[named_match.group(2)],
+            int(named_match.group(1)),
+        )
+    except ValueError:
+        return None
+
+
+def _matches_period(start_time: Optional[str], period: Optional[str]) -> bool:
+    if not period:
+        return True
+    try:
+        is_am = int((start_time or "").split(":", 1)[0]) < 12
+    except (TypeError, ValueError):
+        return False
+    return (period == "AM" and is_am) or (period == "PM" and not is_am)
+
+
+def _availability_json(item: Optional[dict]) -> Optional[dict]:
+    if not item:
+        return None
+    return {
+        **item,
+        "date_from": item["date_from"].isoformat(),
+        "date_to": item["date_to"].isoformat(),
+    }
+
+
+def _register_attendees(session: models.Session, db: DBSession) -> list[dict]:
+    """Return the roster for this exact slot, rather than every slot that day."""
+    if session.pool_slot_id:
+        swimmer_ids = [
+            row[0]
+            for row in db.query(models.SwimmerSlot.swimmer_id).filter(
+                models.SwimmerSlot.pool_slot_id == session.pool_slot_id,
+            ).all()
+        ]
+        swimmers = db.query(models.Swimmer).filter(
+            models.Swimmer.id.in_(swimmer_ids),
+            models.Swimmer.active == True,
+        ).order_by(models.Swimmer.name).all() if swimmer_ids else []
+        unavailable = availability_on_date(db, swimmer_ids, session.date)
+        return [
+            {
+                "id": swimmer.id,
+                "name": swimmer.name,
+                "squad": swimmer.squad,
+                "expected": swimmer.id not in unavailable,
+                "exception_reason": unavailable.get(swimmer.id, {}).get("reason"),
+                "availability": _availability_json(unavailable.get(swimmer.id)),
+            }
+            for swimmer in swimmers
+        ]
+
+    from backend.routers.schedule import expected_attendance
+    return expected_attendance(session.date, squad=session.squad, db=db)
+
+
+def _register_option(label: str, start_time: Optional[str], end_time: Optional[str]) -> str:
+    time_range = start_time or "time not set"
+    if start_time and end_time:
+        time_range = f"{start_time}–{end_time}"
+    return f"{label} ({time_range})"
+
+
+def _resolve_register_request(
+    text: str,
+    db: DBSession,
+    today: Optional[date] = None,
+) -> dict:
+    """Resolve an existing session or materialise the requested recurring slot."""
+    today = today or date.today()
+    hint = extract_slot_hint(text)
+    explicit_date = _extract_register_date(text, today)
+
+    if explicit_date and hint.get("dow") is not None and explicit_date.weekday() != hint["dow"]:
+        actual_day = explicit_date.strftime("%A")
+        return {
+            "error": f"That date is a {actual_day}, not the day named in the request. Please confirm which one you mean.",
+            "sessions": [],
+        }
+
+    if explicit_date:
+        target_date = explicit_date
+    elif hint.get("dow") is not None:
+        days_back = (today.weekday() - hint["dow"]) % 7
+        target_date = today - timedelta(days=days_back)
+    else:
+        target_date = today
+
+    period = hint.get("time_period")
+    sessions_on_date = db.query(models.Session).filter(
+        models.Session.date == target_date,
+    ).order_by(models.Session.start_time).all()
+    active_sessions = [
+        session for session in sessions_on_date
+        if session.status != "cancelled" and _matches_period(session.start_time, period)
+    ]
+
+    if len(active_sessions) > 1:
+        return {
+            "error": "More than one session matches. Please include the session time.",
+            "sessions": [
+                {
+                    "session_id": session.id,
+                    "label": session.title or "Session",
+                    "time": session.start_time,
+                    "end_time": session.end_time,
+                }
+                for session in active_sessions
+            ],
+        }
+
+    session = active_sessions[0] if active_sessions else None
+    created_from_slot = False
+
+    if session is None:
+        cancelled_slot_ids = {
+            row.pool_slot_id for row in sessions_on_date
+            if row.status == "cancelled" and row.pool_slot_id is not None
+        }
+        slots = db.query(models.PoolSlot).filter(
+            models.PoolSlot.day_of_week == target_date.weekday(),
+            models.PoolSlot.active == True,
+        ).order_by(models.PoolSlot.time).all()
+        slots = [
+            slot for slot in slots
+            if slot.id not in cancelled_slot_ids and _matches_period(slot.time, period)
+        ]
+
+        if len(slots) > 1:
+            return {
+                "error": "More than one scheduled session matches. Please include the session time.",
+                "sessions": [
+                    {
+                        "slot_id": slot.id,
+                        "label": slot.label or "Session",
+                        "time": slot.time,
+                        "end_time": slot.end_time,
+                    }
+                    for slot in slots
+                ],
+            }
+        if not slots:
+            return {
+                "error": "No non-cancelled session matches that date and time. Check the schedule or create the session first.",
+                "sessions": [],
+            }
+
+        slot = slots[0]
+        session = models.Session(
+            date=target_date,
+            start_time=slot.time,
+            end_time=slot.end_time,
+            squad=slot.squad,
+            title=slot.label,
+            pool_slot_id=slot.id,
+            course=slot.course,
+            status="active",
+            source="calendar",
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        created_from_slot = True
+
+    attendees = _register_attendees(session, db)
+    existing_entries = db.query(models.SessionEntry).filter(
+        models.SessionEntry.session_id == session.id,
+    ).count()
+    return {
+        "session_id": session.id,
+        "session_title": session.title or f"Session {session.date}",
+        "session_date": session.date.isoformat(),
+        "session_time": session.start_time,
+        "session_end_time": session.end_time,
+        "register_taken": existing_entries > 0,
+        "created_from_slot": created_from_slot,
+        "attendees": attendees,
+    }
+
+
+def _register_reply(result: dict) -> str:
+    if result.get("error"):
+        options = result.get("sessions") or []
+        if options:
+            labels = ", ".join(
+                _register_option(item.get("label") or "Session", item.get("time"), item.get("end_time"))
+                for item in options
+            )
+            return f"{result['error']} Available matches: {labels}."
+        return result["error"]
+
+    session_date = date.fromisoformat(result["session_date"])
+    date_label = session_date.strftime("%A %-d %B") if os.name != "nt" else session_date.strftime("%A %#d %B")
+    time_label = _register_option(
+        result["session_title"], result.get("session_time"), result.get("session_end_time")
+    )
+    expected_count = sum(1 for attendee in result.get("attendees", []) if attendee.get("expected"))
+    if expected_count:
+        suffix = f"The register is ready below with {expected_count} expected swimmer{'s' if expected_count != 1 else ''}."
+    else:
+        suffix = "The register is ready below, but no swimmers are assigned to this slot yet."
+    return f"Found {time_label} on {date_label}. {suffix}"
+
+
 @router.post("/messages")
 def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     text = body.get("message", "").strip()
@@ -608,6 +857,27 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     recent.reverse()
     messages = [{"role": m.role, "content": m.message} for m in recent]
     topics = detect_topics(text, messages[:-1])
+
+    # Registers are deterministic application state, not a question for the
+    # language model. Resolve the exact date/slot and return the register card.
+    if "register" in topics:
+        register_data = _resolve_register_request(text, db)
+        reply = _register_reply(register_data)
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["register"],
+            "suggested_action": None,
+            "intent": {"type": "register"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": None,
+            "register_data": register_data,
+            "model_route": {"tier": "deterministic", "reason": "register_workflow", "model": None},
+            "tools_called": [],
+        }
 
     # Choose system prompt based on thread type
     is_season_plan_thread = thread_obj and thread_obj.thread_type == "season_plan"
@@ -1509,57 +1779,7 @@ def start_register(body: dict = Body(...), db: DBSession = Depends(get_db)):
     Identify the session for a register from day/time hint and return expected attendees.
     Called when coach says 'let's take a register for Monday PM'.
     """
-    from datetime import date as date_type, timedelta
-
-    text = body.get("message", "")
-    slot_hint = extract_slot_hint(text)
-
-    # Find the most recent matching session (within last 3 days)
-    today = date_type.today()
-    cutoff = today - timedelta(days=3)
-
-    q = db.query(models.Session).filter(
-        models.Session.date >= cutoff,
-        models.Session.date <= today,
-        models.Session.status != 'cancelled',
-    ).order_by(models.Session.date.desc())
-
-    sessions = q.all()
-
-    # Filter by day hint
-    matched_session = None
-    if slot_hint.get('dow') is not None:
-        for s in sessions:
-            if s.date and s.date.weekday() == slot_hint['dow']:
-                matched_session = s
-                break
-
-    # Fall back to most recent
-    if not matched_session and sessions:
-        matched_session = sessions[0]
-
-    if not matched_session:
-        return {"error": "No recent session found. Try specifying the date or creating the session first.", "sessions": []}
-
-    # Get expected attendees from schedule
-    from backend.routers.schedule import expected_attendance as _expected
-    try:
-        attendees = _expected(matched_session.date, squad=matched_session.squad, db=db)
-    except Exception:
-        attendees = []
-
-    # Check if register already taken
-    existing_entries = db.query(models.SessionEntry).filter(
-        models.SessionEntry.session_id == matched_session.id
-    ).count()
-
-    return {
-        "session_id": matched_session.id,
-        "session_title": matched_session.title or f"Session {matched_session.date}",
-        "session_date": matched_session.date.isoformat(),
-        "register_taken": existing_entries > 0,
-        "attendees": attendees,
-    }
+    return _resolve_register_request(body.get("message", ""), db)
 
 
 @router.post("/parse-register")
