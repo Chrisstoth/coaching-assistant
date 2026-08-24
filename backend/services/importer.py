@@ -6,6 +6,7 @@ import io
 from datetime import datetime, date, time as dt_time, timedelta
 from typing import Optional
 import pandas as pd
+from openpyxl import load_workbook
 from rapidfuzz import process as fuzzy_process
 from sqlalchemy.orm import Session as DBSession
 
@@ -570,106 +571,296 @@ def import_combined_swims_xlsx(
 # Excel session import (single file)
 # ---------------------------------------------------------------------------
 
+_MONTHS = {
+    name.lower(): number
+    for number, name in enumerate(
+        ("", "January", "February", "March", "April", "May", "June",
+         "July", "August", "September", "October", "November", "December")
+    )
+}
+
+
+def _excel_clock(value, *, duration: bool = False) -> Optional[str]:
+    seconds = parse_time_to_seconds(value)
+    if seconds is None:
+        return None
+    seconds = int(round(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if duration or hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def _filename_date(filename: str) -> Optional[date]:
+    patterns = (
+        (r"(?<!\d)(\d{4}-\d{2}-\d{2})(?!\d)", ("%Y-%m-%d",)),
+        (r"(?<!\d)(\d{2}[\-/]\d{2}[\-/]\d{4})(?!\d)", ("%d-%m-%Y", "%d/%m/%Y")),
+        # Coach template filenames use YYMMDD: 260824 = 24 August 2026.
+        (r"(?<!\d)(\d{6})(?!\d)", ("%y%m%d",)),
+    )
+    for pattern, formats in patterns:
+        match = re.search(pattern, filename)
+        if not match:
+            continue
+        for fmt in formats:
+            try:
+                return datetime.strptime(match.group(1), fmt).date()
+            except ValueError:
+                pass
+    return None
+
+
+def _header_date(text: str, year_hint: Optional[int]) -> Optional[date]:
+    match = re.search(
+        r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(\d{4}))?\b",
+        text or "",
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    month = _MONTHS.get(match.group(2).lower())
+    year = int(match.group(3)) if match.group(3) else year_hint
+    if not month or not year:
+        return None
+    try:
+        return date(year, month, int(match.group(1)))
+    except ValueError:
+        return None
+
+
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
+    items, raw_lines = [], []
+    in_repeat = False
+    for row_number in range(start_row, ws.max_row + 1):
+        values = [ws.cell(row_number, col).value for col in range(1, 11)]
+        reps, _marker, distance, as_word, description, _, sendoff, effort, metres, _duration = values
+        if not any(_cell_text(value) for value in values):
+            in_repeat = False
+            continue
+
+        repeat_match = re.fullmatch(r"\s*(\d+)\s*x\s*", _cell_text(reps), re.IGNORECASE)
+        if repeat_match and not any(_cell_text(v) for v in values[1:9]):
+            repeat = int(repeat_match.group(1))
+            items.append({"type": "repeat", "repetitions": repeat})
+            raw_lines.append(f"{repeat}x:")
+            in_repeat = True
+            continue
+
+        numeric_reps = pd.to_numeric(reps, errors="coerce")
+        numeric_distance = pd.to_numeric(distance, errors="coerce")
+        if not pd.isna(numeric_reps) and not pd.isna(numeric_distance):
+            total_value = pd.to_numeric(metres, errors="coerce")
+            item = {
+                "type": "set",
+                "repetitions": int(numeric_reps),
+                "distance": int(numeric_distance),
+                "description": _cell_text(description),
+                "sendoff": _excel_clock(sendoff),
+                "effort": _cell_text(effort) or None,
+                "total_metres": None if pd.isna(total_value) else int(total_value),
+            }
+            items.append(item)
+            line = f"{item['repetitions']} x {item['distance']}"
+            if _cell_text(as_word):
+                line += f" {_cell_text(as_word)}"
+            if item["description"]:
+                line += f" {item['description']}"
+            if item["sendoff"]:
+                line += f" @ {item['sendoff']}"
+            if item["effort"]:
+                line += f" | effort {item['effort']}/20"
+            if item["total_metres"] is not None:
+                line += f" | {item['total_metres']}m"
+            raw_lines.append(("  " if in_repeat else "") + line)
+            continue
+
+        note = _cell_text(description) or _cell_text(reps)
+        if note:
+            items.append({"type": "note", "text": note})
+            raw_lines.append(("  " if in_repeat else "") + note)
+    return items, raw_lines
+
+
+def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
+    """Extract a reviewable session draft without writing to the database."""
+    try:
+        workbook = load_workbook(io.BytesIO(file_content), data_only=True, read_only=False)
+    except Exception as exc:
+        raise ValueError("The workbook could not be opened as an .xlsx file") from exc
+
+    ws = workbook[workbook.sheetnames[0]]
+    warnings = []
+    title = _cell_text(ws.cell(1, 1).value) or filename.rsplit(".", 1)[0]
+    filename_date = _filename_date(filename)
+    sheet_date = _header_date(title, filename_date.year if filename_date else date.today().year)
+    inferred_date = sheet_date or filename_date
+    if sheet_date and filename_date and sheet_date != filename_date:
+        warnings.append(
+            f"The sheet heading says {sheet_date.isoformat()}, but the filename implies "
+            f"{filename_date.isoformat()}; the sheet heading was used."
+        )
+    if not inferred_date:
+        raise ValueError(
+            "No session date was found. Use a YYMMDD filename (for example 260824) "
+            "or put a date in the sheet heading."
+        )
+
+    named_day = re.match(r"\s*(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b", title, re.I)
+    if named_day and named_day.group(1).lower() != inferred_date.strftime("%A").lower():
+        warnings.append(
+            f"The heading says {named_day.group(1)}, but {inferred_date.isoformat()} is "
+            f"{inferred_date.strftime('%A')}."
+        )
+
+    start_time = end_time = venue = coach = week_key = None
+    aims, set_header_row = [], None
+    planned_metres = planned_duration = None
+    for row_number in range(1, min(ws.max_row, 20) + 1):
+        row_values = [ws.cell(row_number, col).value for col in range(1, 11)]
+        row_texts = [_cell_text(value) for value in row_values]
+        joined = " | ".join(value for value in row_texts if value)
+        time_match = re.search(r"\b(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})\b", joined)
+        if time_match:
+            start_time, end_time = time_match.groups()
+        first = row_texts[0].rstrip(":").strip().lower()
+        if row_number == 2 and row_texts[0]:
+            venue = row_texts[0]
+        elif row_number == 3 and row_texts[0] and ":" not in row_texts[0]:
+            coach = row_texts[0]
+        if first == "week key":
+            week_key = next((value for value in row_texts[1:] if value), None)
+        elif re.fullmatch(r"aim\s*\d+", first):
+            aim = next((value for value in row_texts[1:] if value), None)
+            if aim:
+                aims.append(aim)
+        if any(value.lower().rstrip(":") in {"warm up", "warm-up", "session", "main set"} for value in row_texts):
+            set_header_row = row_number
+            numeric_total = pd.to_numeric(ws.cell(row_number, 9).value, errors="coerce")
+            if not pd.isna(numeric_total):
+                planned_metres = int(numeric_total)
+            planned_duration = _excel_clock(ws.cell(row_number, 10).value, duration=True)
+
+    if set_header_row is None:
+        raise ValueError("The session set table was not found (expected a Warm Up or Session heading).")
+    items, raw_lines = _template_set_items(ws, set_header_row + 1)
+    if not any(item["type"] == "set" for item in items):
+        raise ValueError("No recognisable set rows were found in the workbook.")
+
+    calculated_metres = sum(item.get("total_metres") or 0 for item in items if item["type"] == "set")
+    if planned_metres is not None and calculated_metres and planned_metres != calculated_metres:
+        warnings.append(
+            f"The workbook total is {planned_metres}m, but the extracted row totals add up to {calculated_metres}m."
+        )
+    elif planned_metres is None and calculated_metres:
+        planned_metres = calculated_metres
+    if not start_time:
+        warnings.append("No start/end time was found, so the scheduled session cannot be matched automatically.")
+
+    metadata_notes = [f"Imported from: {filename}"]
+    metadata_notes += [f"Venue: {venue}"] if venue else []
+    metadata_notes += [f"Coach: {coach}"] if coach else []
+    metadata_notes += [f"Week key: {week_key}"] if week_key else []
+    metadata_notes += [f"Planned total: {planned_metres}m"] if planned_metres is not None else []
+    metadata_notes += [f"Planned duration: {planned_duration}"] if planned_duration else []
+    draft = {
+        "date": inferred_date.isoformat(),
+        "start_time": start_time,
+        "end_time": end_time,
+        "title": title,
+        "coach_intent": "\n".join(f"Aim {index}: {aim}" for index, aim in enumerate(aims, 1)) or None,
+        "coach_notes": "\n".join(metadata_notes),
+        "groups": {
+            "1": {
+                "description": " · ".join(aims) if aims else "Imported session",
+                "sets": "\n".join(raw_lines),
+                "items": items,
+                "total_metres": planned_metres,
+            }
+        },
+        "source": "excel",
+    }
+    return {
+        "draft": draft,
+        "metadata": {
+            "filename": filename, "sheet": ws.title, "venue": venue, "coach": coach,
+            "week_key": week_key, "aims": aims, "planned_metres": planned_metres,
+            "calculated_metres": calculated_metres, "planned_duration": planned_duration,
+        },
+        "warnings": warnings,
+    }
+
+
+def save_session_xlsx_draft(draft: dict, db: DBSession, target_session_id: Optional[int] = None) -> models.Session:
+    """Create or update a session from a reviewed Excel draft."""
+    session_date = date.fromisoformat(str(draft.get("date")))
+    pool_slot_id = draft.get("pool_slot_id")
+    slot = None
+    if pool_slot_id:
+        slot = db.query(models.PoolSlot).filter(models.PoolSlot.id == int(pool_slot_id)).first()
+        if not slot:
+            raise ValueError("The matched timetable slot no longer exists.")
+    session = None
+    if target_session_id:
+        session = db.query(models.Session).filter(models.Session.id == int(target_session_id)).first()
+        if not session:
+            raise ValueError("The selected session no longer exists.")
+    elif slot:
+        session = db.query(models.Session).filter(
+            models.Session.date == session_date, models.Session.pool_slot_id == slot.id,
+        ).first()
+    if session and session.status == "cancelled":
+        raise ValueError("This scheduled session is cancelled and cannot be overwritten by an import.")
+    if session is None:
+        status = "completed" if session_date < date.today() else "active" if session_date == date.today() else "planned"
+        session = models.Session(date=session_date, status=status, source="excel")
+        db.add(session)
+        db.flush()
+
+    groups = draft.get("groups") or {}
+    session.date = session_date
+    session.start_time = draft.get("start_time") or (slot.time if slot else session.start_time)
+    session.end_time = draft.get("end_time") or (slot.end_time if slot else session.end_time)
+    session.squad = draft.get("squad") or (slot.squad if slot else session.squad)
+    session.title = draft.get("title") or (slot.label if slot else session.title)
+    session.coach_intent = draft.get("coach_intent")
+    session.coach_notes = draft.get("coach_notes")
+    session.energy_system_focus = draft.get("energy_system_focus")
+    session.planned_content = groups
+    session.pool_slot_id = slot.id if slot else session.pool_slot_id
+    session.course = draft.get("course") or (slot.course if slot else session.course)
+    session.source = "excel"
+
+    db.query(models.SessionGroup).filter(models.SessionGroup.session_id == session.id).delete()
+    for group_number, content in groups.items():
+        total_metres = content.get("total_metres")
+        db.add(models.SessionGroup(
+            session_id=session.id,
+            group_number=int(group_number),
+            description=content.get("description", ""),
+            sets={"raw": content.get("sets", ""), "items": content.get("items") or []},
+            volume_breakdown={"session_total": total_metres} if total_metres else None,
+        ))
+    db.commit()
+    db.refresh(session)
+    return session
+
 def import_session_xlsx(
     file_content: bytes,
     filename: str,
     db: DBSession,
 ) -> dict:
-    """
-    Parse a single .xlsx session file.
-    Tries to extract: date, title, group structure (1/2/3), set content.
-    Returns the created Session id and any warnings.
-    """
-    result = {"session_id": None, "warnings": []}
-
-    # Infer date from filename (e.g. "2024-03-15 Thursday AM.xlsx")
-    inferred_date = None
-    date_match = re.search(r"(\d{4}-\d{2}-\d{2}|\d{2}[\-/]\d{2}[\-/]\d{4})", filename)
-    if date_match:
-        for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%d/%m/%Y"):
-            try:
-                inferred_date = datetime.strptime(date_match.group(1), fmt).date()
-                break
-            except ValueError:
-                continue
-
-    xl = pd.ExcelFile(io.BytesIO(file_content))
-    sheet_name = xl.sheet_names[0]
-    df = xl.parse(sheet_name, header=None)
-
-    # Flatten all cell values into text lines for parsing
-    lines = []
-    for _, row in df.iterrows():
-        row_text = " | ".join(
-            str(v).strip() for v in row if v is not None and str(v).strip() not in ("", "nan")
-        )
-        if row_text:
-            lines.append(row_text)
-
-    raw_text = "\n".join(lines)
-
-    # Try to pick up a title from first non-empty row
-    title = lines[0][:120] if lines else filename.replace(".xlsx", "")
-
-    # Try to detect date in sheet content if not in filename
-    if not inferred_date:
-        for line in lines[:5]:
-            for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
-                try:
-                    inferred_date = datetime.strptime(line.strip(), fmt).date()
-                    break
-                except ValueError:
-                    continue
-            if inferred_date:
-                break
-
-    if not inferred_date:
-        result["warnings"].append(f"Could not infer date from '{filename}' — session saved without date")
-
-    # Group detection: look for "Group 1/2/3" or "Lane 1/2/3" markers
-    groups_raw = {}
-    current_group = None
-    group_pattern = re.compile(r"group\s*(\d)", re.IGNORECASE)
-    for line in lines:
-        gm = group_pattern.search(line)
-        if gm:
-            current_group = int(gm.group(1))
-            groups_raw[current_group] = []
-        elif current_group is not None:
-            groups_raw[current_group].append(line)
-
-    if not groups_raw:
-        # No explicit group markers — treat whole session as group 1
-        groups_raw[1] = lines
-        result["warnings"].append("No group markers found — all content assigned to Group 1")
-
-    # Build session
-    planned_content = {
-        str(g): {"sets": "\n".join(content)} for g, content in groups_raw.items()
-    }
-
-    session = models.Session(
-        date=inferred_date,
-        title=title,
-        planned_content=planned_content,
-        source="excel",
-        coach_notes=f"Imported from: {filename}",
-    )
-    db.add(session)
-    db.flush()
-
-    for group_num, content in groups_raw.items():
-        sg = models.SessionGroup(
-            session_id=session.id,
-            group_number=group_num,
-            description="\n".join(content[:5]),  # first 5 lines as description
-            sets={"raw": "\n".join(content)},
-        )
-        db.add(sg)
-
-    db.commit()
-    result["session_id"] = session.id
-    return result
+    extracted = extract_session_xlsx(file_content, filename)
+    session = save_session_xlsx_draft(extracted["draft"], db)
+    return {"session_id": session.id, "warnings": extracted["warnings"]}
 
 
 # ---------------------------------------------------------------------------

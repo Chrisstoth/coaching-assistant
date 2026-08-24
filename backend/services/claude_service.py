@@ -117,6 +117,43 @@ def create_message(*, model: Optional[str] = None, operation: Optional[str] = No
     return response
 
 
+def review_session_import(draft: dict) -> dict:
+    """Use the fast model as a read-only sanity check after deterministic extraction."""
+    compact = {
+        "date": draft.get("date"),
+        "start_time": draft.get("start_time"),
+        "end_time": draft.get("end_time"),
+        "title": draft.get("title"),
+        "coach_intent": draft.get("coach_intent"),
+        "groups": draft.get("groups"),
+    }
+    prompt = f"""Check this deterministically extracted swimming-session spreadsheet for likely extraction errors.
+Do not critique the coaching plan and do not rewrite it. Check only internal consistency: date/weekday,
+time formatting, repeat blocks, row and stated distance totals, missing descriptions, impossible effort values,
+and obvious truncated or corrupted text. A typo in the coach's original wording is not an extraction failure.
+
+EXTRACTED DATA:
+{json.dumps(compact, ensure_ascii=False, separators=(',', ':'))}
+
+Return JSON only:
+{{"status":"ok" or "check", "issues":["short concrete issue"], "summary":"one short sentence"}}
+Return an empty issues array when the extraction is internally consistent."""
+    response = create_message(
+        model=FAST_MODEL,
+        operation="review_session_import",
+        max_tokens=350,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parsed = json.loads(_strip_json(response.content[0].text))
+    issues = [str(issue)[:240] for issue in (parsed.get("issues") or [])[:6]]
+    return {
+        "status": "check" if issues else "ok",
+        "issues": issues,
+        "summary": str(parsed.get("summary") or ("No consistency issues found." if not issues else "Review suggested."))[:300],
+        "model": FAST_MODEL,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Base system prompt — applied to all AI calls
 # ---------------------------------------------------------------------------

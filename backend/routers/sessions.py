@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
-from backend.services.importer import import_session_xlsx, bulk_import_sessions
+from backend.services.importer import (
+    bulk_import_sessions,
+    extract_session_xlsx,
+    save_session_xlsx_draft,
+)
 from backend.services import claude_service
 from backend.services.openai_service import parse_whiteboard_photo
 
@@ -61,6 +65,11 @@ class RegisterEntry(BaseModel):
 class RegisterSubmit(BaseModel):
     entries: list[RegisterEntry]
     run_ai: bool = True
+
+
+class ExcelImportConfirm(BaseModel):
+    draft: dict
+    target_session_id: Optional[int] = None
 
 
 # ---------------------------------------------------------------------------
@@ -274,14 +283,93 @@ def update_session(
 # Excel import
 # ---------------------------------------------------------------------------
 
-@router.post("/import/excel", status_code=201)
+def _match_excel_import_target(draft: dict, db: DBSession) -> tuple[Optional[dict], list[str]]:
+    """Attach an extracted draft to one unambiguous active recurring slot."""
+    warnings = []
+    try:
+        session_date = date.fromisoformat(str(draft.get("date")))
+    except (TypeError, ValueError):
+        return None, ["The extracted date is invalid, so no timetable slot was matched."]
+    start_time = draft.get("start_time")
+    if not start_time:
+        return None, warnings
+
+    slots = db.query(models.PoolSlot).filter(
+        models.PoolSlot.day_of_week == session_date.weekday(),
+        models.PoolSlot.time == start_time,
+        models.PoolSlot.active == True,
+    ).all()
+    if len(slots) != 1:
+        if len(slots) > 1:
+            warnings.append(
+                f"More than one timetable slot starts at {start_time}; select the intended session before saving."
+            )
+        else:
+            warnings.append(
+                f"No active {session_date.strftime('%A')} timetable slot starts at {start_time}; "
+                "the import will create an unlinked session."
+            )
+        return None, warnings
+
+    slot = slots[0]
+    existing = db.query(models.Session).filter(
+        models.Session.date == session_date,
+        models.Session.pool_slot_id == slot.id,
+    ).first()
+    if existing and existing.status == "cancelled":
+        warnings.append("The matching timetable occurrence is cancelled; it cannot be overwritten.")
+        return {
+            "session_id": existing.id, "pool_slot_id": slot.id, "label": slot.label,
+            "date": session_date, "time": slot.time, "status": "cancelled", "can_import": False,
+        }, warnings
+
+    draft["pool_slot_id"] = slot.id
+    draft["squad"] = draft.get("squad") or slot.squad
+    draft["course"] = draft.get("course") or slot.course
+    return {
+        "session_id": existing.id if existing else None,
+        "pool_slot_id": slot.id,
+        "label": slot.label,
+        "date": session_date,
+        "time": slot.time,
+        "status": (existing.status if existing else "scheduled"),
+        "can_import": True,
+    }, warnings
+
+
+@router.post("/import/excel")
 async def import_excel(
     file: UploadFile = File(...),
+    ai_check: bool = Form(False),
     db: DBSession = Depends(get_db),
 ):
     content = await file.read()
-    result = import_session_xlsx(content, file.filename, db)
+    try:
+        result = extract_session_xlsx(content, file.filename)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    suggested_target, matching_warnings = _match_excel_import_target(result["draft"], db)
+    result["suggested_target"] = suggested_target
+    result["warnings"].extend(matching_warnings)
+    result["ai_review"] = None
+    if ai_check:
+        try:
+            result["ai_review"] = claude_service.review_session_import(result["draft"])
+        except Exception:
+            result["warnings"].append(
+                "The optional AI consistency check was unavailable; deterministic extraction still completed."
+            )
     return result
+
+
+@router.post("/import/excel/confirm", status_code=201)
+def confirm_excel_import(body: ExcelImportConfirm, db: DBSession = Depends(get_db)):
+    try:
+        session = save_session_xlsx_draft(body.draft, db, body.target_session_id)
+    except (TypeError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _session_detail(session, db)
 
 
 @router.post("/import/excel/bulk", status_code=201)

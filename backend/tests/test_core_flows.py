@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
 import pandas as pd
+from openpyxl import Workbook
 
 
 _db_file = tempfile.NamedTemporaryFile(prefix="deckxtra-test-", suffix=".db", delete=False)
@@ -788,6 +789,100 @@ class CoreFlowTests(unittest.TestCase):
         times = self.client.get(f"/swimmers/{combined_one['id']}/times", headers=self.headers).json()
         self.assertEqual(times[0]["event"], "50 Freestyle SCM")
         self.assertEqual(times[0]["time_seconds"], 55.25)
+
+    def test_excel_session_template_previews_checks_links_and_saves_once(self):
+        with SessionLocal() as db:
+            slot = models.PoolSlot(
+                day_of_week=0, time="19:15", end_time="20:15", squad="Template Test",
+                label="Monday template", active=True, course="SCM",
+            )
+            db.add(slot)
+            db.commit()
+            slot_id = slot.id
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet["A1"] = "Monday 24th August PM"
+        sheet["A2"] = "BSV Lanes 6-8"
+        sheet["E2"] = "19:15 - 20:15"
+        sheet["A3"] = "Test Coach"
+        sheet["A4"] = "Week Key:"
+        sheet["D4"] = "0.1.1"
+        sheet["A5"] = "Aim 1:"
+        sheet["D5"] = "Basics"
+        sheet["A7"] = "Warm Up:"
+        sheet["H7"] = "Effort/20"
+        sheet["I7"] = 400
+        sheet["J7"] = datetime.strptime("00:10:00", "%H:%M:%S").time()
+        sheet.append([1, "x", 200, "as", "Kick with board", None,
+                      datetime.strptime("00:05:00", "%H:%M:%S").time(), "8", 200])
+        sheet.append([])
+        sheet.append(["2x"])
+        sheet.append([2, "x", 50, "as", "Streamline", None,
+                      datetime.strptime("00:01:00", "%H:%M:%S").time(), "12", 200])
+        workbook_bytes = io.BytesIO()
+        workbook.save(workbook_bytes)
+
+        try:
+            with patch("backend.routers.sessions.claude_service.review_session_import") as review:
+                review.return_value = {
+                    "status": "ok", "issues": [], "summary": "No consistency issues found.",
+                    "model": "fast-test-model",
+                }
+                preview = self.client.post(
+                    "/sessions/import/excel",
+                    headers=self.headers,
+                    data={"ai_check": "true"},
+                    files={"file": (
+                        "260824 Monday PM.xlsx", workbook_bytes.getvalue(),
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )},
+                )
+            self.assertEqual(preview.status_code, 200, preview.text)
+            payload = preview.json()
+            self.assertEqual(payload["draft"]["date"], "2026-08-24")
+            self.assertEqual(payload["draft"]["start_time"], "19:15")
+            self.assertEqual(payload["metadata"]["planned_metres"], 400)
+            self.assertEqual(payload["metadata"]["calculated_metres"], 400)
+            self.assertIn("2x:", payload["draft"]["groups"]["1"]["sets"])
+            self.assertEqual(payload["suggested_target"]["pool_slot_id"], slot_id)
+            self.assertIsNone(payload["suggested_target"]["session_id"])
+            self.assertEqual(payload["ai_review"]["status"], "ok")
+            review.assert_called_once()
+
+            with SessionLocal() as db:
+                self.assertIsNone(db.query(models.Session).filter(
+                    models.Session.pool_slot_id == slot_id,
+                    models.Session.date == date(2026, 8, 24),
+                ).first())
+
+            confirmed = self.client.post(
+                "/sessions/import/excel/confirm", headers=self.headers,
+                json={"draft": payload["draft"], "target_session_id": None},
+            )
+            self.assertEqual(confirmed.status_code, 201, confirmed.text)
+            session = confirmed.json()
+            self.assertEqual(session["pool_slot_id"], slot_id)
+            self.assertEqual(session["squad"], "Template Test")
+            self.assertEqual(session["source"], "excel")
+            self.assertEqual(session["groups"][0]["sets"]["items"][0]["description"], "Kick with board")
+            self.assertEqual(session["groups"][0]["volume_breakdown"]["session_total"], 400)
+
+            repeated = self.client.post(
+                "/sessions/import/excel/confirm", headers=self.headers,
+                json={"draft": payload["draft"], "target_session_id": None},
+            )
+            self.assertEqual(repeated.status_code, 201, repeated.text)
+            self.assertEqual(repeated.json()["id"], session["id"])
+        finally:
+            with SessionLocal() as db:
+                existing = db.query(models.Session).filter(models.Session.pool_slot_id == slot_id).all()
+                for session in existing:
+                    db.delete(session)
+                slot = db.query(models.PoolSlot).filter(models.PoolSlot.id == slot_id).first()
+                if slot:
+                    db.delete(slot)
+                db.commit()
 
     def test_planning_agent_persists_event_links_and_pathway_state(self):
         swimmer = self.client.post(

@@ -162,11 +162,16 @@ export const api = {
     fd.append('event_names', JSON.stringify(filesWithEvents.map(f => f.eventName || '')))
     return request('POST', '/times/import/csv/bulk', fd, true)
   },
-  importExcel: (file) => {
+  importExcel: (file, aiCheck = false) => {
     const fd = new FormData()
     fd.append('file', file)
+    fd.append('ai_check', aiCheck ? 'true' : 'false')
     return request('POST', '/sessions/import/excel', fd, true)
   },
+  confirmExcelImport: (draft, targetSessionId = null) => request('POST', '/sessions/import/excel/confirm', {
+    draft,
+    target_session_id: targetSessionId,
+  }),
   importExcelBulk: (files) => {
     const fd = new FormData()
     files.forEach((f) => fd.append('files', f))

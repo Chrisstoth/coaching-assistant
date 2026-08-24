@@ -356,130 +356,178 @@ function CSVImport({ setResult, setLoading, loading }) {
 }
 
 
-function ExcelImport({ setResult, setLoading, loading, plannedSessions }) {
-  const [files, setFiles] = useState([])
-  const [extractedData, setExtractedData] = useState(null)
-  const [selectedSessionId, setSelectedSessionId] = useState(null)
-  const [creatingSession, setCreatingSession] = useState(false)
+function ExcelImport({ setResult, setLoading, loading }) {
+  const [file, setFile] = useState(null)
+  const [preview, setPreview] = useState(null)
+  const [draft, setDraft] = useState(null)
+  const [aiCheck, setAiCheck] = useState(true)
+  const [saving, setSaving] = useState(false)
 
-  const submit = async () => {
-    if (!files.length) return
+  const extract = async () => {
+    if (!file) return
     setLoading(true)
     setResult(null)
     try {
-      const res = files.length === 1
-        ? await api.importExcel(files[0])
-        : await api.importExcelBulk(files)
-      setExtractedData(res)
+      const res = await api.importExcel(file, aiCheck)
+      setPreview(res)
+      setDraft(JSON.parse(JSON.stringify(res.draft)))
     } catch (e) {
       setResult({ error: e.message })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
-  const createOrUpdateSession = async () => {
-    if (!extractedData) return
-    setCreatingSession(true)
+  const updateGroupSets = (value) => {
+    setDraft(current => ({
+      ...current,
+      groups: {
+        ...current.groups,
+        1: { ...current.groups?.['1'], sets: value, items: [] },
+      },
+    }))
+  }
+
+  const save = async () => {
+    if (!draft) return
+    setSaving(true)
+    setResult(null)
     try {
-      const sessionData = Array.isArray(extractedData) ? extractedData[0] : extractedData
-      if (selectedSessionId) {
-        await api.updateSession(selectedSessionId, sessionData)
-      } else {
-        const created = await api.createSession(sessionData)
-        sessionData.id = created.id
-      }
-      setResult({ success: true })
-      window.location.href = `/sessions/${sessionData.id}/register`
+      const targetId = preview?.suggested_target?.can_import
+        ? preview.suggested_target.session_id
+        : null
+      const session = await api.confirmExcelImport(draft, targetId)
+      window.location.href = `/sessions/${session.id}/register`
     } catch (e) {
       setResult({ error: e.message })
+      setSaving(false)
     }
-    setCreatingSession(false)
   }
 
-  if (!extractedData) {
+  if (!preview) {
     return (
       <div className="space-y-3">
         <p className="text-pool-400 text-sm">
-          Import one or multiple .xlsx session files. Select files to import historical sessions.
+          Upload your session-plan workbook. Nothing is saved until you review and confirm the extraction.
         </p>
         <label className="block bg-pool-800 rounded-xl p-4 text-center cursor-pointer border-2 border-dashed border-pool-600 hover:border-accent-500 transition-colors">
           <input
             type="file"
-            accept=".xlsx,.xls"
-            multiple
+            accept=".xlsx"
             className="hidden"
-            onChange={(e) => setFiles(Array.from(e.target.files))}
+            onChange={(e) => setFile(e.target.files[0] || null)}
           />
-          {files.length > 0 ? (
-            <p className="text-sm text-pool-200">{files.length} file{files.length > 1 ? 's' : ''} selected</p>
+          {file ? (
+            <p className="text-sm text-pool-200">{file.name}</p>
           ) : (
-            <p className="text-sm text-pool-400">Tap to select Excel file(s)</p>
+            <p className="text-sm text-pool-400">Tap to select an Excel session plan</p>
           )}
         </label>
+        <label className="flex items-start gap-3 bg-pool-800 rounded-xl p-3">
+          <input
+            type="checkbox"
+            checked={aiCheck}
+            onChange={(e) => setAiCheck(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span className="text-xs text-pool-400 leading-relaxed">
+            Run a low-cost AI consistency check after extraction. It flags possible errors but never changes the plan.
+          </span>
+        </label>
         <button
-          onClick={submit}
-          disabled={loading || !files.length}
+          onClick={extract}
+          disabled={loading || !file}
           className="w-full bg-accent-600 disabled:opacity-40 rounded-xl py-3 font-semibold text-sm"
         >
-          {loading ? 'Importing...' : `Import ${files.length > 1 ? files.length + ' Sessions' : 'Session'}`}
+          {loading ? 'Extracting…' : 'Extract & Review'}
         </button>
       </div>
     )
   }
 
+  const target = preview.suggested_target
+  const blocked = target?.can_import === false
   return (
     <div className="space-y-3">
-      <p className="text-pool-400 text-sm font-semibold">Link to Planned Session or Create New</p>
+      <p className="text-pool-300 text-sm font-semibold">Review extracted session</p>
 
-      {plannedSessions.length > 0 && (
-        <div>
-          <p className="text-pool-400 text-xs mb-2">Select a planned session to update:</p>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {plannedSessions.map(s => (
-              <button
-                key={s.id}
-                onClick={() => setSelectedSessionId(s.id)}
-                className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
-                  selectedSessionId === s.id
-                    ? 'border-accent-500 bg-pool-700'
-                    : 'border-pool-600 bg-pool-800 hover:border-pool-500'
-                }`}
-              >
-                <p className="font-medium text-sm">{s.title || `Session ${s.date}`}</p>
-                <p className="text-xs text-pool-400">{s.date}</p>
-              </button>
-            ))}
-          </div>
+      {target && (
+        <div className={`rounded-xl border p-3 ${blocked ? 'bg-red-900/20 border-red-800/60' : 'bg-emerald-900/20 border-emerald-700/50'}`}>
+          <p className={`text-xs font-semibold ${blocked ? 'text-red-300' : 'text-emerald-300'}`}>
+            {blocked ? 'Cancelled session matched' : target.session_id ? 'Existing session matched' : 'Timetable slot matched'}
+          </p>
+          <p className="text-sm text-pool-200 mt-1">
+            {target.label || 'Scheduled session'} · {target.date} at {target.time}
+          </p>
+          {!blocked && <p className="text-xs text-pool-400 mt-1">The plan will be linked here automatically.</p>}
         </div>
       )}
 
-      <div className="border-t border-pool-700 pt-3">
-        <button
-          onClick={() => setSelectedSessionId(null)}
-          className={`w-full text-left p-3 rounded-lg border-2 transition-colors ${
-            selectedSessionId === null
-              ? 'border-accent-500 bg-pool-700'
-              : 'border-pool-600 bg-pool-800 hover:border-pool-500'
-          }`}
-        >
-          <p className="font-medium text-sm text-pool-200">Create as New (Historical)</p>
-          <p className="text-xs text-pool-400">Create a new session not linked to a plan</p>
-        </button>
+      {(preview.warnings?.length > 0 || preview.ai_review) && (
+        <div className="bg-pool-800 rounded-xl p-3 space-y-2">
+          {preview.warnings?.map((warning, index) => (
+            <p key={index} className="text-xs text-amber-300">• {warning}</p>
+          ))}
+          {preview.ai_review && (
+            <div className="border-t border-pool-700 pt-2">
+              <p className="text-xs font-semibold text-pool-300">AI consistency check: {preview.ai_review.status}</p>
+              <p className="text-xs text-pool-400 mt-1">{preview.ai_review.summary}</p>
+              {preview.ai_review.issues?.map((issue, index) => (
+                <p key={index} className="text-xs text-amber-300 mt-1">• {issue}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="bg-pool-800 rounded-xl p-3 space-y-3">
+        <label className="block">
+          <span className="block text-xs text-pool-400 mb-1">Title</span>
+          <input value={draft.title || ''} onChange={(e) => setDraft({...draft, title: e.target.value})}
+            className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+        </label>
+        <div className="grid grid-cols-3 gap-2">
+          <label className="block">
+            <span className="block text-xs text-pool-400 mb-1">Date</span>
+            <input type="date" value={draft.date || ''} onChange={(e) => setDraft({...draft, date: e.target.value})}
+              className="w-full bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600" />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-pool-400 mb-1">Start</span>
+            <input type="time" value={draft.start_time || ''} onChange={(e) => setDraft({...draft, start_time: e.target.value})}
+              className="w-full bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600" />
+          </label>
+          <label className="block">
+            <span className="block text-xs text-pool-400 mb-1">End</span>
+            <input type="time" value={draft.end_time || ''} onChange={(e) => setDraft({...draft, end_time: e.target.value})}
+              className="w-full bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600" />
+          </label>
+        </div>
+        <label className="block">
+          <span className="block text-xs text-pool-400 mb-1">Aim</span>
+          <textarea value={draft.coach_intent || ''} onChange={(e) => setDraft({...draft, coach_intent: e.target.value})}
+            rows="2" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+        </label>
+        <label className="block">
+          <span className="block text-xs text-pool-400 mb-1">Extracted set</span>
+          <textarea value={draft.groups?.['1']?.sets || ''} onChange={(e) => updateGroupSets(e.target.value)}
+            rows="13" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs font-mono border border-pool-600" />
+        </label>
       </div>
 
-      <div className="flex gap-2 pt-4">
+      <div className="flex gap-2">
         <button
-          onClick={() => { setExtractedData(null); setFiles([]) }}
+          onClick={() => { setPreview(null); setDraft(null) }}
           className="flex-1 bg-pool-700 rounded-xl py-3 font-semibold text-sm"
         >
           Back
         </button>
         <button
-          onClick={createOrUpdateSession}
-          disabled={creatingSession}
+          onClick={save}
+          disabled={saving || blocked}
           className="flex-1 bg-accent-600 disabled:opacity-40 rounded-xl py-3 font-semibold text-sm"
         >
-          {creatingSession ? 'Saving...' : 'Continue to Register'}
+          {saving ? 'Saving…' : 'Save & Open Register'}
         </button>
       </div>
     </div>
