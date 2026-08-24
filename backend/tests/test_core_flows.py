@@ -56,6 +56,18 @@ class CoreFlowTests(unittest.TestCase):
                 time_seconds=64.25,
                 date=__import__('datetime').date(2026, 8, 10),
             ))
+            db.add_all([
+                models.SwimTime(
+                    swimmer_id=swimmer.id, event="50 Butterfly SCM", course="SCM",
+                    distance=50, stroke="Butterfly", time_seconds=30.53,
+                    date=__import__('datetime').date(2026, 7, 11),
+                ),
+                models.SwimTime(
+                    swimmer_id=swimmer.id, event="100 Butterfly SCM", course="SCM",
+                    distance=100, stroke="Butterfly", time_seconds=69.36,
+                    date=__import__('datetime').date(2026, 7, 11),
+                ),
+            ])
             db.commit()
 
             found = json.loads(execute_tool("find_swimmer", {"name": "Agent Tool"}, db))
@@ -66,6 +78,16 @@ class CoreFlowTests(unittest.TestCase):
                 db,
             ))
             self.assertEqual(times["times"][0]["time_seconds"], 64.25)
+            fly_times = json.loads(execute_tool(
+                "get_swim_times",
+                {"swimmer_id": swimmer.id, "event": "50/100 fly"},
+                db,
+            ))
+            self.assertEqual(
+                {item["event"] for item in fly_times["times"]},
+                {"50 Butterfly SCM", "100 Butterfly SCM"},
+            )
+            self.assertTrue(all(item["is_personal_best"] for item in fly_times["times"]))
             db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer.id).delete()
             db.delete(swimmer)
             db.commit()

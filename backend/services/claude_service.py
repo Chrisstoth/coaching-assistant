@@ -4,11 +4,13 @@ Claude API integration for coaching analysis, profiling, and planning.
 import os
 import json
 import inspect
+import re
 from typing import Optional
 import anthropic
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services.event_normalizer import canonicalize_event, event_parts
 
 _client: Optional[anthropic.Anthropic] = None
 _client_proxy = None
@@ -354,7 +356,7 @@ def get_tools() -> list:
         },
         {
             "name": "get_swim_times",
-            "description": "Get recent or event-specific race times for one swimmer.",
+            "description": "Get recent or event-specific race times for one swimmer. Event aliases are accepted (for example fly/butterfly, free/freestyle, or '50/100 fly'). Omit event to inspect the athlete's latest results across all events.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -543,15 +545,53 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
         swimmer_id = int(tool_input["swimmer_id"])
         limit = max(1, min(int(tool_input.get("limit", 12)), 30))
         query = db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer_id)
-        if tool_input.get("event"):
-            query = query.filter(models.SwimTime.event.ilike(f"%{tool_input['event']}%"))
         if tool_input.get("course"):
             query = query.filter(models.SwimTime.course == tool_input["course"])
-        rows = query.order_by(models.SwimTime.date.desc()).limit(limit).all()
+
+        # Fetch before applying the event limit so aliases such as "fly" match
+        # stored labels such as "Butterfly", and compound requests can return
+        # both distances. The profile Times tab reads these same SwimTime rows.
+        rows = query.order_by(models.SwimTime.date.desc()).all()
+        requested_event = str(tool_input.get("event") or "").strip()
+        if requested_event:
+            requested_distances = {
+                int(value) for value in re.findall(
+                    r"\b(25|50|100|200|400|800|1500)\b",
+                    requested_event.lower(),
+                )
+            }
+            _, requested_stroke = event_parts(requested_event)
+            requested_canonical = canonicalize_event(requested_event)
+
+            def event_matches(row) -> bool:
+                parsed_distance, parsed_stroke = event_parts(row.event)
+                _, stored_stroke = event_parts(row.stroke or "")
+                row_distance = row.distance or parsed_distance
+                row_stroke = stored_stroke or parsed_stroke or ""
+                if requested_distances and row_distance not in requested_distances:
+                    return False
+                if requested_stroke and row_stroke != requested_stroke:
+                    return False
+                if requested_distances or requested_stroke:
+                    return True
+                row_canonical = canonicalize_event(row.event)
+                return requested_canonical in row_canonical or row_canonical in requested_canonical
+
+            rows = [row for row in rows if event_matches(row)]
+
+        best_by_event = {}
+        for row in rows:
+            key = (canonicalize_event(row.event), row.course)
+            best_by_event[key] = min(best_by_event.get(key, row.time_seconds), row.time_seconds)
+        rows = rows[:limit]
         return dump({"times": [
             {"event": r.event, "course": r.course, "time_seconds": r.time_seconds,
              "wa_points": r.wa_points, "date": r.date, "meet": r.meet,
-             "level": r.level, "round": r.round}
+             "level": r.level, "round": r.round,
+             "is_personal_best": r.time_seconds == best_by_event[(canonicalize_event(r.event), r.course)],
+             "seconds_from_pb": round(
+                 r.time_seconds - best_by_event[(canonicalize_event(r.event), r.course)], 2
+             )}
             for r in rows
         ]})
 
