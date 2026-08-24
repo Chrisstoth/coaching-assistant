@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File, Form
@@ -9,6 +10,7 @@ from backend.database import get_db
 from backend import models
 from backend.services.claude_service import (
     get_client, MODEL, FAST_MODEL, PRIMARY_EFFORT, PLANNING_EFFORT, TRANSCRIPTION_MODEL,
+    COACHING_CONTEXT_CHAR_LIMIT,
     record_ai_usage, get_system_prompt, build_session_writing_context,
     detect_topics, extract_slot_hint, _strip_json,
     extract_benchmarks_from_conversation, extract_coaching_intent,
@@ -19,6 +21,8 @@ from backend.services.agent_policy import choose_agent_route
 router = APIRouter()
 
 MAX_HISTORY = max(6, min(int(os.getenv("AI_MAX_HISTORY", "20")), 40))
+GENERAL_HISTORY = max(6, min(int(os.getenv("AI_GENERAL_HISTORY", "10")), MAX_HISTORY))
+ATHLETE_HISTORY = max(8, min(int(os.getenv("AI_ATHLETE_HISTORY", "12")), MAX_HISTORY))
 SUMMARY_BATCH_SIZE = max(4, min(int(os.getenv("AI_SUMMARY_BATCH_SIZE", "8")), 20))
 SUMMARY_CHAR_LIMIT = max(1200, min(int(os.getenv("AI_SUMMARY_CHAR_LIMIT", "3500")), 6000))
 
@@ -81,13 +85,26 @@ def _conversation_action(text: str, topics: set[str], messages: list, swimmers: 
     return {"intent": "general", "suggested_action": None}
 
 
-def _thread_memory(thread, recent_messages: list, db: DBSession) -> str:
+def _history_limit_for_thread(thread) -> int:
+    if thread and thread.thread_type == "season_plan":
+        return MAX_HISTORY
+    if thread and thread.thread_type == "athlete_planning":
+        return ATHLETE_HISTORY
+    return GENERAL_HISTORY
+
+
+def _thread_memory(
+    thread,
+    recent_messages: list,
+    db: DBSession,
+    history_limit: int = MAX_HISTORY,
+) -> str:
     """Return bounded long-term conversation memory and periodically roll it up cheaply.
 
     Durable coaching facts belong in structured tables; this summary only preserves decisions,
     assumptions and unresolved questions from messages that have fallen out of recent history.
     """
-    if not thread or len(recent_messages) < MAX_HISTORY:
+    if not thread or len(recent_messages) < history_limit:
         return ""
 
     oldest_recent_id = recent_messages[0].id
@@ -579,11 +596,13 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     db.add(models.CoachAIMessage(role="user", message=text, thread_id=thread_id))
     db.commit()
 
+    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
+    history_limit = _history_limit_for_thread(thread_obj)
     recent = (
         db.query(models.CoachAIMessage)
         .filter(models.CoachAIMessage.thread_id == thread_id)
         .order_by(models.CoachAIMessage.id.desc())
-        .limit(MAX_HISTORY)
+        .limit(history_limit)
         .all()
     )
     recent.reverse()
@@ -591,7 +610,6 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     topics = detect_topics(text, messages[:-1])
 
     # Choose system prompt based on thread type
-    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
     is_season_plan_thread = thread_obj and thread_obj.thread_type == "season_plan"
     is_athlete_plan_thread = thread_obj and thread_obj.thread_type == "athlete_planning"
 
@@ -612,7 +630,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         if brief:
             system += "\n\nPOOLSIDE MODE: The coach is at the pool. Keep all responses under 5 sentences. Use bullet points. Lead with the most actionable finding. No background context, no caveats unless critical."
 
-    memory = _thread_memory(thread_obj, recent, db)
+    memory = _thread_memory(thread_obj, recent, db, history_limit)
     if memory:
         system += f"\n\n---\n{memory}"
 
@@ -891,6 +909,19 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     # Names are resolved for response metadata and optional confirmed captures.
     # The model retrieves the evidence it needs through compact read tools.
     mentioned_now = _find_mentioned_swimmers(text, db)
+    resolved_swimmers = _all_mentioned_swimmers(messages, db)
+    if resolved_swimmers:
+        resolved_lines = "\n".join(
+            f"- {swimmer.name}: swimmer_id={swimmer.id}"
+            for swimmer in resolved_swimmers[:6]
+        )
+        system += f"""
+
+---
+RESOLVED DATABASE IDENTITIES:
+{resolved_lines}
+Use these IDs directly with read tools; do not call find_swimmer for these athletes.
+Call independent read tools together in the same response where possible."""
 
     tools = get_tools()
     loop_messages = list(messages)
@@ -920,7 +951,13 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
 
     # Tool-calling loop — bounded by route to prevent runaway cost
     tools_called = set()
-    max_tool_rounds = 3 if route.tier == "fast" else 4
+    if route.tier == "fast":
+        max_tool_rounds = 2
+    elif is_season_plan_thread or 'planning' in topics or 'session_writing' in topics:
+        max_tool_rounds = 4
+    else:
+        max_tool_rounds = 3
+    completed_tool_calls = set()
     for _ in range(max_tool_rounds):
         if response.stop_reason != "tool_use":
             break
@@ -928,6 +965,16 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         tool_results = []
         for tu in tool_uses:
             tools_called.add(tu.name)
+            call_key = (tu.name, json.dumps(tu.input, sort_keys=True, default=str))
+            if call_key in completed_tool_calls:
+                result = f"Tool '{tu.name}' was already called with these inputs; use the existing result."
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tu.id,
+                    "content": result,
+                })
+                continue
+            completed_tool_calls.add(call_key)
             try:
                 result = execute_tool(tu.name, tu.input, db)
             except Exception as e:
@@ -963,8 +1010,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     saved_benchmarks = []
     saved_intents = []
     try:
-        all_mentioned = _all_mentioned_swimmers(messages, db)
-        intent = _conversation_action(text, topics, messages, all_mentioned)
+        intent = _conversation_action(text, topics, messages, resolved_swimmers)
     except Exception:
         pass
 
@@ -1250,11 +1296,13 @@ async def send_message_with_image(
     db.commit()
 
     # Build history for this thread
+    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
+    history_limit = MAX_HISTORY  # image/session planning keeps the richer planning window
     recent = (
         db.query(models.CoachAIMessage)
         .filter(models.CoachAIMessage.thread_id == thread_id)
         .order_by(models.CoachAIMessage.id.desc())
-        .limit(MAX_HISTORY)
+        .limit(history_limit)
         .all()
     )
     recent.reverse()
@@ -1264,8 +1312,7 @@ async def send_message_with_image(
     slot_hint = extract_slot_hint(text)
     session_ctx = build_session_writing_context(db, slot_hint)
     system = get_system_prompt(db)
-    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
-    memory = _thread_memory(thread_obj, recent, db)
+    memory = _thread_memory(thread_obj, recent, db, history_limit)
     if memory:
         system += f"\n\n---\n{memory}"
     if session_ctx:
@@ -1296,16 +1343,22 @@ async def send_message_with_image(
         cache_control={"type": "ephemeral"},
     )
 
-    # Tool-calling loop — max 5 iterations
+    # Tool-calling loop — retain planning depth without allowing runaway repeats.
     tools_called_img = set()
-    for _ in range(5):
+    completed_tool_calls_img = set()
+    for _ in range(4):
         if response.stop_reason != "tool_use":
             break
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         tool_results = []
         for tu in tool_uses:
             tools_called_img.add(tu.name)
-            result = execute_tool(tu.name, tu.input, db)
+            call_key = (tu.name, json.dumps(tu.input, sort_keys=True, default=str))
+            if call_key in completed_tool_calls_img:
+                result = f"Tool '{tu.name}' was already called with these inputs; use the existing result."
+            else:
+                completed_tool_calls_img.add(call_key)
+                result = execute_tool(tu.name, tu.input, db)
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tu.id,
@@ -1760,23 +1813,29 @@ def ai_usage(days: int = 30, db: DBSession = Depends(get_db)):
         .filter(models.AIUsageLog.created_at >= cutoff)
         .all()
     )
-    totals = {
-        "calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "estimated_cost_usd": 0.0,
-    }
+    def empty_counters():
+        return {
+            "calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "estimated_cost_usd": 0.0,
+        }
+
+    totals = empty_counters()
     by_model = {}
     by_operation = {}
     for row in rows:
         key = f"{row.provider}:{row.model}"
-        item = by_model.setdefault(key, {"provider": row.provider, "model": row.model, **totals})
+        item = by_model.setdefault(
+            key,
+            {"provider": row.provider, "model": row.model, **empty_counters()},
+        )
         operation_key = row.operation or "unknown"
         operation_item = by_operation.setdefault(
             operation_key,
-            {"operation": operation_key, **totals},
+            {"operation": operation_key, **empty_counters()},
         )
         for target in (totals, item, operation_item):
             target["calls"] += 1
@@ -1806,8 +1865,14 @@ def ai_usage(days: int = 30, db: DBSession = Depends(get_db)):
             "planning_effort": PLANNING_EFFORT,
             "transcription_model": TRANSCRIPTION_MODEL,
             "history_messages": MAX_HISTORY,
+            "history_limits": {
+                "general": GENERAL_HISTORY,
+                "athlete_planning": ATHLETE_HISTORY,
+                "season_planning": MAX_HISTORY,
+            },
             "summary_batch_messages": SUMMARY_BATCH_SIZE,
             "summary_character_limit": SUMMARY_CHAR_LIMIT,
+            "routine_coaching_context_character_limit": COACHING_CONTEXT_CHAR_LIMIT,
             "memory_strategy": "rolling summary + bounded recent history + task-scoped database retrieval",
             "general_agent_routing": "fast model for short factual retrieval; primary model for coaching judgement and planning",
             "general_agent_write_policy": "read-only tools with confirmation or draft review for changes",

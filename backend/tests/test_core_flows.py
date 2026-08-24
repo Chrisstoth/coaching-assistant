@@ -23,8 +23,14 @@ from backend.database import engine
 from backend.database import SessionLocal
 from backend.database import _portable_column_type
 from backend import models
-from backend.routers.ai_chat import _conversation_action, _thread_memory, MAX_HISTORY
-from backend.services.claude_service import FAST_MODEL, execute_tool, record_ai_usage
+from backend.routers.ai_chat import (
+    ATHLETE_HISTORY, GENERAL_HISTORY, MAX_HISTORY,
+    _conversation_action, _history_limit_for_thread, _thread_memory,
+)
+from backend.services.claude_service import (
+    COACHING_CONTEXT_CHAR_LIMIT, FAST_MODEL,
+    _coaching_context_for_prompt, execute_tool, record_ai_usage,
+)
 
 
 class CoreFlowTests(unittest.TestCase):
@@ -150,6 +156,12 @@ class CoreFlowTests(unittest.TestCase):
     def test_agent_routes_short_factual_retrieval_to_fast_model(self):
         captured = {}
 
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Resolver Alice", squad="Agent Test")
+            db.add(swimmer)
+            db.commit()
+            swimmer_id = swimmer.id
+
         def fake_create(**kwargs):
             captured.update(kwargs)
             return SimpleNamespace(
@@ -162,13 +174,49 @@ class CoreFlowTests(unittest.TestCase):
             response = self.client.post(
                 "/ai-chat/messages",
                 headers=self.headers,
-                json={"message": "When is the next meet?"},
+                json={"message": "What was Resolver Alice's latest time?"},
             )
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertEqual(response.json()["model_route"]["tier"], "fast")
         self.assertEqual(captured["model"], FAST_MODEL)
         self.assertEqual(captured["operation"], "general_agent_initial")
+        self.assertIn(f"Resolver Alice: swimmer_id={swimmer_id}", captured["system"])
+        self.assertIn("do not call find_swimmer", captured["system"])
+
+        with SessionLocal() as db:
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
+
+    def test_adaptive_history_and_compact_context_preserve_planning_depth(self):
+        self.assertEqual(_history_limit_for_thread(None), GENERAL_HISTORY)
+        self.assertEqual(
+            _history_limit_for_thread(SimpleNamespace(thread_type="athlete_planning")),
+            ATHLETE_HISTORY,
+        )
+        self.assertEqual(
+            _history_limit_for_thread(SimpleNamespace(thread_type="season_plan")),
+            MAX_HISTORY,
+        )
+
+        long_text = "Detailed coaching context. " * 500
+        profile = SimpleNamespace(
+            summary=(
+                long_text
+                + "\n**Session Style & Preferences**\nThree practical training groups."
+                + "\n**Intensity & Terminology**\nThreshold means controlled repeatability."
+                + "\n**Key Coaching Priorities**\nLong-term athlete development."
+            ),
+            ethos="Develop the athlete before chasing short-term results. " * 20,
+            squad_state="The squad is rebuilding aerobic consistency. " * 20,
+            targets="Regional and national qualification pathways. " * 20,
+            current_focus="Aerobic base with technical quality under fatigue. " * 20,
+        )
+        compact = _coaching_context_for_prompt(profile)
+        self.assertLessEqual(len(compact), COACHING_CONTEXT_CHAR_LIMIT)
+        self.assertIn("Coaching philosophy", compact)
+        self.assertIn("Current focus", compact)
+        self.assertEqual(_coaching_context_for_prompt(profile, full=True), profile.summary)
 
     def test_season_session_and_register_flows(self):
         swimmer = self.client.post(
@@ -292,7 +340,19 @@ class CoreFlowTests(unittest.TestCase):
         self.assertTrue(any(
             row["operation"] == "test_call" for row in usage.json()["by_operation"]
         ))
+        self.assertEqual(
+            sum(row["calls"] for row in usage.json()["by_model"]),
+            usage.json()["totals"]["calls"],
+        )
+        self.assertEqual(
+            sum(row["calls"] for row in usage.json()["by_operation"]),
+            usage.json()["totals"]["calls"],
+        )
         self.assertEqual(usage.json()["configuration"]["planning_effort"], "high")
+        self.assertEqual(
+            usage.json()["configuration"]["history_limits"]["general"],
+            GENERAL_HISTORY,
+        )
 
     def test_combined_workbook_imports_roster_and_replaces_times(self):
         legacy = self.client.post(

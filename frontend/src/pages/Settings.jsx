@@ -141,7 +141,7 @@ export default function Settings() {
                 <p>General assistant: <span className="text-pool-200">cost-aware {usage.configuration.fast_model} / {usage.configuration.primary_model} routing</span></p>
                 <p>Extraction/routing: <span className="text-pool-200">{usage.configuration.fast_model}</span></p>
                 <p>Voice notes: <span className="text-pool-200">{usage.configuration.transcription_model}</span></p>
-                <p>Conversation memory: last <span className="text-pool-200">{usage.configuration.history_messages}</span> messages + rolling summary every {usage.configuration.summary_batch_messages}</p>
+                <p>Conversation memory: <span className="text-pool-200">{usage.configuration.history_limits?.general || usage.configuration.history_messages}</span> general / <span className="text-pool-200">{usage.configuration.history_limits?.athlete_planning || usage.configuration.history_messages}</span> athlete / <span className="text-pool-200">{usage.configuration.history_limits?.season_planning || usage.configuration.history_messages}</span> season messages + rolling summary</p>
               </div>
               {usage.by_model.length > 0 && (
                 <div className="space-y-1 border-t border-pool-700 pt-3">

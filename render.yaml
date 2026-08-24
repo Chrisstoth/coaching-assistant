@@ -26,9 +26,15 @@ services:
         value: high
       - key: AI_MAX_HISTORY
         value: "20"
+      - key: AI_GENERAL_HISTORY
+        value: "10"
+      - key: AI_ATHLETE_HISTORY
+        value: "12"
       - key: AI_SUMMARY_BATCH_SIZE
         value: "8"
       - key: AI_SUMMARY_CHAR_LIMIT
         value: "3500"
+      - key: AI_COACHING_CONTEXT_CHAR_LIMIT
+        value: "3200"
       - key: OPENAI_TRANSCRIPTION_MODEL
         value: gpt-4o-mini-transcribe

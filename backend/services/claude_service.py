@@ -46,6 +46,10 @@ FAST_MODEL = os.getenv("ANTHROPIC_FAST_MODEL", "claude-haiku-4-5-20251001")
 PRIMARY_EFFORT = os.getenv("ANTHROPIC_EFFORT", "medium")
 PLANNING_EFFORT = os.getenv("ANTHROPIC_PLANNING_EFFORT", "high")
 TRANSCRIPTION_MODEL = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
+COACHING_CONTEXT_CHAR_LIMIT = max(
+    1800,
+    min(int(os.getenv("AI_COACHING_CONTEXT_CHAR_LIMIT", "3200")), 6000),
+)
 
 _MODEL_PRICES_PER_MTOK = {
     "claude-sonnet-5": (2.0, 10.0),
@@ -1011,6 +1015,44 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
     return f"Unknown tool: {tool_name}"
 
 
+def _coaching_context_for_prompt(profile: models.CoachingProfile, *, full: bool = False) -> str:
+    """Return a compact operational context while retaining the full stored profile."""
+    if not profile or not profile.summary:
+        return ""
+    if full or len(profile.summary) <= COACHING_CONTEXT_CHAR_LIMIT:
+        return profile.summary
+
+    sections = []
+    labelled_fields = (
+        ("Coaching philosophy", profile.ethos, 700),
+        ("Squad state", profile.squad_state, 600),
+        ("Season targets", profile.targets, 500),
+        ("Current focus", profile.current_focus, 650),
+    )
+    for label, value, limit in labelled_fields:
+        if value:
+            sections.append(f"{label}: {value.strip()[:limit]}")
+
+    # These operational sections do not have dedicated database columns.
+    for heading, limit in (
+        ("Session Style & Preferences", 450),
+        ("Intensity & Terminology", 450),
+        ("Key Coaching Priorities", 350),
+    ):
+        match = re.search(
+            rf"\*\*{re.escape(heading)}\*\*\s*(.*?)(?=\n\*\*|\Z)",
+            profile.summary,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            sections.append(f"{heading}: {match.group(1).strip()[:limit]}")
+
+    compact = "\n".join(sections).strip()
+    if not compact:
+        compact = profile.summary[:COACHING_CONTEXT_CHAR_LIMIT]
+    return compact[:COACHING_CONTEXT_CHAR_LIMIT]
+
+
 def get_system_prompt(
     db: DBSession,
     extra: str = "",
@@ -1018,6 +1060,7 @@ def get_system_prompt(
     include_recent_sessions: bool = True,
     include_active_notes: bool = True,
     include_approaching_targets: bool = True,
+    full_coaching_context: bool = False,
 ) -> str:
     """Build the full system prompt: base identity + coaching context + squad snapshot + recent sessions + active coaching notes."""
     from datetime import date as date_type
@@ -1028,7 +1071,12 @@ def get_system_prompt(
     )
     parts = [BASE_SYSTEM]
     if profile:
-        parts.append(f"---\nCOACHING CONTEXT:\n{profile.summary}")
+        coaching_context = _coaching_context_for_prompt(
+            profile,
+            full=full_coaching_context,
+        )
+        if coaching_context:
+            parts.append(f"---\nCOACHING CONTEXT:\n{coaching_context}")
 
     if include_squad_snapshot:
         squad_snap = build_squad_snapshot(db)
@@ -1113,7 +1161,7 @@ def get_season_plan_system_prompt(db: DBSession, macro_id: int = None) -> str:
         .first()
     )
     if profile and profile.summary:
-        parts.append(f"---\nCOACHING CONTEXT:\n{profile.summary}")
+        parts.append(f"---\nCOACHING CONTEXT:\n{_coaching_context_for_prompt(profile, full=True)}")
 
     # Current macro and its phases
     today = date_type.today()
@@ -1205,7 +1253,7 @@ def get_athlete_plan_system_prompt(db: DBSession) -> str:
         .first()
     )
     if profile and profile.summary:
-        parts.append(f"---\nCOACHING CONTEXT:\n{profile.summary}")
+        parts.append(f"---\nCOACHING CONTEXT:\n{_coaching_context_for_prompt(profile)}")
 
     # Current macro + phase (brief context)
     today = date_type.today()
