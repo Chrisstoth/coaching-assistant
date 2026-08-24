@@ -276,6 +276,7 @@ export const api = {
   extractSessionDraft: (threadId) => request('POST', '/ai-chat/extract-session', threadId != null ? { thread_id: threadId } : {}),
   saveBenchmarkFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/save-benchmark', { swimmer_id: swimmerId, conversation }),
   saveCoachingIntentFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/save-coaching-intent', { swimmer_id: swimmerId, conversation }),
+  updateAthleteProfileFromChat: (swimmerId, messages) => request('POST', '/ai-chat/actions/update-athlete-profile', { swimmer_id: swimmerId, messages }),
   startRegister: (message, threadId) => request('POST', '/ai-chat/start-register', { message, thread_id: threadId }),
   parseRegister: (data) => request('POST', '/ai-chat/parse-register', data),
   submitChatRegister: (data) => request('POST', '/ai-chat/submit-register', data),

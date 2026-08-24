@@ -70,6 +70,7 @@ const INTENT_LABELS = {
   season_plan_navigation: { label: 'season plan', colour: 'teal' },
   athlete_plan_navigation: { label: 'athlete planning', colour: 'orange' },
   coaching_intent: { label: 'training intent', colour: 'teal' },
+  athlete_profile_update: { label: 'athlete profile', colour: 'orange' },
   status_change: { label: 'status update', colour: 'amber' },
 }
 
@@ -207,6 +208,30 @@ export default function CoachAI() {
     bottomRef.current?.scrollIntoView({ behavior: 'auto' })
   }, [messages, suggestedAction])
 
+  const recoverSavedReply = async (threadId, expectedMessage, requestStartedAt, hasImage) => {
+    const delays = [0, 1500, 3000, 5000]
+    for (const delay of delays) {
+      if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+      try {
+        const stored = await api.getAIChatMessages(threadId)
+        const expectedIndex = stored.findLastIndex(message => {
+          if (message.role !== 'user') return false
+          const savedText = (message.message || '').trim()
+          const textMatches = hasImage
+            ? savedText.startsWith('[Photo') && (!expectedMessage || savedText.includes(expectedMessage))
+            : savedText === expectedMessage
+          const savedAt = message.created_at ? new Date(message.created_at).getTime() : 0
+          return textMatches && savedAt >= requestStartedAt - 120000
+        })
+        if (expectedIndex >= 0 && stored.slice(expectedIndex + 1).some(message => message.role === 'assistant')) {
+          setMessages(stored)
+          return true
+        }
+      } catch {}
+    }
+    return false
+  }
+
   const send = async (text) => {
     const msg = (text || input).trim()
     const hasImage = Boolean(attachedImage)
@@ -239,6 +264,7 @@ export default function CoachAI() {
       imagePreview: attachedImage?.preview,
     }])
 
+    const requestStartedAt = Date.now()
     try {
       const res = hasImage
         ? await api.sendAIChatMessageWithImage(msg, attachedImage.file, threadId, poolside)
@@ -359,7 +385,14 @@ export default function CoachAI() {
         })
       }
     } catch (e) {
-      setMessages(prev => [...prev, { role: 'assistant', message: `Error: ${e.message}`, id: Date.now() + 1 }])
+      const recovered = await recoverSavedReply(threadId, msg, requestStartedAt, hasImage)
+      if (!recovered) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          message: 'The connection ended before the reply reached this screen. The conversation is saved; tap the conversation again in a moment to recover any completed reply.',
+          id: Date.now() + 1,
+        }])
+      }
     }
     setSending(false)
   }
@@ -380,6 +413,9 @@ export default function CoachAI() {
     const conversationContext = messages
       .map(m => `${m.role === 'user' ? 'Coach' : 'AI'}: ${m.message}`)
       .join('\n')
+    const conversationMessages = messages
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.message }))
 
     try {
       if (type === 'view_meet' && suggestedAction.meet_id) {
@@ -438,6 +474,9 @@ export default function CoachAI() {
         }
         setActionResult('saved')
         setSuggestedAction(null)
+      } else if (type === 'athlete_profile_update' && swimmer_id) {
+        await api.updateAthleteProfileFromChat(swimmer_id, conversationMessages)
+        setActionResult('saved')
       } else if (type === 'session_writing') {
         const draft = await api.extractSessionDraft(activeThreadId)
         setSessionDraft(draft)
@@ -749,6 +788,8 @@ export default function CoachAI() {
                     ? "I'll extract the session structure from our conversation, create it in history, and take you straight to the register."
                     : suggestedAction.type === 'meet_creation'
                     ? "I'll extract the meet details and swimmer entries from our conversation and create it — you can review and add targets on the meet page."
+                    : suggestedAction.type === 'athlete_profile_update'
+                    ? `Update ${suggestedAction.swimmer_name}'s stored physical and psychological coaching profile using the new details in this conversation.`
                     : suggestedAction.swimmer_name
                     ? `Save this conversation to ${suggestedAction.swimmer_name}'s profile — builds biological, technical, and performance summaries from what was discussed.`
                     : "Ready to save this — it'll be used in future planning context."}
@@ -975,7 +1016,7 @@ export default function CoachAI() {
             ref={textareaRef}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
+            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send() } }}
             placeholder={recording ? 'Recording…' : transcribing ? 'Transcribing…' : 'Ask Deckxtra…'}
             rows={3}
             className="bg-transparent px-4 pt-3 pb-1 text-sm focus:outline-none resize-none w-full"

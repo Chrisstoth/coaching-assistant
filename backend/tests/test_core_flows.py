@@ -23,7 +23,7 @@ from backend.database import engine
 from backend.database import SessionLocal
 from backend.database import _portable_column_type
 from backend import models
-from backend.routers.ai_chat import _thread_memory, MAX_HISTORY
+from backend.routers.ai_chat import _conversation_action, _thread_memory, MAX_HISTORY
 from backend.services.claude_service import FAST_MODEL, execute_tool, record_ai_usage
 
 
@@ -80,6 +80,50 @@ class CoreFlowTests(unittest.TestCase):
             "BOOLEAN DEFAULT FALSE",
         )
         self.assertEqual(_portable_column_type("DATETIME", "sqlite"), "DATETIME")
+
+    def test_conversation_action_suggests_confirmed_profile_update_locally(self):
+        swimmer = SimpleNamespace(id=42, name="Test Swimmer")
+        action = _conversation_action(
+            "She responds well to aerobic work but needs encouragement late in the week.",
+            {"biological"},
+            [
+                {"role": "user", "content": "Let's discuss Test Swimmer."},
+                {"role": "assistant", "content": "What have you noticed?"},
+                {"role": "user", "content": "She responds well to aerobic work."},
+            ],
+            [swimmer],
+        )
+        self.assertEqual(action["intent"], "athlete_profile_update")
+        self.assertEqual(action["swimmer_id"], 42)
+
+    def test_confirmed_chat_profile_update_uses_one_incremental_synthesis(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Profile Chat Swimmer", squad="Agent Test")
+            db.add(swimmer)
+            db.commit()
+            swimmer_id = swimmer.id
+
+        with patch(
+            "backend.routers.ai_chat.save_wizard_profile",
+            return_value={"id": 99, "profile_type": "wizard"},
+        ) as save_profile:
+            response = self.client.post(
+                "/ai-chat/actions/update-athlete-profile",
+                headers=self.headers,
+                json={
+                    "swimmer_id": swimmer_id,
+                    "messages": [
+                        {"role": "user", "content": "She responds well to aerobic work."},
+                        {"role": "assistant", "content": "I'll remember that once you confirm."},
+                    ],
+                },
+            )
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(save_profile.call_args.kwargs["preserve_existing"])
+
+        with SessionLocal() as db:
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
 
     def test_agent_routes_short_factual_retrieval_to_fast_model(self):
         captured = {}

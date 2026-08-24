@@ -10,9 +10,9 @@ from backend import models
 from backend.services.claude_service import (
     get_client, MODEL, FAST_MODEL, PRIMARY_EFFORT, PLANNING_EFFORT, TRANSCRIPTION_MODEL,
     record_ai_usage, get_system_prompt, build_session_writing_context,
-    detect_topics, extract_slot_hint, classify_intent, _strip_json,
+    detect_topics, extract_slot_hint, _strip_json,
     extract_benchmarks_from_conversation, extract_coaching_intent,
-    get_tools, execute_tool,
+    get_tools, execute_tool, save_wizard_profile,
 )
 from backend.services.agent_policy import choose_agent_route
 
@@ -23,19 +23,62 @@ SUMMARY_BATCH_SIZE = max(4, min(int(os.getenv("AI_SUMMARY_BATCH_SIZE", "8")), 20
 SUMMARY_CHAR_LIMIT = max(1200, min(int(os.getenv("AI_SUMMARY_CHAR_LIMIT", "3500")), 6000))
 
 
-def _should_classify_action(text: str, topics: set[str]) -> bool:
-    """Avoid a paid intent-classifier call for ordinary questions and retrieval."""
+def _conversation_action(text: str, topics: set[str], messages: list, swimmers: list) -> dict:
+    """Choose review actions locally so chat replies are not delayed by another API call."""
     lower = " ".join((text or "").lower().split())
-    if topics.intersection({"session_writing", "coaching_intent"}):
-        return True
-    if any(status in lower for status in ("injury", "injured", "sabbatical", "active status")) and any(
+    swimmer = swimmers[0] if len(swimmers) == 1 else None
+    user_turns = sum(1 for message in messages if message.get("role") == "user")
+
+    status_requested = any(status in lower for status in (
+        "injury", "injured", "sabbatical", "active status",
+    )) and any(
         verb in lower for verb in ("put ", "mark ", "status", "going on", "return")
-    ):
-        return True
-    return any(signal in lower for signal in (
-        "returning to training", "back to training", "create this meet",
-        "add this meet", "save this meet",
+    )
+    if swimmer and status_requested:
+        if "sabbatical" in lower:
+            new_status = "sabbatical"
+        elif "return" in lower or "back to training" in lower or "active status" in lower:
+            new_status = "active"
+        else:
+            new_status = "injury"
+        return {
+            "intent": "status_change",
+            "swimmer_id": swimmer.id,
+            "swimmer_name": swimmer.name,
+            "new_status": new_status,
+            "suggested_action": f"Mark {swimmer.name} as {new_status}",
+        }
+
+    if swimmer and "benchmark" in topics:
+        return {
+            "intent": "benchmark_capture",
+            "swimmer_id": swimmer.id,
+            "swimmer_name": swimmer.name,
+            "suggested_action": f"Extract and save benchmark for {swimmer.name}",
+        }
+
+    profile_requested = any(signal in lower for signal in (
+        "update her profile", "update his profile", "update their profile",
+        "update the profile", "save this to", "remember this about",
     ))
+    if swimmer and user_turns >= 2 and (
+        topics.intersection({"biological", "performance", "coaching_intent"})
+        or profile_requested
+    ):
+        return {
+            "intent": "athlete_profile_update",
+            "swimmer_id": swimmer.id,
+            "swimmer_name": swimmer.name,
+            "suggested_action": f"Update {swimmer.name}'s profile from this conversation",
+        }
+
+    if "session_writing" in topics and user_turns >= 2:
+        return {"intent": "session_writing", "suggested_action": "Review and create this session"}
+
+    if any(signal in lower for signal in ("create this meet", "add this meet", "save this meet")):
+        return {"intent": "meet_creation", "suggested_action": "Review and create this meet"}
+
+    return {"intent": "general", "suggested_action": None}
 
 
 def _thread_memory(thread, recent_messages: list, db: DBSession) -> str:
@@ -921,25 +964,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     saved_intents = []
     try:
         all_mentioned = _all_mentioned_swimmers(messages, db)
-        if _should_classify_action(text, topics):
-            intent = classify_intent(
-                messages + [{"role": "assistant", "content": reply}],
-                all_mentioned,
-                db,
-            )
-
-        if (
-            'benchmark' in topics
-            and len(all_mentioned) == 1
-            and not intent.get("suggested_action")
-        ):
-            intent = {
-                "intent": "benchmark_capture",
-                "swimmer_id": all_mentioned[0].id,
-                "swimmer_name": all_mentioned[0].name,
-                "confidence": "high",
-                "suggested_action": f"Review and save benchmark for {all_mentioned[0].name}",
-            }
+        intent = _conversation_action(text, topics, messages, all_mentioned)
     except Exception:
         pass
 
@@ -990,6 +1015,27 @@ def save_coaching_intent_action(body: dict = Body(...), db: DBSession = Depends(
     if not conversation:
         raise HTTPException(status_code=400, detail="Conversation required")
     saved = extract_coaching_intent(conversation, [swimmer], db)
+    return {"saved": saved}
+
+
+@router.post("/actions/update-athlete-profile")
+def update_athlete_profile_action(body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Update a swimmer profile from a confirmed chat conversation."""
+    swimmer_id = body.get("swimmer_id")
+    swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Swimmer not found")
+
+    messages = []
+    for item in (body.get("messages") or [])[-30:]:
+        role = item.get("role") if isinstance(item, dict) else None
+        content = str(item.get("content") or "").strip() if isinstance(item, dict) else ""
+        if role in {"user", "assistant"} and content:
+            messages.append({"role": role, "content": content[:4000]})
+    if not messages:
+        raise HTTPException(status_code=400, detail="Conversation messages required")
+
+    saved = save_wizard_profile(swimmer, messages, db, preserve_existing=True)
     return {"saved": saved}
 
 

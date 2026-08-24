@@ -4613,6 +4613,7 @@ def save_wizard_profile(
     swimmer: models.Swimmer,
     messages: list[dict],
     db: DBSession,
+    preserve_existing: bool = False,
 ) -> dict:
     """
     Synthesise the wizard conversation into physical_profile + psychological_profile JSON
@@ -4629,6 +4630,17 @@ def save_wizard_profile(
         f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
         for m in messages
     )
+    existing_context = ""
+    if preserve_existing:
+        existing_context = f"""
+
+CURRENT STORED PROFILE:
+Physical: {json.dumps(swimmer.physical_profile or {}, indent=2)}
+Psychological: {json.dumps(swimmer.psychological_profile or {}, indent=2)}
+
+This is an incremental update. For every field not clearly changed or added by the
+conversation, return null. Do not infer a change from the current times data alone.
+"""
 
     prompt = f"""You have just completed a profiling interview with a coach about their swimmer. Synthesise everything into a structured profile.
 
@@ -4640,6 +4652,7 @@ TIMES DATA:
 
 PROFILING CONVERSATION:
 {conversation_text}
+{existing_context}
 
 Return a JSON object with exactly these two keys:
 
@@ -4672,14 +4685,35 @@ Return only JSON."""
 
     profile_data = json.loads(_strip_json(response.content[0].text))
 
-    swimmer.physical_profile = profile_data.get("physical", {})
-    swimmer.psychological_profile = profile_data.get("psychological", {})
+    def merge_non_null(existing: dict, proposed: dict) -> dict:
+        merged = dict(existing or {})
+        for key, value in (proposed or {}).items():
+            if value is not None:
+                merged[key] = value
+        return merged
+
+    if preserve_existing:
+        physical = merge_non_null(swimmer.physical_profile, profile_data.get("physical"))
+        psychological = merge_non_null(
+            swimmer.psychological_profile,
+            profile_data.get("psychological"),
+        )
+    else:
+        physical = profile_data.get("physical", {})
+        psychological = profile_data.get("psychological", {})
+
+    swimmer.physical_profile = physical
+    swimmer.psychological_profile = psychological
+    stored_profile = {"physical": physical, "psychological": psychological}
 
     version = models.SwimmerProfileVersion(
         swimmer_id=swimmer.id,
         profile_type="wizard",
-        data=profile_data,
-        change_summary="Profile built via profiling wizard.",
+        data=stored_profile,
+        change_summary=(
+            "Profile updated from a confirmed coach conversation."
+            if preserve_existing else "Profile built via profiling wizard."
+        ),
         obs_count=len(messages),
     )
     db.add(version)
