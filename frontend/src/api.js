@@ -1,3 +1,5 @@
+import { flushOfflineSaves, queueRegisterSave } from './offlineQueue'
+
 const BASE = '/api'
 
 export function getToken() { return localStorage.getItem('dx_token') }
@@ -14,7 +16,9 @@ async function request(method, path, body = null, isFormData = false) {
   if (res.status === 401) {
     clearToken()
     window.location.href = '/login'
-    return
+    const error = new Error('Session expired. Sign in again to sync saved changes.')
+    error.status = 401
+    throw error
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
@@ -24,6 +28,23 @@ async function request(method, path, body = null, isFormData = false) {
   }
   if (res.status === 204) return null
   return res.json()
+}
+
+function isConnectionFailure(error) {
+  return (typeof navigator !== 'undefined' && !navigator.onLine)
+    || error instanceof TypeError
+}
+
+async function saveRegisterWithOfflineFallback(sessionId, data) {
+  if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    return queueRegisterSave(sessionId, data)
+  }
+  try {
+    return await request('PUT', `/sessions/${sessionId}/register`, data)
+  } catch (error) {
+    if (isConnectionFailure(error)) return queueRegisterSave(sessionId, data)
+    throw error
+  }
 }
 
 export const api = {
@@ -109,10 +130,20 @@ export const api = {
 
   // Register
   getRegister: (sessionId) => request('GET', `/sessions/${sessionId}/register`),
-  submitRegister: (sessionId, data) => request('PUT', `/sessions/${sessionId}/register`, data),
+  submitRegister: saveRegisterWithOfflineFallback,
+  flushOfflineSaves: () => flushOfflineSaves(request),
   recommendGroups: (sessionId) => request('POST', `/sessions/${sessionId}/recommend-groups`),
 
   // Import
+  importCombinedSwims: (file, trackerFile = null, squad = 'Silver 1', replaceExisting = true, reconcileRoster = true) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    if (trackerFile) fd.append('tracker_file', trackerFile)
+    fd.append('squad', squad)
+    fd.append('replace_existing', String(replaceExisting))
+    fd.append('reconcile_roster', String(reconcileRoster))
+    return request('POST', '/times/import/combined', fd, true)
+  },
   importRoster: (file) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -171,6 +202,27 @@ export const api = {
   combineExtractions: (meetId, data) => {
     return request('POST', `/meets/${meetId}/combine-extractions`, data)
   },
+  getMeetTimetable: (meetId) => request('GET', `/meets/${meetId}/timetable`),
+  createMeetSession: (meetId, data) => request('POST', `/meets/${meetId}/timetable`, data),
+  updateMeetSession: (meetId, sessionId, data) => request('PUT', `/meets/${meetId}/timetable/${sessionId}`, data),
+  deleteMeetSession: (meetId, sessionId) => request('DELETE', `/meets/${meetId}/timetable/${sessionId}`),
+  importMeetTimetable: (meetId, data) => request('POST', `/meets/${meetId}/timetable/import`, data),
+
+  // Qualification standards and deterministic comparisons
+  getQualificationSets: (meetId = null) => request('GET', `/qualification-standards${meetId ? `?meet_id=${meetId}` : ''}`),
+  getQualificationSet: (id) => request('GET', `/qualification-standards/${id}`),
+  extractQualificationStandards: (document, meetId = null) => {
+    const fd = new FormData()
+    fd.append('document', document)
+    if (meetId) fd.append('meet_id', String(meetId))
+    return request('POST', '/qualification-standards/extract', fd, true)
+  },
+  updateQualificationSet: (id, data) => request('PATCH', `/qualification-standards/${id}`, data),
+  replaceQualificationStandards: (id, rows) => request('PUT', `/qualification-standards/${id}/standards`, rows),
+  confirmQualificationSet: (id) => request('POST', `/qualification-standards/${id}/confirm`),
+  recalculateQualifications: (id) => request('POST', `/qualification-standards/${id}/recalculate`),
+  getQualificationAssessments: (id) => request('GET', `/qualification-standards/${id}/assessments`),
+  deleteQualificationSet: (id) => request('DELETE', `/qualification-standards/${id}`),
 
   // Voice
   transcribeAudio: (audioBlob) => {
@@ -222,9 +274,11 @@ export const api = {
   createSessionFromChat: (draft) => request('POST', '/ai-chat/create-session', draft),
   createMeetFromChat: (threadId) => request('POST', '/ai-chat/create-meet', threadId != null ? { thread_id: threadId } : {}),
   extractSessionDraft: (threadId) => request('POST', '/ai-chat/extract-session', threadId != null ? { thread_id: threadId } : {}),
+  saveBenchmarkFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/save-benchmark', { swimmer_id: swimmerId, conversation }),
+  saveCoachingIntentFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/save-coaching-intent', { swimmer_id: swimmerId, conversation }),
   startRegister: (message, threadId) => request('POST', '/ai-chat/start-register', { message, thread_id: threadId }),
   parseRegister: (data) => request('POST', '/ai-chat/parse-register', data),
-  submitRegister: (data) => request('POST', '/ai-chat/submit-register', data),
+  submitChatRegister: (data) => request('POST', '/ai-chat/submit-register', data),
   sendAIChatMessageWithImage: (message, imageFile, threadId, brief = false) => {
     const fd = new FormData()
     fd.append('message', message || '')
@@ -260,6 +314,7 @@ export const api = {
     const qs = type ? `?analysis_type=${type}` : ''
     return request('GET', `/ai/analyses/${swimmerId}${qs}`)
   },
+  getAIUsage: (days = 30) => request('GET', `/ai-chat/usage?days=${days}`),
 
   // Periodization
   generateMicro: (swimmerId) => request('POST', `/periodization/${swimmerId}/micro`),
@@ -277,6 +332,36 @@ export const api = {
   getSeasonSummary: () => request('GET', '/season/summary'),
   getBlockProgress: (id) => request('GET', `/season/blocks/${id}/progress`),
   analyseBlock: (id) => request('POST', `/season/blocks/${id}/ai-analysis`),
+  getMicrocycles: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request('GET', `/season/microcycles${qs ? '?' + qs : ''}`)
+  },
+  createMicrocycle: (data) => request('POST', '/season/microcycles', data),
+  updateMicrocycle: (id, data) => request('PATCH', `/season/microcycles/${id}`, data),
+  deleteMicrocycle: (id) => request('DELETE', `/season/microcycles/${id}`),
+
+  // Persisted planning intelligence
+  getPlanningSeasons: () => request('GET', '/planning-agent/seasons'),
+  createPlanningSeason: (data) => request('POST', '/planning-agent/seasons', data),
+  getPlanningPathways: (macroId) => request('GET', `/planning-agent/pathways${macroId ? `?macro_id=${macroId}` : ''}`),
+  createPlanningPathway: (data) => request('POST', '/planning-agent/pathways', data),
+  updatePlanningPathway: (id, data) => request('PATCH', `/planning-agent/pathways/${id}`, data),
+  deletePlanningPathway: (id) => request('DELETE', `/planning-agent/pathways/${id}`),
+  setPlanningPathwayMembers: (id, members) => request('PUT', `/planning-agent/pathways/${id}/members`, members),
+  refreshPlanningAgent: (macroId, asOfDate = null) => request('POST', '/planning-agent/refresh', { macro_id: macroId, as_of_date: asOfDate }),
+  getPlanningAgentStatus: (macroId) => request('GET', `/planning-agent/status${macroId ? `?macro_id=${macroId}` : ''}`),
+  getAssistantInbox: (params = {}) => {
+    const qs = new URLSearchParams(params).toString()
+    return request('GET', `/planning-agent/inbox${qs ? `?${qs}` : ''}`)
+  },
+  refreshAssistantInbox: () => request('POST', '/planning-agent/inbox/refresh', {}),
+  updatePlanningRecommendation: (id, statusOrData) => request(
+    'PATCH',
+    `/planning-agent/recommendations/${id}`,
+    typeof statusOrData === 'string' ? { status: statusOrData } : statusOrData,
+  ),
+  startPlanningRecommendation: (id) => request('POST', `/planning-agent/recommendations/${id}/start`, {}),
+  discussPlanningRecommendation: (id) => request('POST', `/planning-agent/recommendations/${id}/discuss`, {}),
 
   // Schedule / timetable
   getSlots: () => request('GET', '/schedule/slots'),

@@ -62,6 +62,9 @@ def _apply_migrations():
             add_col("sessions", "cancel_reason", "TEXT")
             add_col("sessions", "course", "VARCHAR")
 
+        if "session_groups" in insp.get_table_names():
+            add_col("session_groups", "volume_breakdown", "JSON")
+
         if "pool_slots" in insp.get_table_names():
             add_col("pool_slots", "end_time", "VARCHAR")
             add_col("pool_slots", "course", "VARCHAR")
@@ -88,3 +91,26 @@ def _apply_migrations():
 
         if "coaching_conversations" in insp.get_table_names():
             add_col("coaching_conversations", "profile_id", "INTEGER")
+
+        if "ai_threads" in insp.get_table_names():
+            add_col("ai_threads", "rolling_summary", "TEXT")
+            add_col("ai_threads", "summarized_through_message_id", "INTEGER")
+            add_col("ai_threads", "summary_updated_at", "DATETIME")
+
+        if "training_macros" in insp.get_table_names():
+            add_col("training_macros", "season_id", "INTEGER")
+            add_col("training_macros", "primary_meet_id", "INTEGER")
+            add_col("training_macros", "sequence_index", "INTEGER DEFAULT 0")
+
+        if "planning_pathways" in insp.get_table_names():
+            add_col("planning_pathways", "qualification_standard_set_id", "INTEGER")
+
+        if "planning_recommendations" in insp.get_table_names():
+            add_col("planning_recommendations", "updated_at", "TIMESTAMP")
+            add_col("planning_recommendations", "last_seen_at", "TIMESTAMP")
+            add_col("planning_recommendations", "follow_up_at", "TIMESTAMP")
+            add_col("planning_recommendations", "accepted_at", "TIMESTAMP")
+            add_col("planning_recommendations", "actioned_at", "TIMESTAMP")
+            add_col("planning_recommendations", "occurrence_count", "INTEGER DEFAULT 1")
+            add_col("planning_recommendations", "coach_note", "TEXT")
+            add_col("planning_recommendations", "discussion_thread_id", "INTEGER")

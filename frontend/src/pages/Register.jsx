@@ -8,7 +8,7 @@ export default function Register() {
   const [session, setSession] = useState(null)
   const [entries, setEntries] = useState([])
   const [submitting, setSubmitting] = useState(false)
-  const [submitted, setSubmitted] = useState(false)
+  const [submitted, setSubmitted] = useState(null) // null | synced | queued
   const [expandedId, setExpandedId] = useState(null)
 
   useEffect(() => {
@@ -46,13 +46,16 @@ export default function Register() {
   }, [id])
 
   const update = (swimmerId, field, value) => {
+    setSubmitted(null)
     setEntries((prev) =>
       prev.map((e) => (e.swimmer_id === swimmerId ? { ...e, [field]: value } : e))
     )
   }
 
-  const markAllPresent = () =>
+  const markAllPresent = () => {
+    setSubmitted(null)
     setEntries((prev) => prev.map((e) => ({ ...e, attended: true })))
+  }
 
   const submit = async (runAI = true) => {
     setSubmitting(true)
@@ -69,16 +72,21 @@ export default function Register() {
         })),
         run_ai: runAI,
       })
+      if (results?.queued) {
+        setSubmitted('queued')
+        return
+      }
       // Update AI characterisations
       const aiMap = Object.fromEntries(results.map((r) => [r.swimmer_id, r.ai_characterisation]))
       setEntries((prev) =>
         prev.map((e) => ({ ...e, ai_characterisation: aiMap[e.swimmer_id] ?? e.ai_characterisation }))
       )
-      setSubmitted(true)
+      setSubmitted('synced')
     } catch (e) {
       alert(`Error: ${e.message}`)
+    } finally {
+      setSubmitting(false)
     }
-    setSubmitting(false)
   }
 
   const presentCount = entries.filter((e) => e.attended).length
@@ -216,8 +224,11 @@ export default function Register() {
 
       {/* Submit */}
       <div className="p-4 bg-pool-800 border-t border-pool-700 space-y-2 safe-bottom">
-        {submitted && (
-          <p className="text-green-400 text-sm text-center">Register saved!</p>
+        {submitted === 'synced' && (
+          <p className="text-green-400 text-sm text-center">Register saved and synced.</p>
+        )}
+        {submitted === 'queued' && (
+          <p className="text-amber-300 text-sm text-center">Saved on this device — it will sync automatically when the connection returns.</p>
         )}
         <div className="flex gap-2">
           <button
@@ -232,7 +243,7 @@ export default function Register() {
             disabled={submitting}
             className="flex-1 bg-accent-600 rounded-xl py-3 text-sm font-semibold disabled:opacity-40"
           >
-            {submitting ? 'Saving + AI...' : 'Save + AI Analysis'}
+            {submitting ? 'Saving + AI...' : 'Save + analyse notes'}
           </button>
         </div>
       </div>

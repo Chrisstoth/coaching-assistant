@@ -1,4 +1,6 @@
 import base64
+import os
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File, Form
 from typing import Optional
 from sqlalchemy.orm import Session as DBSession
@@ -6,16 +8,104 @@ from sqlalchemy.orm import Session as DBSession
 from backend.database import get_db
 from backend import models
 from backend.services.claude_service import (
-    get_client, MODEL, get_system_prompt, get_swimmer_full_context,
-    build_meets_context, build_periodization_context, build_session_writing_context,
+    get_client, MODEL, FAST_MODEL, PRIMARY_EFFORT, PLANNING_EFFORT, TRANSCRIPTION_MODEL,
+    record_ai_usage, get_system_prompt, build_session_writing_context,
     detect_topics, extract_slot_hint, classify_intent, _strip_json,
     extract_benchmarks_from_conversation, extract_coaching_intent,
     get_tools, execute_tool,
 )
+from backend.services.agent_policy import choose_agent_route
 
 router = APIRouter()
 
-MAX_HISTORY = 40
+MAX_HISTORY = max(6, min(int(os.getenv("AI_MAX_HISTORY", "20")), 40))
+SUMMARY_BATCH_SIZE = max(4, min(int(os.getenv("AI_SUMMARY_BATCH_SIZE", "8")), 20))
+SUMMARY_CHAR_LIMIT = max(1200, min(int(os.getenv("AI_SUMMARY_CHAR_LIMIT", "3500")), 6000))
+
+
+def _should_classify_action(text: str, topics: set[str]) -> bool:
+    """Avoid a paid intent-classifier call for ordinary questions and retrieval."""
+    lower = " ".join((text or "").lower().split())
+    if topics.intersection({"session_writing", "coaching_intent"}):
+        return True
+    if any(status in lower for status in ("injury", "injured", "sabbatical", "active status")) and any(
+        verb in lower for verb in ("put ", "mark ", "status", "going on", "return")
+    ):
+        return True
+    return any(signal in lower for signal in (
+        "returning to training", "back to training", "create this meet",
+        "add this meet", "save this meet",
+    ))
+
+
+def _thread_memory(thread, recent_messages: list, db: DBSession) -> str:
+    """Return bounded long-term conversation memory and periodically roll it up cheaply.
+
+    Durable coaching facts belong in structured tables; this summary only preserves decisions,
+    assumptions and unresolved questions from messages that have fallen out of recent history.
+    """
+    if not thread or len(recent_messages) < MAX_HISTORY:
+        return ""
+
+    oldest_recent_id = recent_messages[0].id
+    through_id = thread.summarized_through_message_id or 0
+    unsummarized = db.query(models.CoachAIMessage).filter(
+        models.CoachAIMessage.thread_id == thread.id,
+        models.CoachAIMessage.id < oldest_recent_id,
+        models.CoachAIMessage.id > through_id,
+    ).order_by(models.CoachAIMessage.id).limit(SUMMARY_BATCH_SIZE).all()
+    should_roll_up = bool(unsummarized) and (
+        not thread.rolling_summary or len(unsummarized) >= SUMMARY_BATCH_SIZE
+    )
+
+    if should_roll_up and unsummarized:
+        transcript = "\n".join(
+            f"{'Coach' if m.role == 'user' else 'AI'}: {m.message[:1200]}"
+            for m in unsummarized
+        )
+        prompt = f"""Maintain a compact memory for a swimming coaching conversation.
+Preserve only agreed decisions, dates, competition priorities, plan changes, athlete-specific
+constraints, coach preferences, and unresolved questions. Do not preserve pleasantries or
+duplicate database facts. Merge the new archived messages into the prior memory.
+
+PRIOR MEMORY:
+{thread.rolling_summary or 'None'}
+
+NEW ARCHIVED MESSAGES:
+{transcript}
+
+Return plain text under 450 words with short labelled bullets."""
+        try:
+            response = get_client().messages.create(
+                model=FAST_MODEL,
+                max_tokens=650,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            summary = response.content[0].text.strip()[:SUMMARY_CHAR_LIMIT]
+            thread.rolling_summary = summary
+            thread.summarized_through_message_id = unsummarized[-1].id
+            thread.summary_updated_at = datetime.now(timezone.utc)
+            db.commit()
+        except Exception:
+            db.rollback()
+
+    # Between roll-ups, include at most one batch of newly archived messages verbatim.
+    through_id = thread.summarized_through_message_id or 0
+    bridge = db.query(models.CoachAIMessage).filter(
+        models.CoachAIMessage.thread_id == thread.id,
+        models.CoachAIMessage.id < oldest_recent_id,
+        models.CoachAIMessage.id > through_id,
+    ).order_by(models.CoachAIMessage.id.desc()).limit(SUMMARY_BATCH_SIZE).all()
+    bridge.reverse()
+    parts = []
+    if thread.rolling_summary:
+        parts.append("ROLLING THREAD MEMORY (older decisions; structured database data overrides this):\n" + thread.rolling_summary)
+    if bridge:
+        bridge_text = "\n".join(
+            f"{'Coach' if m.role == 'user' else 'AI'}: {m.message[:500]}" for m in bridge
+        )
+        parts.append("RECENT ARCHIVED CONTEXT (awaiting next roll-up):\n" + bridge_text)
+    return "\n\n".join(parts)
 
 # Phrases that mean "generate a session for me" — triggers the planning skill
 # Phrases that mean "give me a systematic review of this swimmer"
@@ -430,7 +520,8 @@ def get_messages(thread_id: Optional[int] = None, db: DBSession = Depends(get_db
     q = db.query(models.CoachAIMessage)
     if thread_id is not None:
         q = q.filter(models.CoachAIMessage.thread_id == thread_id)
-    msgs = q.order_by(models.CoachAIMessage.created_at.asc()).all()
+    msgs = q.order_by(models.CoachAIMessage.id.desc()).limit(200).all()
+    msgs.reverse()
     return [{"id": m.id, "role": m.role, "message": m.message, "created_at": m.created_at} for m in msgs]
 
 
@@ -445,14 +536,16 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     db.add(models.CoachAIMessage(role="user", message=text, thread_id=thread_id))
     db.commit()
 
-    all_msgs = (
+    recent = (
         db.query(models.CoachAIMessage)
         .filter(models.CoachAIMessage.thread_id == thread_id)
-        .order_by(models.CoachAIMessage.created_at.asc())
+        .order_by(models.CoachAIMessage.id.desc())
+        .limit(MAX_HISTORY)
         .all()
     )
-    recent = all_msgs[-MAX_HISTORY:]
+    recent.reverse()
     messages = [{"role": m.role, "content": m.message} for m in recent]
+    topics = detect_topics(text, messages[:-1])
 
     # Choose system prompt based on thread type
     thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
@@ -466,16 +559,24 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         from backend.services.claude_service import get_athlete_plan_system_prompt
         system = get_athlete_plan_system_prompt(db)
     else:
-        system = get_system_prompt(db)
+        system = get_system_prompt(
+            db,
+            include_squad_snapshot=False,
+            include_recent_sessions=False,
+            include_active_notes=False,
+            include_approaching_targets=False,
+        )
         if brief:
             system += "\n\nPOOLSIDE MODE: The coach is at the pool. Keep all responses under 5 sentences. Use bullet points. Lead with the most actionable finding. No background context, no caveats unless critical."
 
-    # Detect topics from current message + recent history to decide what extra context to inject
-    topics = detect_topics(text, messages[:-1])
+    memory = _thread_memory(thread_obj, recent, db)
+    if memory:
+        system += f"\n\n---\n{memory}"
 
     # Build thread context string to pass to specialist skills
     from backend.routers.skills import _format_thread_context
-    thread_context = _format_thread_context(messages[:-1]) if len(messages) > 1 else None
+    recent_thread_context = _format_thread_context(messages[:-1]) if len(messages) > 1 else ""
+    thread_context = "\n\n".join(part for part in (memory, recent_thread_context) if part) or None
 
     # --- Season Plan Navigation (general thread only) ---
     if not is_season_plan_thread and not is_athlete_plan_thread and _is_season_plan_navigation(text):
@@ -744,67 +845,40 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             "skill_result": {"type": "session_plan", "draft": draft} if draft else None,
         }
 
-    if 'competition' in topics:
-        meets_ctx = build_meets_context(db)
-        if meets_ctx:
-            system += f"\n\n---\n{meets_ctx}"
-
-    if 'planning' in topics:
-        period_ctx = build_periodization_context(db)
-        if period_ctx:
-            system += f"\n\n---\n{period_ctx}"
-
-    if 'register' in topics:
-        # Inject register context — find likely session and list expected attendees
-        from datetime import date as date_type, timedelta as tdelta
-        slot_hint = extract_slot_hint(text)
-        today_d = date_type.today()
-        recent_sessions = (
-            db.query(models.Session)
-            .filter(
-                models.Session.date >= today_d - tdelta(days=3),
-                models.Session.date <= today_d,
-                models.Session.status != 'cancelled',
-            )
-            .order_by(models.Session.date.desc())
-            .limit(5)
-            .all()
-        )
-        if recent_sessions:
-            reg_lines = ["RECENT SESSIONS AVAILABLE FOR REGISTER:"]
-            for s in recent_sessions:
-                entries = db.query(models.SessionEntry).filter(models.SessionEntry.session_id == s.id).count()
-                status = "register taken" if entries > 0 else "no register yet"
-                reg_lines.append(f"  {s.date} | {s.title or 'Session'} | {status}")
-            system += "\n\n---\n" + "\n".join(reg_lines)
-            system += "\n\nREGISTER MODE — help the coach identify which session to register, then ask who attended and what groups they were in."
-
-    if 'session_writing' in topics:
-        slot_hint = extract_slot_hint(text)
-        session_ctx = build_session_writing_context(db, slot_hint)
-        if session_ctx:
-            system += f"\n\n---\nSESSION MODE — you are either helping design a session or reviewing one the coach has proposed. Either way, use the context below.\n\nIf the coach is proposing/describing their own session: act as a reviewer. Check it against the energy system distribution, stated intents, and individual swimmer needs listed below. Flag genuine concerns — patterns, gaps, mismatches with stated goals — but don't manufacture issues. One well-placed question or observation is better than a list.\n\nIf the coach is asking you to generate a session: propose one, but explain the reasoning — why this energy system, why this structure, what it does for these swimmers.\n\n{session_ctx}"
-
-    # Inject full profiles for any swimmers mentioned by name in this message
+    # Names are resolved for response metadata and optional confirmed captures.
+    # The model retrieves the evidence it needs through compact read tools.
     mentioned_now = _find_mentioned_swimmers(text, db)
-    if mentioned_now:
-        profiles_block = "\n\n".join(get_swimmer_full_context(s, db) for s in mentioned_now)
-        system += f"\n\n---\n{profiles_block}"
 
     tools = get_tools()
     loop_messages = list(messages)
+    route = choose_agent_route(
+        text,
+        topics,
+        thread_obj.thread_type if thread_obj else None,
+    )
+    selected_model = FAST_MODEL if route.tier == "fast" else MODEL
+    planning_request = (
+        is_season_plan_thread or is_athlete_plan_thread
+        or 'planning' in topics or 'session_writing' in topics
+    )
+    selected_effort = PLANNING_EFFORT if selected_model == MODEL and planning_request else None
+    response_tokens = 900 if route.tier == "fast" else 1500
 
     response = get_client().messages.create(
-        model=MODEL,
-        max_tokens=1500,
+        operation="general_agent_initial",
+        model=selected_model,
+        effort=selected_effort,
+        max_tokens=response_tokens,
         system=system,
         messages=loop_messages,
         tools=tools,
+        cache_control={"type": "ephemeral"},
     )
 
-    # Tool-calling loop — max 5 iterations to prevent runaway
+    # Tool-calling loop — bounded by route to prevent runaway cost
     tools_called = set()
-    for _ in range(5):
+    max_tool_rounds = 3 if route.tier == "fast" else 4
+    for _ in range(max_tool_rounds):
         if response.stop_reason != "tool_use":
             break
         tool_uses = [b for b in response.content if b.type == "tool_use"]
@@ -825,11 +899,14 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             {"role": "user", "content": tool_results},
         ]
         response = get_client().messages.create(
-            model=MODEL,
-            max_tokens=1500,
+            operation="general_agent_tool_followup",
+            model=selected_model,
+            effort=selected_effort,
+            max_tokens=response_tokens,
             system=system,
             messages=loop_messages,
             tools=tools,
+            cache_control={"type": "ephemeral"},
         )
 
     reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
@@ -839,32 +916,30 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     db.commit()
 
     # Secondary operations — none of these should crash the endpoint after reply is saved
-    WRITE_TOOLS = {
-        "update_swimmer_status", "add_swimmer_observation",
-        "update_season_plan", "add_meso", "update_meso", "delete_meso",
-        "update_session", "create_season_plan",
-    }
-    already_handled = tools_called & WRITE_TOOLS
     intent = {"intent": "general", "suggested_action": None}
     saved_benchmarks = []
     saved_intents = []
     try:
         all_mentioned = _all_mentioned_swimmers(messages, db)
-        intent = classify_intent(messages + [{"role": "assistant", "content": reply}], all_mentioned, db)
+        if _should_classify_action(text, topics):
+            intent = classify_intent(
+                messages + [{"role": "assistant", "content": reply}],
+                all_mentioned,
+                db,
+            )
 
-        if already_handled and intent.get("intent") in ("status_change", "coaching_intent"):
-            intent["suggested_action"] = None
-
-        full_convo = "\n".join(
-            f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
-            for m in messages[-10:]
-        ) + f"\nAI: {reply}"
-
-        if 'benchmark' in topics and all_mentioned:
-            saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
-
-        if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high" and all_mentioned:
-            saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
+        if (
+            'benchmark' in topics
+            and len(all_mentioned) == 1
+            and not intent.get("suggested_action")
+        ):
+            intent = {
+                "intent": "benchmark_capture",
+                "swimmer_id": all_mentioned[0].id,
+                "swimmer_name": all_mentioned[0].name,
+                "confidence": "high",
+                "suggested_action": f"Review and save benchmark for {all_mentioned[0].name}",
+            }
     except Exception:
         pass
 
@@ -877,10 +952,45 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             "type": intent.get("intent"),
             "swimmer_id": intent.get("swimmer_id"),
             "swimmer_name": intent.get("swimmer_name"),
+            "new_status": intent.get("new_status"),
         },
         "saved_benchmarks": saved_benchmarks,
         "saved_intents": saved_intents,
+        "model_route": {
+            "tier": route.tier,
+            "reason": route.reason,
+            "model": selected_model,
+        },
+        "tools_called": sorted(tools_called),
     }
+
+
+@router.post("/actions/save-benchmark")
+def save_benchmark_action(body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Extract and save a benchmark only after the coach confirms the action."""
+    swimmer_id = body.get("swimmer_id")
+    conversation = str(body.get("conversation") or "").strip()
+    swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Swimmer not found")
+    if not conversation:
+        raise HTTPException(status_code=400, detail="Conversation required")
+    saved = extract_benchmarks_from_conversation(conversation, [swimmer], db)
+    return {"saved": saved}
+
+
+@router.post("/actions/save-coaching-intent")
+def save_coaching_intent_action(body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Extract and save a coaching intent only after the coach confirms the action."""
+    swimmer_id = body.get("swimmer_id")
+    conversation = str(body.get("conversation") or "").strip()
+    swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Swimmer not found")
+    if not conversation:
+        raise HTTPException(status_code=400, detail="Conversation required")
+    saved = extract_coaching_intent(conversation, [swimmer], db)
+    return {"saved": saved}
 
 
 def _build_extraction_prompt(conversation: str, today: str) -> str:
@@ -955,7 +1065,7 @@ Return only valid JSON, no explanation."""
 
     try:
         response = get_client().messages.create(
-            model=MODEL, max_tokens=300,
+            model=FAST_MODEL, max_tokens=300,
             messages=[{"role": "user", "content": prompt}]
         )
         return json.loads(_strip_json(response.content[0].text))
@@ -1041,17 +1151,18 @@ def extract_session_draft(body: dict = Body(default={}), db: DBSession = Depends
     q = db.query(models.CoachAIMessage)
     if thread_id is not None:
         q = q.filter(models.CoachAIMessage.thread_id == thread_id)
-    all_msgs = q.order_by(models.CoachAIMessage.created_at.asc()).all()
+    all_msgs = q.order_by(models.CoachAIMessage.id.desc()).limit(40).all()
+    all_msgs.reverse()
     if not all_msgs:
         raise HTTPException(status_code=400, detail="No conversation to extract from")
 
     conversation = "\n".join(
-        f"{'Coach' if m.role == 'user' else 'AI'}: {m.message}" for m in all_msgs[-40:]
+        f"{'Coach' if m.role == 'user' else 'AI'}: {m.message}" for m in all_msgs
     )
     today = date_type.today().isoformat()
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=1200,
         messages=[{"role": "user", "content": _build_extraction_prompt(conversation, today)}],
     )
@@ -1093,19 +1204,24 @@ async def send_message_with_image(
     db.commit()
 
     # Build history for this thread
-    all_msgs = (
+    recent = (
         db.query(models.CoachAIMessage)
         .filter(models.CoachAIMessage.thread_id == thread_id)
-        .order_by(models.CoachAIMessage.created_at.asc())
+        .order_by(models.CoachAIMessage.id.desc())
+        .limit(MAX_HISTORY)
         .all()
     )
-    recent = all_msgs[-MAX_HISTORY:]
+    recent.reverse()
     history = [{"role": m.role, "content": m.message} for m in recent[:-1]]  # exclude the message we just added
 
     # Always inject session writing context for photo messages
     slot_hint = extract_slot_hint(text)
     session_ctx = build_session_writing_context(db, slot_hint)
     system = get_system_prompt(db)
+    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
+    memory = _thread_memory(thread_obj, recent, db)
+    if memory:
+        system += f"\n\n---\n{memory}"
     if session_ctx:
         system += f"\n\n---\nSESSION WRITING MODE — extracting session from photo. Use slot and attendee context below.\n{session_ctx}"
 
@@ -1126,10 +1242,12 @@ async def send_message_with_image(
     tools = get_tools()
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=1500,
         system=system,
         messages=loop_messages_img,
         tools=tools,
+        cache_control={"type": "ephemeral"},
     )
 
     # Tool-calling loop — max 5 iterations
@@ -1153,52 +1271,34 @@ async def send_message_with_image(
         ]
         response = get_client().messages.create(
             model=MODEL,
+            effort=PLANNING_EFFORT,
             max_tokens=1500,
             system=system,
             messages=loop_messages_img,
             tools=tools,
+            cache_control={"type": "ephemeral"},
         )
 
     reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
     db.commit()
 
-    # Secondary operations — safe, cannot crash the endpoint after reply is saved
+    # A photographed session always uses the explicit review-and-create flow.
+    # It needs neither an extra classifier call nor background profile writes.
     topics = detect_topics(text, history[-6:])
-    already_handled_img = tools_called_img & {"update_swimmer_status", "add_swimmer_observation"}
-    intent = {"intent": "general", "suggested_action": None}
-    saved_benchmarks = []
-    saved_intents = []
-    try:
-        all_mentioned = _all_mentioned_swimmers([{"role": "user", "content": text}], db)
-        intent = classify_intent(
-            history + [{"role": "user", "content": text}, {"role": "assistant", "content": reply}],
-            all_mentioned, db,
-        )
-        if already_handled_img and intent.get("intent") in ("status_change", "coaching_intent"):
-            intent["suggested_action"] = None
-
-        full_convo = "\n".join(f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content'] if isinstance(m['content'], str) else text}" for m in history[-8:]) + f"\nCoach: {text}\nAI: {reply}"
-        if all_mentioned:
-            if 'benchmark' in topics:
-                saved_benchmarks = extract_benchmarks_from_conversation(full_convo, all_mentioned, db)
-            if intent.get("intent") == "coaching_intent" and intent.get("confidence") == "high":
-                saved_intents = extract_coaching_intent(full_convo, all_mentioned, db)
-    except Exception:
-        pass
 
     return {
         "reply": reply,
         "context_injected": [],
         "topics_detected": list(topics) or ["session_writing"],
-        "suggested_action": intent.get("suggested_action") or "Review & create session",
+        "suggested_action": "Review & create session",
         "intent": {
-            "type": intent.get("intent") or "session_writing",
-            "swimmer_id": intent.get("swimmer_id"),
-            "swimmer_name": intent.get("swimmer_name"),
+            "type": "session_writing",
+            "swimmer_id": None,
+            "swimmer_name": None,
         },
-        "saved_benchmarks": saved_benchmarks,
-        "saved_intents": saved_intents,
+        "saved_benchmarks": [],
+        "saved_intents": [],
     }
 
 
@@ -1212,12 +1312,13 @@ def create_meet_from_chat(body: dict = Body(default={}), db: DBSession = Depends
     q = db.query(models.CoachAIMessage)
     if thread_id is not None:
         q = q.filter(models.CoachAIMessage.thread_id == thread_id)
-    all_msgs = q.order_by(models.CoachAIMessage.created_at.asc()).all()
+    all_msgs = q.order_by(models.CoachAIMessage.id.desc()).limit(30).all()
+    all_msgs.reverse()
     if not all_msgs:
         raise HTTPException(status_code=400, detail="No conversation to extract meet from")
 
     conversation = "\n".join(
-        f"{'Coach' if m.role == 'user' else 'AI'}: {m.message}" for m in all_msgs[-30:]
+        f"{'Coach' if m.role == 'user' else 'AI'}: {m.message}" for m in all_msgs
     )
     today = date_type.today().isoformat()
 
@@ -1251,7 +1352,7 @@ Rules:
 - Return only valid JSON"""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=800,
         messages=[{"role": "user", "content": extraction_prompt}],
     )
@@ -1406,7 +1507,7 @@ Rules:
 - Return only valid JSON"""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=600,
         messages=[{"role": "user", "content": parse_prompt}],
     )
@@ -1484,12 +1585,13 @@ def pin_to_sessions(body: dict = Body(default={}), db: DBSession = Depends(get_d
     q = db.query(models.CoachAIMessage)
     if thread_id is not None:
         q = q.filter(models.CoachAIMessage.thread_id == thread_id)
-    all_msgs = q.order_by(models.CoachAIMessage.created_at.asc()).all()
+    all_msgs = q.order_by(models.CoachAIMessage.id.desc()).limit(30).all()
+    all_msgs.reverse()
     if not all_msgs:
         raise HTTPException(status_code=400, detail="No conversation to pin")
 
     conversation = "\n".join(
-        f"{'Coach' if m.role == 'user' else 'AI'}: {m.message}" for m in all_msgs[-30:]
+        f"{'Coach' if m.role == 'user' else 'AI'}: {m.message}" for m in all_msgs
     )
 
     summary_prompt = f"""The following is a coaching conversation. Extract a concise coaching note that can be pinned to session planning for a specific date range.
@@ -1507,7 +1609,7 @@ Return JSON:
 Return only valid JSON."""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=600,
         messages=[{"role": "user", "content": summary_prompt}],
     )
@@ -1556,7 +1658,15 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         client = _openai.OpenAI(api_key=api_key)
         buf = io.BytesIO(audio_bytes)
         buf.name = filename
-        transcript = client.audio.transcriptions.create(model="whisper-1", file=buf)
+        transcript = client.audio.transcriptions.create(model=TRANSCRIPTION_MODEL, file=buf)
+        usage = getattr(transcript, "usage", None)
+        record_ai_usage(
+            "openai",
+            TRANSCRIPTION_MODEL,
+            "transcribe_audio",
+            input_tokens=getattr(usage, "input_tokens", 0) if usage else 0,
+            output_tokens=getattr(usage, "output_tokens", 0) if usage else 0,
+        )
         return {"text": transcript.text}
     except _openai.AuthenticationError:
         raise HTTPException(status_code=500, detail="Invalid OpenAI API key — check server config")
@@ -1572,6 +1682,12 @@ def clear_messages(thread_id: Optional[int] = None, db: DBSession = Depends(get_
     if thread_id is not None:
         q = q.filter(models.CoachAIMessage.thread_id == thread_id)
     q.delete()
+    if thread_id is not None:
+        thread = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first()
+        if thread:
+            thread.rolling_summary = None
+            thread.summarized_through_message_id = None
+            thread.summary_updated_at = None
     db.commit()
     return {"cleared": True}
 
@@ -1586,3 +1702,69 @@ def context_status(db: DBSession = Depends(get_db)):
     if not profile:
         return {"active": False}
     return {"active": True, "title": profile.title, "created_at": profile.created_at}
+
+
+@router.get("/usage")
+def ai_usage(days: int = 30, db: DBSession = Depends(get_db)):
+    """Return aggregate AI usage only; prompts and coaching data are never logged here."""
+    days = max(1, min(days, 365))
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    rows = (
+        db.query(models.AIUsageLog)
+        .filter(models.AIUsageLog.created_at >= cutoff)
+        .all()
+    )
+    totals = {
+        "calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "estimated_cost_usd": 0.0,
+    }
+    by_model = {}
+    by_operation = {}
+    for row in rows:
+        key = f"{row.provider}:{row.model}"
+        item = by_model.setdefault(key, {"provider": row.provider, "model": row.model, **totals})
+        operation_key = row.operation or "unknown"
+        operation_item = by_operation.setdefault(
+            operation_key,
+            {"operation": operation_key, **totals},
+        )
+        for target in (totals, item, operation_item):
+            target["calls"] += 1
+            target["input_tokens"] += row.input_tokens or 0
+            target["output_tokens"] += row.output_tokens or 0
+            target["cache_read_tokens"] += row.cache_read_tokens or 0
+            target["cache_write_tokens"] += row.cache_write_tokens or 0
+            target["estimated_cost_usd"] += row.estimated_cost_usd or 0
+    totals["estimated_cost_usd"] = round(totals["estimated_cost_usd"], 6)
+    for item in by_model.values():
+        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+    for item in by_operation.values():
+        item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
+    return {
+        "days": days,
+        "totals": totals,
+        "by_model": sorted(by_model.values(), key=lambda x: x["estimated_cost_usd"], reverse=True),
+        "by_operation": sorted(
+            by_operation.values(),
+            key=lambda x: x["estimated_cost_usd"],
+            reverse=True,
+        ),
+        "configuration": {
+            "primary_model": MODEL,
+            "fast_model": FAST_MODEL,
+            "primary_effort": PRIMARY_EFFORT,
+            "planning_effort": PLANNING_EFFORT,
+            "transcription_model": TRANSCRIPTION_MODEL,
+            "history_messages": MAX_HISTORY,
+            "summary_batch_messages": SUMMARY_BATCH_SIZE,
+            "summary_character_limit": SUMMARY_CHAR_LIMIT,
+            "memory_strategy": "rolling summary + bounded recent history + task-scoped database retrieval",
+            "general_agent_routing": "fast model for short factual retrieval; primary model for coaching judgement and planning",
+            "general_agent_write_policy": "read-only tools with confirmation or draft review for changes",
+            "general_agent_tools": [tool["name"] for tool in get_tools()],
+        },
+    }

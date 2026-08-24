@@ -18,9 +18,21 @@ export default defineConfig({
       registerType: 'autoUpdate',
       manifest: false,
       workbox: {
-        globPatterns: [],
+        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
         runtimeCaching: [
-          { urlPattern: /\/api\//, handler: 'NetworkOnly' },
+          {
+            urlPattern: ({ request, url }) => request.method === 'GET' && url.pathname.startsWith('/api/'),
+            handler: 'NetworkFirst',
+            options: {
+              cacheName: 'deckxtra-api-reads',
+              networkTimeoutSeconds: 4,
+              expiration: { maxEntries: 100, maxAgeSeconds: 7 * 24 * 60 * 60 },
+            },
+          },
+          { urlPattern: /\/api\//, handler: 'NetworkOnly', method: 'POST' },
+          { urlPattern: /\/api\//, handler: 'NetworkOnly', method: 'PUT' },
+          { urlPattern: /\/api\//, handler: 'NetworkOnly', method: 'PATCH' },
+          { urlPattern: /\/api\//, handler: 'NetworkOnly', method: 'DELETE' },
         ],
       },
     }),

@@ -289,11 +289,133 @@ function MacroTimeline({ macro }) {
   )
 }
 
-function MesoCard({ meso, upcomingMeets, onEdit, onDelete }) {
+function mondayForBlock(meso, existing) {
+  const today = new Date()
+  const start = new Date(`${meso.date_from}T00:00:00`)
+  const end = new Date(`${meso.date_to}T00:00:00`)
+  let target = today >= start && today <= end ? today : start
+  const day = target.getDay()
+  target = new Date(target)
+  target.setDate(target.getDate() - ((day + 6) % 7))
+  const used = new Set(existing.map(m => m.week_start))
+  while (used.has(target.toISOString().slice(0, 10))) target.setDate(target.getDate() + 7)
+  return target.toISOString().slice(0, 10)
+}
+
+function MicrocycleBoard({ meso, microcycles, onReload, printMode = false }) {
+  const [planning, setPlanning] = useState(false)
+  const [draft, setDraft] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  const planWeek = async () => {
+    setPlanning(true)
+    try {
+      const weekStart = mondayForBlock(meso, microcycles)
+      const result = await api.planMicroSkill({
+        week_start: weekStart,
+        request: `Plan the week beginning ${weekStart} inside ${meso.name}. The coach will review before it is saved.`,
+      })
+      if (result.draft) setDraft(result.draft)
+      else alert(result.reply || 'The planner needs a little more information first. Use the season planning chat to answer it.')
+    } catch (e) { alert('Weekly planning failed: ' + e.message) }
+    setPlanning(false)
+  }
+
+  const saveDraft = async () => {
+    if (!draft) return
+    setSaving(true)
+    try {
+      await api.createMicrocycle({
+        macro_id: meso.macro_id,
+        block_id: meso.id,
+        squad: meso.squad,
+        week_start: draft.week_of,
+        label: draft.week_label || 'Weekly plan',
+        meso_position_note: draft.meso_position_note,
+        progression_note: draft.progression_note,
+        recovery_placement: draft.recovery_placement,
+        next_week_direction: draft.next_week_direction,
+        coach_flags: draft.coach_flags || [],
+        sessions: draft.sessions || [],
+        status: 'draft',
+      })
+      setDraft(null)
+      onReload()
+    } catch (e) { alert('Could not save weekly plan: ' + e.message) }
+    setSaving(false)
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <p className="text-xs text-pool-500 font-semibold uppercase tracking-wide">Weekly microcycles</p>
+        <button onClick={planWeek} disabled={planning} className="text-xs text-accent-400 disabled:opacity-40">
+          {planning ? 'Planning…' : '+ AI plan week'}
+        </button>
+      </div>
+      {microcycles.length === 0 && <p className="text-xs text-pool-600">No saved weeks in this phase yet.</p>}
+      {microcycles.map(micro => (
+        <details key={micro.id} open={printMode || undefined} className="bg-pool-900/45 rounded-lg p-2.5">
+          <summary className="cursor-pointer list-none flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-pool-200">{micro.label}</span>
+            <span className="text-xs text-pool-500">{fmt(micro.week_start)} · {micro.sessions.length} sessions</span>
+          </summary>
+          <div className="mt-2 space-y-2">
+            {micro.progression_note && <p className="text-xs text-pool-400">{micro.progression_note}</p>}
+            <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+              {micro.sessions.map((session, index) => (
+                <div key={index} className="bg-pool-800 rounded-lg p-2 border border-pool-700/60">
+                  <p className="text-xs font-semibold text-pool-200">{session.day || fmt(session.date)}</p>
+                  <p className="text-xs text-accent-400 capitalize">{session.session_type || session.energy_focus}</p>
+                  <p className="text-xs text-pool-400 mt-1">{session.key_emphasis}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between no-print">
+              <button onClick={() => api.updateMicrocycle(micro.id, { status: micro.status === 'confirmed' ? 'draft' : 'confirmed' }).then(onReload)}
+                className="text-xs text-teal-400">{micro.status === 'confirmed' ? 'Confirmed ✓' : 'Confirm week'}</button>
+              <button onClick={async () => {
+                if (!window.confirm(`Delete ${micro.label}?`)) return
+                await api.deleteMicrocycle(micro.id)
+                onReload()
+              }} className="text-xs text-red-400">Delete</button>
+            </div>
+          </div>
+        </details>
+      ))}
+      {draft && (
+        <div className="bg-accent-900/25 border border-accent-700/50 rounded-xl p-3 space-y-2">
+          <p className="text-xs uppercase tracking-wide font-semibold text-accent-300">AI weekly draft</p>
+          <p className="text-sm font-semibold">{draft.week_label}</p>
+          <p className="text-xs text-pool-400">{draft.meso_position_note}</p>
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {(draft.sessions || []).map((session, index) => (
+              <div key={index} className="bg-pool-900/50 rounded-lg p-2">
+                <p className="text-xs font-semibold">{session.day} · {session.slot_label}</p>
+                <p className="text-xs text-accent-400 capitalize">{session.session_type}</p>
+                <p className="text-xs text-pool-400">{session.key_emphasis}</p>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2 no-print">
+            <button onClick={saveDraft} disabled={saving} className="flex-1 py-2 text-xs font-semibold bg-accent-600 rounded-lg disabled:opacity-40">
+              {saving ? 'Saving…' : 'Save weekly plan'}
+            </button>
+            <button onClick={() => setDraft(null)} className="px-3 py-2 text-xs bg-pool-700 rounded-lg">Dismiss</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function MesoCard({ meso, upcomingMeets, microcycles = [], onEdit, onDelete, printMode = false }) {
   const [expanded, setExpanded] = useState(false)
   const [editing, setEditing] = useState(false)
   const c = phaseC(meso.phase_type)
   const meets = (upcomingMeets || []).filter(m => m.date >= meso.date_from && m.date <= meso.date_to)
+
+  useEffect(() => { if (printMode) setExpanded(true) }, [printMode])
 
   const save = async (form) => {
     await api.updateSeasonBlock(meso.id, form)
@@ -344,6 +466,8 @@ function MesoCard({ meso, upcomingMeets, onEdit, onDelete }) {
             </div>
           )}
 
+          <MicrocycleBoard meso={meso} microcycles={microcycles} onReload={onEdit} printMode={printMode} />
+
           {/* Load progression */}
           <div>
             <p className="text-xs text-pool-500 font-semibold uppercase tracking-wide mb-2">Load Progression</p>
@@ -360,12 +484,14 @@ function MesoCard({ meso, upcomingMeets, onEdit, onDelete }) {
   )
 }
 
-function MacroCard({ macro, upcomingMeets, onReload, onDelete }) {
+function MacroCard({ macro, upcomingMeets, microcycles, onReload, onDelete, printMode = false }) {
   const [expanded, setExpanded] = useState(macro.is_current)
   const [addingMeso, setAddingMeso] = useState(false)
   const [planningMeso, setPlanningMeso] = useState(false)
   const [mesoDraft, setMesoDraft] = useState(null)
   const [creatingFromDraft, setCreatingFromDraft] = useState(false)
+
+  useEffect(() => { if (printMode) setExpanded(true) }, [printMode])
 
   const saveMeso = async (form) => {
     await api.createSeasonBlock({ ...form, macro_id: macro.id })
@@ -451,8 +577,10 @@ function MacroCard({ macro, upcomingMeets, onReload, onDelete }) {
                   key={meso.id}
                   meso={meso}
                   upcomingMeets={upcomingMeets}
+                  microcycles={microcycles.filter(m => m.block_id === meso.id)}
                   onEdit={onReload}
                   onDelete={onDelete}
+                  printMode={printMode}
                 />
               ))}
             </div>
@@ -524,26 +652,237 @@ function MacroCard({ macro, upcomingMeets, onReload, onDelete }) {
   )
 }
 
+function PlanningAgentPanel({ macros }) {
+  const [macroId, setMacroId] = useState('')
+  const [status, setStatus] = useState({ pathways: [], recommendations: [], context: { rows: [] } })
+  const [meets, setMeets] = useState([])
+  const [swimmers, setSwimmers] = useState([])
+  const [qualificationSets, setQualificationSets] = useState([])
+  const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [memberIds, setMemberIds] = useState([])
+  const [form, setForm] = useState({ name: '', objective: '', primary_meet_id: '', qualifier_meet_id: '', fallback_meet_id: '', qualification_standard_set_id: '' })
+
+  useEffect(() => {
+    if (!macroId && macros.length) setMacroId(String(macros.find(m => m.is_current)?.id || macros[0].id))
+  }, [macros, macroId])
+
+  const load = useCallback(async () => {
+    if (!macroId) return
+    const [agentStatus, meetRows, swimmerRows, standardSets] = await Promise.all([
+      api.getPlanningAgentStatus(Number(macroId)), api.getMeets(), api.getSwimmers({ status: 'active' }), api.getQualificationSets(),
+    ])
+    setStatus(agentStatus)
+    setMeets(meetRows)
+    setSwimmers(swimmerRows)
+    setQualificationSets(standardSets.filter(row => row.status === 'confirmed'))
+  }, [macroId])
+
+  useEffect(() => { if (open) load().catch(() => {}) }, [open, load])
+
+  const refresh = async () => {
+    setBusy(true)
+    try {
+      await api.refreshPlanningAgent(Number(macroId))
+      await load()
+    } catch (e) { alert('Planning refresh failed: ' + e.message) }
+    setBusy(false)
+  }
+
+  const createPathway = async () => {
+    if (!form.name || !macroId) return
+    setBusy(true)
+    try {
+      const pathway = await api.createPlanningPathway({
+        macro_id: Number(macroId), name: form.name, objective: form.objective || null,
+        primary_meet_id: form.primary_meet_id ? Number(form.primary_meet_id) : null,
+        fallback_meet_id: form.fallback_meet_id ? Number(form.fallback_meet_id) : null,
+        qualifier_meet_ids: form.qualifier_meet_id ? [Number(form.qualifier_meet_id)] : [],
+        qualification_standard_set_id: form.qualification_standard_set_id ? Number(form.qualification_standard_set_id) : null,
+      })
+      await api.setPlanningPathwayMembers(pathway.id, memberIds.map(swimmer_id => ({ swimmer_id, qualification_status: 'unknown' })))
+      await api.refreshPlanningAgent(Number(macroId))
+      setAdding(false)
+      setMemberIds([])
+      setForm({ name: '', objective: '', primary_meet_id: '', qualifier_meet_id: '', fallback_meet_id: '', qualification_standard_set_id: '' })
+      await load()
+    } catch (e) { alert('Could not create pathway: ' + e.message) }
+    setBusy(false)
+  }
+
+  const openRecs = status.recommendations.filter(r => r.status === 'open')
+  const states = status.context?.rows || []
+
+  const updateQualification = async (pathway, membershipId, qualification_status) => {
+    setBusy(true)
+    try {
+      await api.setPlanningPathwayMembers(pathway.id, pathway.members.map(member => ({
+        swimmer_id: member.swimmer_id,
+        qualification_status: member.id === membershipId ? qualification_status : member.qualification_status,
+        date_from: member.date_from, date_to: member.date_to, notes: member.notes, active: member.active,
+      })))
+      await api.refreshPlanningAgent(Number(macroId))
+      await load()
+    } catch (e) { alert('Could not update qualification: ' + e.message) }
+    setBusy(false)
+  }
+
+  return (
+    <section className="bg-pool-800 border border-pool-600 rounded-2xl overflow-hidden no-print">
+      <button onClick={() => setOpen(v => !v)} className="w-full p-4 flex items-center justify-between text-left">
+        <div>
+          <p className="text-sm font-semibold">Planning intelligence</p>
+          <p className="text-xs text-pool-400 mt-0.5">Saved target pathways, phase timing and coach-review warnings</p>
+        </div>
+        <span className="text-xs text-pool-400">{open ? 'Close' : `${openRecs.length} open flags`}</span>
+      </button>
+      {open && (
+        <div className="p-4 pt-0 space-y-4 border-t border-pool-700">
+          <div className="flex gap-2 pt-3">
+            <select value={macroId} onChange={e => setMacroId(e.target.value)} className="flex-1 bg-pool-700 rounded-lg px-3 py-2 text-xs border border-pool-600">
+              {macros.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <button onClick={refresh} disabled={busy || !macroId} className="px-3 py-2 text-xs font-semibold bg-accent-600 rounded-lg disabled:opacity-40">
+              {busy ? 'Updating…' : 'Refresh state'}
+            </button>
+          </div>
+
+          {status.pathways.length > 0 && (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {status.pathways.map(pathway => {
+                const pathStates = states.filter(s => s.pathway === pathway.name)
+                const phases = [...new Set(pathStates.map(s => s.phase))]
+                const targets = [...new Set(pathStates.map(s => s.target_meet).filter(Boolean))]
+                return (
+                  <div key={pathway.id} className="bg-pool-900/50 rounded-xl p-3 border border-pool-700/60">
+                    <div className="flex justify-between gap-2">
+                      <p className="text-sm font-semibold">{pathway.name}</p>
+                      <span className="text-xs text-pool-500">{pathway.members.length} swimmers</span>
+                    </div>
+                    <p className="text-xs text-pool-400 mt-1">{pathway.objective || targets.join(', ') || 'Target not assigned'}</p>
+                    {pathway.qualification_standard_set && <p className="text-xs text-teal-400 mt-1">Standards: {pathway.qualification_standard_set}</p>}
+                    {phases.length > 0 && <p className="text-xs text-accent-400 mt-2 capitalize">Current: {phases.join(' / ')}</p>}
+                    {pathway.members.length ? (
+                      <div className="mt-2 space-y-1">
+                        {pathway.members.map(member => (
+                          <div key={member.id} className="flex items-center gap-2">
+                            <span className="text-xs text-pool-400 truncate flex-1">{member.swimmer}</span>
+                            <select value={member.qualification_status || 'unknown'} disabled={busy}
+                              onChange={e => updateQualification(pathway, member.id, e.target.value)}
+                              className="bg-pool-800 rounded px-1.5 py-1 text-xs border border-pool-700">
+                              <option value="unknown">Unknown</option>
+                              <option value="chasing">Chasing</option>
+                              <option value="qualified">Qualified</option>
+                              <option value="not_qualified">Not qualified</option>
+                              <option value="not_required">Not required</option>
+                            </select>
+                          </div>
+                        ))}
+                      </div>
+                    ) : <p className="text-xs text-pool-500 mt-1">No swimmers assigned</p>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {openRecs.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs uppercase tracking-wide font-semibold text-pool-400">Needs coach review</p>
+              {openRecs.slice(0, 8).map(rec => (
+                <div key={rec.id} className="bg-yellow-950/25 border border-yellow-800/40 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-yellow-300">{rec.title}</p>
+                  <p className="text-xs text-pool-300 mt-1">{rec.detail}</p>
+                  <div className="flex gap-3 mt-2">
+                    <button onClick={() => api.updatePlanningRecommendation(rec.id, 'accepted').then(load)} className="text-xs text-teal-400">Acknowledge</button>
+                    <button onClick={() => api.updatePlanningRecommendation(rec.id, 'dismissed').then(load)} className="text-xs text-pool-500">Dismiss</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {adding ? (
+            <div className="bg-pool-900/45 rounded-xl p-3 space-y-2">
+              <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} placeholder="Pathway name, e.g. Regional qualifiers"
+                className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs border border-pool-600" />
+              <input value={form.objective} onChange={e => setForm(p => ({ ...p, objective: e.target.value }))} placeholder="Objective"
+                className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs border border-pool-600" />
+              <div className="grid gap-2 sm:grid-cols-3">
+                <select value={form.primary_meet_id} onChange={e => setForm(p => ({ ...p, primary_meet_id: e.target.value }))} className="bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600">
+                  <option value="">Primary meet</option>{meets.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <select value={form.qualifier_meet_id} onChange={e => setForm(p => ({ ...p, qualifier_meet_id: e.target.value }))} className="bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600">
+                  <option value="">Qualifying meet</option>{meets.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <select value={form.fallback_meet_id} onChange={e => setForm(p => ({ ...p, fallback_meet_id: e.target.value }))} className="bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600">
+                  <option value="">Fallback meet</option>{meets.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </div>
+              <select value={form.qualification_standard_set_id} onChange={e => setForm(p => ({ ...p, qualification_standard_set_id: e.target.value }))} className="w-full bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600">
+                <option value="">Qualification standards (manual status)</option>
+                {qualificationSets.map(row => <option key={row.id} value={row.id}>{row.name}</option>)}
+              </select>
+              <div className="max-h-40 overflow-y-auto grid grid-cols-2 gap-1 bg-pool-800 rounded-lg p-2">
+                {swimmers.map(sw => <label key={sw.id} className="flex gap-2 items-center text-xs text-pool-300 py-1">
+                  <input type="checkbox" checked={memberIds.includes(sw.id)} onChange={() => setMemberIds(ids => ids.includes(sw.id) ? ids.filter(id => id !== sw.id) : [...ids, sw.id])} />
+                  <span className="truncate">{sw.name}</span>
+                </label>)}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={createPathway} disabled={busy || !form.name} className="flex-1 py-2 text-xs font-semibold bg-accent-600 rounded-lg disabled:opacity-40">Save pathway</button>
+                <button onClick={() => setAdding(false)} className="px-3 py-2 text-xs bg-pool-700 rounded-lg">Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setAdding(true)} className="w-full py-2 text-xs text-accent-400 border border-accent-800/60 border-dashed rounded-xl">+ Add target pathway</button>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function SeasonPlan() {
   const [macros, setMacros] = useState([])
   const [orphanBlocks, setOrphanBlocks] = useState([])
   const [summary, setSummary] = useState(null)
+  const [microcycles, setMicrocycles] = useState([])
   const [loading, setLoading] = useState(true)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [planHandoff, setPlanHandoff] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem('dx_plan_handoff') || 'null') } catch { return null }
+  })
+  const [savingHandoff, setSavingHandoff] = useState(false)
+  const [printMode, setPrintMode] = useState(false)
 
   const reload = useCallback(async () => {
-    const [macroData, blocks, s] = await Promise.all([
+    const [macroData, blocks, s, micros] = await Promise.all([
       api.getMacros(),
       api.getSeasonBlocks(),
       api.getSeasonSummary(),
+      api.getMicrocycles(),
     ])
     setMacros(macroData)
     setOrphanBlocks(blocks.filter(b => !b.macro_id))
     setSummary(s)
+    setMicrocycles(micros)
     setLoading(false)
   }, [])
 
   useEffect(() => { reload() }, [reload])
+
+  useEffect(() => {
+    const finishPrint = () => setPrintMode(false)
+    window.addEventListener('afterprint', finishPrint)
+    return () => window.removeEventListener('afterprint', finishPrint)
+  }, [])
+
+  const printPlan = () => {
+    setPrintMode(true)
+    window.setTimeout(() => window.print(), 150)
+  }
 
   const handleDelete = async (item, type = 'meso') => {
     setConfirmDelete({ item, type })
@@ -557,6 +896,45 @@ export default function SeasonPlan() {
     reload()
   }
 
+  const dismissHandoff = () => {
+    sessionStorage.removeItem('dx_plan_handoff')
+    setPlanHandoff(null)
+  }
+
+  const saveHandoff = async () => {
+    setSavingHandoff(true)
+    try {
+      if (planHandoff.plan_type === 'macro') {
+        const d = planHandoff.macro_draft
+        await api.createMacro({
+          name: d.name, squad: d.squad || null, date_from: d.date_from, date_to: d.date_to,
+          narrative: d.narrative, group_definitions: d.group_definitions || {},
+          mesos: (d.phases || []).map(p => ({
+            name: p.name, phase_type: p.phase_type, date_from: p.date_from, date_to: p.date_to,
+            group_intents: p.group_intents || {}, notes: p.focus || null,
+          })),
+        })
+      } else if (planHandoff.plan_type === 'meso') {
+        const d = planHandoff.meso_draft
+        const macro = macros.find(m => d.date_from >= m.date_from && d.date_to <= m.date_to) || macros.find(m => m.is_current) || macros[0]
+        await api.createSeasonBlock({ ...d, macro_id: macro?.id || null })
+      } else if (planHandoff.plan_type === 'micro') {
+        const d = planHandoff.micro_draft
+        const block = macros.flatMap(m => m.mesos).find(b => d.week_of >= b.date_from && d.week_of <= b.date_to)
+        await api.createMicrocycle({
+          macro_id: block?.macro_id || null, block_id: block?.id || null, squad: block?.squad || null,
+          week_start: d.week_of, label: d.week_label || 'Weekly plan',
+          meso_position_note: d.meso_position_note, progression_note: d.progression_note,
+          recovery_placement: d.recovery_placement, next_week_direction: d.next_week_direction,
+          coach_flags: d.coach_flags || [], sessions: d.sessions || [],
+        })
+      }
+      dismissHandoff()
+      await reload()
+    } catch (e) { alert('Could not save plan: ' + e.message) }
+    setSavingHandoff(false)
+  }
+
   const upcomingMeets = summary?.upcoming_meets || []
   const orphanMeets = upcomingMeets.filter(m => {
     const allMesos = macros.flatMap(mac => mac.mesos)
@@ -566,18 +944,47 @@ export default function SeasonPlan() {
   if (loading) return <div className="p-4 text-pool-400">Loading…</div>
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className="flex flex-col h-screen season-plan-print">
       <div className="bg-pool-800 px-4 pt-4 pb-3 shrink-0 border-b border-pool-700">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-lg font-bold">Season Plan</h1>
             <p className="text-xs text-pool-500 mt-0.5">Describe your season to the AI chat — it will build the blueprint</p>
           </div>
-          <Link to="/ai" className="bg-accent-600 rounded-xl px-3 py-1.5 text-xs font-semibold">Plan in AI</Link>
+          <div className="flex gap-2 no-print">
+            <button onClick={printPlan} className="bg-pool-700 rounded-xl px-3 py-1.5 text-xs font-semibold">Print plan</button>
+            <Link to="/ai" className="bg-accent-600 rounded-xl px-3 py-1.5 text-xs font-semibold">Plan in AI</Link>
+          </div>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+        {macros.length > 0 && <PlanningAgentPanel macros={macros} />}
+
+        {planHandoff && (
+          <section className="bg-accent-900/30 border border-accent-700/60 rounded-2xl p-4 space-y-3 no-print">
+            <div>
+              <p className="text-xs uppercase tracking-wide font-semibold text-accent-300">AI plan ready to review</p>
+              <p className="text-sm font-semibold mt-1">
+                {planHandoff.macro_draft?.name || planHandoff.meso_draft?.name || planHandoff.micro_draft?.week_label}
+              </p>
+              <p className="text-xs text-pool-400 mt-1">
+                {planHandoff.plan_type === 'macro'
+                  ? `${planHandoff.macro_draft?.phases?.length || 0} phases · ${planHandoff.macro_draft?.date_from} to ${planHandoff.macro_draft?.date_to}`
+                  : planHandoff.plan_type === 'meso'
+                  ? `${planHandoff.meso_draft?.phase_type} · ${planHandoff.meso_draft?.date_from} to ${planHandoff.meso_draft?.date_to}`
+                  : `${planHandoff.micro_draft?.sessions?.length || 0} sessions · week of ${planHandoff.micro_draft?.week_of}`}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={saveHandoff} disabled={savingHandoff} className="flex-1 py-2.5 text-xs font-semibold bg-accent-600 rounded-xl disabled:opacity-40">
+                {savingHandoff ? 'Saving…' : `Save ${planHandoff.plan_type} plan`}
+              </button>
+              <button onClick={dismissHandoff} className="px-4 py-2.5 text-xs bg-pool-700 rounded-xl">Dismiss</button>
+            </div>
+          </section>
+        )}
 
         {/* Empty state */}
         {macros.length === 0 && orphanBlocks.length === 0 && (
@@ -596,8 +1003,10 @@ export default function SeasonPlan() {
             key={macro.id}
             macro={macro}
             upcomingMeets={upcomingMeets}
+            microcycles={microcycles}
             onReload={reload}
             onDelete={handleDelete}
+            printMode={printMode}
           />
         ))}
 
@@ -610,8 +1019,10 @@ export default function SeasonPlan() {
                 key={block.id}
                 meso={block}
                 upcomingMeets={upcomingMeets}
+                microcycles={microcycles.filter(m => m.block_id === block.id)}
                 onEdit={reload}
                 onDelete={(b) => handleDelete(b, 'meso')}
+                printMode={printMode}
               />
             ))}
           </div>
@@ -685,6 +1096,9 @@ function MeetPin({ meet, compact }) {
           {meet.course && ` · ${meet.course}`}
         </p>
       </div>
+      {meet.timetable_session_count > 0 && (
+        <span className="text-xs text-accent-300 shrink-0">{meet.timetable_session_count} sessions</span>
+      )}
       {meet.a_count > 0 && (
         <span className="text-xs bg-red-900/60 border border-red-700/50 text-red-300 rounded-full px-2 py-0.5 shrink-0">
           {meet.a_count}A

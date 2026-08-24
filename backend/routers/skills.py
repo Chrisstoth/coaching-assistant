@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
-from backend.services.claude_service import get_client, MODEL
+from backend.services.claude_service import get_client, MODEL, PLANNING_EFFORT
+from backend.services.planning_engine import compact_context, refresh_macro
 
 router = APIRouter()
 
@@ -79,6 +80,73 @@ def _format_thread_context(messages: list) -> str:
         if isinstance(content, str) and content.strip():
             lines.append(f"  {role}: {content[:300]}")
     return "\n".join(lines)
+
+
+def _meet_timetable_lines(meet: models.Meet, limit_sessions: int = 4, limit_events: int = 12) -> list[str]:
+    """Compact competition-session detail for planning without flooding the prompt."""
+    sessions = list(meet.timetable_sessions or [])[:limit_sessions]
+    if not sessions:
+        return []
+    lines = []
+    for session in sessions:
+        times = "/".join(filter(None, [
+            f"WU {session.warm_up_time}" if session.warm_up_time else None,
+            f"start {session.start_time}" if session.start_time else None,
+        ]))
+        event_names = [
+            (event.get("name") or str(event)) if isinstance(event, dict) else str(event)
+            for event in (session.events or [])[:limit_events]
+        ]
+        suffix = f" | {times}" if times else ""
+        lines.append(f"    Session: {session.name} ({session.date or 'date TBC'}){suffix}: {', '.join(event_names) or 'events TBC'}")
+    return lines
+
+
+def _planning_state_lines(db: DBSession, macro_id: Optional[int] = None,
+                          as_of: Optional[date] = None) -> list[str]:
+    """Small, cached pathway summary shared by planning skills."""
+    planning_date = as_of or date.today()
+    macro = None
+    if macro_id:
+        macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+    if not macro:
+        macro = db.query(models.TrainingMacro).filter(
+            models.TrainingMacro.date_from <= planning_date,
+            models.TrainingMacro.date_to >= planning_date,
+        ).order_by(models.TrainingMacro.date_from).first()
+    if not macro:
+        return []
+    pathway_count = db.query(models.PlanningPathway).filter(
+        models.PlanningPathway.macro_id == macro.id,
+        models.PlanningPathway.active.is_(True),
+    ).count()
+    if not pathway_count:
+        return []
+    has_snapshot = db.query(models.PlanningSnapshot).filter(
+        models.PlanningSnapshot.macro_id == macro.id,
+        models.PlanningSnapshot.as_of_date == planning_date,
+    ).first()
+    if not has_snapshot:
+        refresh_macro(macro.id, db, planning_date)
+    rows = compact_context(db, macro.id, planning_date).get("rows", [])
+    grouped = defaultdict(list)
+    for row in rows:
+        key = (row["pathway"], row["target_meet"], row["target_date"], row["phase"],
+               row["taper_start"], row["load_multiplier"])
+        grouped[key].append(row)
+    lines = ["SAVED PLANNING-AGENT STATE (deterministic; use this instead of re-deriving target timing):"]
+    for (pathway, meet, target_date, phase, taper_start, load), members in list(grouped.items())[:12]:
+        names = ", ".join(member["swimmer"] for member in members[:12])
+        qualification = sorted({member["qualification"] or "unknown" for member in members})
+        lines.append(
+            f"  {pathway}: {names} | target {meet or 'UNASSIGNED'} {target_date or ''} | "
+            f"phase {phase}, taper {taper_start or 'n/a'}, load x{load:g} | qualification {', '.join(qualification)}"
+        )
+        flagged = [f"{m['swimmer']}: {', '.join(m['flags'])}" for m in members if m.get("flags")]
+        if flagged:
+            lines.append(f"    Flags: {'; '.join(flagged[:6])}")
+    lines.append("  Treat pathway timing as an individualisation constraint; do not silently change assignments or dates.")
+    return lines
 
 
 def _save_skill_output(
@@ -236,6 +304,11 @@ def _build_session_skill_context(db: DBSession, target_date: Optional[date] = No
         lines.append("CURRENT MESO: None defined — plan a general session.")
 
     lines.append("")
+    session_macro_id = current_meso.macro_id if current_meso else None
+    planning_lines = _planning_state_lines(db, session_macro_id, today)
+    if planning_lines:
+        lines.extend(planning_lines)
+        lines.append("")
 
     # Recent sessions (last 14 days)
     cutoff = today - timedelta(days=14)
@@ -314,13 +387,14 @@ def _build_session_skill_context(db: DBSession, target_date: Optional[date] = No
     meets = db.query(models.Meet).filter(
         models.Meet.date >= today,
         models.Meet.date <= cutoff_meet,
-    ).order_by(models.Meet.date).all()
+    ).order_by(models.Meet.date).limit(12).all()
 
     if meets:
         lines.append("UPCOMING MEETS (consider in session planning):")
         for m in meets:
             days_out = (m.date - today).days
             lines.append(f"  {m.date} ({days_out}d): {m.name} | {m.level or ''} | {m.course or ''}")
+            lines.extend(_meet_timetable_lines(m, limit_sessions=3, limit_events=8))
     else:
         lines.append("UPCOMING MEETS: None in next 8 weeks.")
 
@@ -505,6 +579,7 @@ Design the session now. Output valid JSON only."""
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=2000,
         system=PLAN_SESSION_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
@@ -713,6 +788,9 @@ def _build_adaptation_context(swimmer: models.Swimmer, db: DBSession) -> str:
     """Structured context for the adaptation review skill — richer than the general swimmer context."""
     today = date.today()
     lines = []
+    philosophy = _get_coaching_philosophy(db)
+    if philosophy:
+        lines.extend(["COACHING CONTEXT:", philosophy, ""])
 
     # Swimmer basics
     from backend.models import get_age_at_dec31, get_school_year
@@ -1680,6 +1758,9 @@ def _fmt_time(seconds: float) -> str:
 def _build_race_analysis_context(meet: models.Meet, db: DBSession) -> str:
     """Rich context for the race analysis skill."""
     lines = []
+    philosophy = _get_coaching_philosophy(db)
+    if philosophy:
+        lines.extend(["COACHING CONTEXT:", philosophy, ""])
 
     meet_end = meet.date_to or meet.date
     meet_start = meet.date
@@ -1690,6 +1771,7 @@ def _build_race_analysis_context(meet: models.Meet, db: DBSession) -> str:
         lines.append(f"Date: {date_str} | Course: {meet.course or 'unknown'} | Level: {meet.level or 'unknown'}")
     if meet.notes:
         lines.append(f"Notes: {meet.notes[:200]}")
+    lines.extend(_meet_timetable_lines(meet, limit_sessions=8, limit_events=20))
     lines.append("")
 
     # Meet targets per swimmer
@@ -2539,13 +2621,14 @@ def _build_macro_plan_context(db: DBSession) -> str:
     meets = db.query(models.Meet).filter(
         models.Meet.date >= today,
         models.Meet.date <= cutoff,
-    ).order_by(models.Meet.date).all()
+    ).order_by(models.Meet.date).limit(30).all()
 
     if meets:
         lines.append("UPCOMING MEETS (next 52 weeks — build macro around these):")
         for m in meets:
             weeks_out = (m.date - today).days // 7
             lines.append(f"  {m.date} ({weeks_out}w out): {m.name} | {m.level or ''} | {m.course or ''}")
+            lines.extend(_meet_timetable_lines(m, limit_sessions=4, limit_events=6))
     else:
         lines.append("UPCOMING MEETS: None found in next 52 weeks — ask the coach for key competition dates.")
     lines.append("")
@@ -2647,6 +2730,11 @@ def _build_macro_plan_context(db: DBSession) -> str:
             lines.append(f"  {sw.name}: {event_str}{target_time_str} | deadline {tgt.deadline} ({weeks_out}w)")
         lines.append("")
 
+    planning_lines = _planning_state_lines(db)
+    if planning_lines:
+        lines.extend(planning_lines)
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -2673,6 +2761,7 @@ Plan the full season macro now. If you need key competition dates first, ask. Ot
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=2400,
         system=MACRO_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
@@ -2971,13 +3060,14 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
     meets = db.query(models.Meet).filter(
         models.Meet.date >= today,
         models.Meet.date <= cutoff,
-    ).order_by(models.Meet.date).all()
+    ).order_by(models.Meet.date).limit(16).all()
 
     if meets:
         lines.append("UPCOMING MEETS (critical for phase timing):")
         for m in meets:
             weeks_out = (m.date - today).days // 7
             lines.append(f"  {m.date} ({weeks_out}w out): {m.name} | {m.level or ''} | {m.course or ''}")
+            lines.extend(_meet_timetable_lines(m, limit_sessions=4, limit_events=10))
     else:
         lines.append("UPCOMING MEETS: None in next 16 weeks.")
     lines.append("")
@@ -3114,6 +3204,11 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
             lines.append("INDIVIDUAL ADAPTATION (last 4 weeks, per group):")
             lines.extend(adapt_lines)
 
+    planning_lines = _planning_state_lines(db, macro.id if macro else None, today)
+    if planning_lines:
+        lines.append("")
+        lines.extend(planning_lines)
+
     return "\n".join(lines)
 
 
@@ -3141,6 +3236,7 @@ Plan the next phase now. Output valid JSON only."""
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=1200,
         system=MESO_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
@@ -3339,6 +3435,8 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
     lines.append(f"TODAY: {today}")
     lines.append(f"PLANNING WEEK: {week_start} (Mon) to {week_end} (Sun)")
     lines.append("")
+    active_swimmers = db.query(models.Swimmer).filter(models.Swimmer.is_active == True).all()
+    swimmer_name_by_id = {swimmer.id: swimmer.name for swimmer in active_swimmers}
 
     # Coaching philosophy
     philosophy = _get_coaching_philosophy(db)
@@ -3390,6 +3488,25 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
                 if intent:
                     lines.append(f"  {g}: {intent[:150]}")
         lines.append("")
+
+        saved_micros = db.query(models.Microcycle).filter(
+            models.Microcycle.block_id == current_meso.id,
+            models.Microcycle.week_start < week_start,
+        ).order_by(models.Microcycle.week_start.desc()).limit(3).all()
+        if saved_micros:
+            lines.append("RECENT SAVED MICROCYCLES (durable plan memory; most recent first):")
+            for micro in saved_micros:
+                session_types = [
+                    session.get("session_type") or session.get("energy_focus")
+                    for session in (micro.sessions or []) if isinstance(session, dict)
+                ]
+                lines.append(
+                    f"  {micro.week_start}: {micro.label} [{micro.status}] | "
+                    f"{', '.join(filter(None, session_types)) or 'no session types'}"
+                )
+                if micro.progression_note:
+                    lines.append(f"    Progression: {micro.progression_note[:180]}")
+            lines.append("")
     else:
         lines.append("CURRENT MESO: None defined — planning a general week.")
         week_in = 1
@@ -3413,12 +3530,13 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
         for g_label, defn in macro.group_definitions.items():
             sw_ids = defn.get("swimmer_ids") or []
             group_swimmer_ids[g_label] = sw_ids
-            names = []
-            for sid in sw_ids[:8]:
-                sw = db.query(models.Swimmer).filter(models.Swimmer.id == sid).first()
-                if sw:
-                    names.append(sw.name)
+            names = [swimmer_name_by_id[sid] for sid in sw_ids[:8] if sid in swimmer_name_by_id]
             lines.append(f"  {g_label}: {defn.get('description', '')} -- {', '.join(names) if names else 'none assigned'}")
+        lines.append("")
+
+    planning_lines = _planning_state_lines(db, macro.id if macro else None, week_start)
+    if planning_lines:
+        lines.extend(planning_lines)
         lines.append("")
 
     # Pool slots for the planning week — expanded to actual dates
@@ -3426,6 +3544,11 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
     active_slots = db.query(models.PoolSlot).filter(models.PoolSlot.active == True).all()
 
     if active_slots:
+        slot_ids = [slot.id for slot in active_slots]
+        all_attendees = db.query(models.SwimmerSlot).filter(models.SwimmerSlot.pool_slot_id.in_(slot_ids)).all()
+        attendee_ids_by_slot = defaultdict(list)
+        for attendee in all_attendees:
+            attendee_ids_by_slot[attendee.pool_slot_id].append(attendee.swimmer_id)
         lines.append("POOL SLOTS THIS WEEK:")
         for day_offset in range(7):
             slot_date = week_start + timedelta(days=day_offset)
@@ -3456,14 +3579,11 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
                     pool_str += f" | {slot.course}"
 
                 # Who normally attends via SwimmerSlot
-                attendees = db.query(models.SwimmerSlot).filter(
-                    models.SwimmerSlot.pool_slot_id == slot.id
-                ).all()
-                attendee_names = []
-                for a in attendees[:12]:
-                    sw = db.query(models.Swimmer).filter(models.Swimmer.id == a.swimmer_id).first()
-                    if sw:
-                        attendee_names.append(sw.name)
+                attendee_names = [
+                    swimmer_name_by_id[swimmer_id]
+                    for swimmer_id in attendee_ids_by_slot.get(slot.id, [])[:12]
+                    if swimmer_id in swimmer_name_by_id
+                ]
 
                 slot_label = slot.label or f"{slot.squad or 'squad'} {slot.time}"
                 lines.append(f"  {slot_date} {day_name} {slot.time}{dur_str}: {slot_label}{pool_str}")
@@ -3532,13 +3652,14 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
     upcoming_meets = db.query(models.Meet).filter(
         models.Meet.date >= week_start,
         models.Meet.date <= week_start + timedelta(weeks=4),
-    ).order_by(models.Meet.date).all()
+    ).order_by(models.Meet.date).limit(8).all()
 
     if upcoming_meets:
         lines.append("UPCOMING MEETS (next 4 weeks — may affect session selection):")
         for m in upcoming_meets:
             days_out = (m.date - week_start).days
             lines.append(f"  {m.date} ({days_out}d out): {m.name}")
+            lines.extend(_meet_timetable_lines(m, limit_sessions=4, limit_events=12))
         lines.append("")
 
     return "\n".join(lines)
@@ -3567,6 +3688,7 @@ Plan this week now. If you need the coach's qualitative read on the squad's stat
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=1600,
         system=MICRO_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
@@ -3765,6 +3887,9 @@ def _build_taper_context(swimmer: models.Swimmer, meet, db: DBSession) -> str:
     """Context block for the taper planning skill."""
     today = date.today()
     lines = []
+    philosophy = _get_coaching_philosophy(db)
+    if philosophy:
+        lines.extend(["COACHING CONTEXT:", philosophy, ""])
 
     from backend.models import get_age_at_dec31
     age = get_age_at_dec31(swimmer.dob) if swimmer.dob else None
@@ -3786,6 +3911,7 @@ def _build_taper_context(swimmer: models.Swimmer, meet, db: DBSession) -> str:
         lines.append(f"TARGET MEET: {meet.name}")
         lines.append(f"  Date: {meet_start} to {meet_end} ({duration_days} day(s))")
         lines.append(f"  Course: {meet.course or 'unknown'} | Level: {meet.level or 'unknown'}")
+        lines.extend(_meet_timetable_lines(meet, limit_sessions=8, limit_events=20))
         if days_to_meet is not None:
             lines.append(f"  Days to meet: {days_to_meet}")
             if days_to_meet < 7:
@@ -3907,6 +4033,7 @@ Design the personalised taper for {swimmer.name} ahead of {meet_name}. Output va
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=1500,
         system=TAPER_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],

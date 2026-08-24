@@ -1,4 +1,6 @@
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { api } from '../api'
 
 const SECTIONS = [
   {
@@ -69,6 +71,19 @@ const SECTIONS = [
 ]
 
 export default function Settings() {
+  const [usage, setUsage] = useState(null)
+  const [usageError, setUsageError] = useState('')
+
+  useEffect(() => {
+    api.getAIUsage(30).then(setUsage).catch(error => setUsageError(error.message))
+  }, [])
+
+  const money = (value) => {
+    if (value == null) return '—'
+    if (value === 0) return '$0.00'
+    return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`
+  }
+
   return (
     <div className="p-4 space-y-6 pb-8">
       <header className="pt-2">
@@ -99,6 +114,61 @@ export default function Settings() {
           </div>
         </section>
       ))}
+
+      <section className="space-y-2">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-pool-500 pl-1">
+          AI cost control
+        </h2>
+        <div className="bg-pool-800 border border-pool-700 rounded-xl p-4 space-y-3">
+          {usageError ? (
+            <p className="text-xs text-red-300">Could not load usage: {usageError}</p>
+          ) : !usage ? (
+            <p className="text-xs text-pool-400">Loading the last 30 days…</p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <p className="text-xs text-pool-400">Estimated API cost · 30 days</p>
+                  <p className="text-xl font-bold text-pool-100">{money(usage.totals.estimated_cost_usd)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-pool-400">Tracked calls</p>
+                  <p className="text-xl font-bold text-pool-100">{usage.totals.calls}</p>
+                </div>
+              </div>
+              <div className="text-xs text-pool-400 leading-relaxed border-t border-pool-700 pt-3">
+                <p>Season/session planning: <span className="text-pool-200">{usage.configuration.primary_model}</span> · {usage.configuration.planning_effort} effort</p>
+                <p>General assistant: <span className="text-pool-200">cost-aware {usage.configuration.fast_model} / {usage.configuration.primary_model} routing</span></p>
+                <p>Extraction/routing: <span className="text-pool-200">{usage.configuration.fast_model}</span></p>
+                <p>Voice notes: <span className="text-pool-200">{usage.configuration.transcription_model}</span></p>
+                <p>Conversation memory: last <span className="text-pool-200">{usage.configuration.history_messages}</span> messages + rolling summary every {usage.configuration.summary_batch_messages}</p>
+              </div>
+              {usage.by_model.length > 0 && (
+                <div className="space-y-1 border-t border-pool-700 pt-3">
+                  {usage.by_model.map(item => (
+                    <div key={`${item.provider}:${item.model}`} className="flex justify-between gap-3 text-xs">
+                      <span className="text-pool-400 truncate">{item.model} · {item.calls} calls</span>
+                      <span className="text-pool-200 shrink-0">{money(item.estimated_cost_usd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {(usage.by_operation || []).length > 0 && (
+                <div className="space-y-1 border-t border-pool-700 pt-3">
+                  <p className="text-[11px] uppercase tracking-wider text-pool-500 mb-2">Cost by operation</p>
+                  {usage.by_operation.slice(0, 10).map(item => (
+                    <div key={item.operation} className="flex justify-between gap-3 text-xs">
+                      <span className="text-pool-400 truncate">{item.operation.replaceAll('_', ' ')} · {item.calls} calls</span>
+                      <span className="text-pool-200 shrink-0">{money(item.estimated_cost_usd)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-[11px] text-pool-500">Estimates use recorded token counts. Provider invoices remain authoritative.</p>
+            </>
+          )}
+        </div>
+      </section>
 
       <section className="pt-2 border-t border-pool-700">
         <p className="text-xs text-pool-600 text-center">Deckxtra · built for poolside use</p>

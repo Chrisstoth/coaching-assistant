@@ -22,6 +22,193 @@ function fmtDateRange(d1, d2) {
   return `${a.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${fmt(d2)}`
 }
 
+function QualificationPanel({ meetId }) {
+  const [sets, setSets] = useState([])
+  const [file, setFile] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [review, setReview] = useState(null)
+  const [assessments, setAssessments] = useState(null)
+
+  const load = async () => setSets(await api.getQualificationSets(meetId))
+  useEffect(() => { load().catch(() => {}) }, [meetId])
+
+  const extract = async () => {
+    if (!file) return
+    setBusy(true)
+    try {
+      const result = await api.extractQualificationStandards(file, meetId)
+      setReview(result)
+      setFile(null)
+      await load()
+    } catch (e) { alert('Standards extraction failed: ' + e.message) }
+    setBusy(false)
+  }
+
+  const openReview = async (setId) => {
+    setBusy(true)
+    try { setReview(await api.getQualificationSet(setId)); setAssessments(null) }
+    catch (e) { alert(e.message) }
+    setBusy(false)
+  }
+
+  const confirm = async () => {
+    if (!review) return
+    setBusy(true)
+    try {
+      const result = await api.confirmQualificationSet(review.id)
+      setReview(result.standard_set)
+      setAssessments(await api.getQualificationAssessments(review.id))
+      await load()
+    } catch (e) { alert('Could not confirm standards: ' + e.message) }
+    setBusy(false)
+  }
+
+  const saveCorrections = async () => {
+    if (!review) return
+    setBusy(true)
+    try {
+      await api.updateQualificationSet(review.id, { rules: review.rules })
+      const updated = await api.replaceQualificationStandards(review.id, review.standards.map(row => ({
+        ...row, time: row.time_display,
+      })))
+      setReview(updated)
+      await load()
+    } catch (e) { alert('Could not save corrections: ' + e.message) }
+    setBusy(false)
+  }
+
+  const compare = async (setId) => {
+    setBusy(true)
+    try {
+      await api.recalculateQualifications(setId)
+      setAssessments(await api.getQualificationAssessments(setId))
+      setReview(await api.getQualificationSet(setId))
+    } catch (e) { alert('Comparison failed: ' + e.message) }
+    setBusy(false)
+  }
+
+  const rules = review?.rules || {}
+  const statusStyle = {
+    qualified: 'text-emerald-300', consideration: 'text-blue-300', chasing: 'text-amber-300',
+    not_qualified: 'text-pool-400', unknown: 'text-pool-500',
+  }
+
+  return (
+    <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+      <div>
+        <h2 className="text-sm font-semibold text-pool-200">Qualification standards</h2>
+        <p className="text-xs text-pool-500 mt-0.5">The PDF is extracted once; later swimmer comparisons run locally.</p>
+      </div>
+      <div className="flex gap-2">
+        <input type="file" accept=".pdf,image/*" onChange={e => setFile(e.target.files?.[0] || null)}
+          className="min-w-0 flex-1 block text-xs text-pool-400 border border-pool-600 rounded-lg p-2 bg-pool-700" />
+        <button onClick={extract} disabled={!file || busy} className="px-3 py-2 text-xs font-semibold bg-accent-600 rounded-lg disabled:opacity-40">
+          {busy ? 'Working…' : 'Extract'}
+        </button>
+      </div>
+
+      {sets.map(row => (
+        <div key={row.id} className="border border-pool-700 rounded-xl p-3 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold text-pool-200 truncate">{row.name}</p>
+            <p className="text-xs text-pool-500">{row.standard_count} standards · {row.status}</p>
+          </div>
+          <button onClick={() => openReview(row.id)} className="text-xs text-accent-400">Review</button>
+          {row.status === 'confirmed' && <button onClick={() => compare(row.id)} className="text-xs text-teal-400">Compare</button>}
+        </div>
+      ))}
+
+      {review && (
+        <div className="bg-pool-900/45 border border-pool-700 rounded-xl p-3 space-y-3">
+          <div className="flex justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold">{review.name}</p>
+              <p className="text-xs text-pool-500">{review.source_filename} · {review.extraction_model}</p>
+            </div>
+            <button onClick={() => { setReview(null); setAssessments(null) }} className="text-xs text-pool-500">Close</button>
+          </div>
+          {(review.extraction_notes || []).map((note, index) => (
+            <p key={index} className="text-xs text-amber-300 bg-amber-950/20 rounded-lg p-2">{note}</p>
+          ))}
+          {review.status === 'draft' ? (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <label className="text-pool-500">Age date<input type="date" value={rules.age_as_of_date || ''} onChange={e => setReview(p => ({ ...p, rules: { ...p.rules, age_as_of_date: e.target.value || null } }))} className="mt-1 w-full bg-pool-700 text-pool-200 rounded p-1.5 border border-pool-600" /></label>
+              <label className="text-pool-500">Window start<input type="date" value={rules.qualification_window_start || ''} onChange={e => setReview(p => ({ ...p, rules: { ...p.rules, qualification_window_start: e.target.value || null } }))} className="mt-1 w-full bg-pool-700 text-pool-200 rounded p-1.5 border border-pool-600" /></label>
+              <label className="text-pool-500">Window end<input type="date" value={rules.qualification_window_end || rules.entry_closing_date || ''} onChange={e => setReview(p => ({ ...p, rules: { ...p.rules, qualification_window_end: e.target.value || null } }))} className="mt-1 w-full bg-pool-700 text-pool-200 rounded p-1.5 border border-pool-600" /></label>
+              <label className="text-pool-500">Licence levels<input value={(rules.accepted_license_levels || []).join(', ')} onChange={e => setReview(p => ({ ...p, rules: { ...p.rules, accepted_license_levels: e.target.value.split(',').map(v => Number(v.trim())).filter(Boolean) } }))} className="mt-1 w-full bg-pool-700 text-pool-200 rounded p-1.5 border border-pool-600" /></label>
+              <label className="text-pool-500 col-span-2">Conversion rule<input value={rules.conversion_method || ''} onChange={e => setReview(p => ({ ...p, rules: { ...p.rules, conversion_method: e.target.value || null, long_course_conversions_accepted: !!e.target.value } }))} className="mt-1 w-full bg-pool-700 text-pool-200 rounded p-1.5 border border-pool-600" /></label>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div><span className="text-pool-500">Age date</span><p>{rules.age_as_of_date || 'Not specified'}</p></div>
+              <div><span className="text-pool-500">Window</span><p>{rules.qualification_window_start || '?'} – {rules.qualification_window_end || rules.entry_closing_date || '?'}</p></div>
+              <div><span className="text-pool-500">Licence levels</span><p>{(rules.accepted_license_levels || []).join(', ') || 'Not specified'}</p></div>
+              <div><span className="text-pool-500">Conversion</span><p>{rules.conversion_method || (rules.long_course_conversions_accepted ? 'Allowed' : 'No conversion')}</p></div>
+            </div>
+          )}
+          {rules.rules_summary && <p className="text-xs text-pool-300 leading-relaxed">{rules.rules_summary}</p>}
+          <div className="max-h-64 overflow-auto border border-pool-700 rounded-lg">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-pool-700 text-pool-300"><tr>
+                <th className="text-left p-2">Event</th><th className="text-left p-2">Group</th><th className="text-left p-2">Type</th><th className="text-right p-2">Time</th>
+              </tr></thead>
+              <tbody>{(review.standards || []).map(row => (
+                <tr key={row.id} className="border-t border-pool-700/70">
+                  <td className="p-2 whitespace-nowrap">{row.event_name} {row.course}</td>
+                  <td className="p-2 whitespace-nowrap text-pool-400">{row.gender} · {row.age_label}</td>
+                  <td className="p-2 capitalize text-pool-400">{row.standard_type}</td>
+                  <td className="p-2 text-right font-mono">{review.status === 'draft' ? (
+                    <input value={row.time_display || ''} onChange={e => setReview(previous => ({
+                      ...previous, standards: previous.standards.map(item => item.id === row.id ? { ...item, time_display: e.target.value } : item),
+                    }))} className="w-20 bg-pool-700 rounded px-1.5 py-1 text-right border border-pool-600" />
+                  ) : row.time_display}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+          {review.status === 'draft' ? (
+            <div className="space-y-2">
+              <p className="text-xs text-amber-300">Check the rules and table against the PDF before confirming.</p>
+              <div className="flex gap-2">
+                <button onClick={saveCorrections} disabled={busy} className="flex-1 py-2 text-xs font-semibold bg-pool-700 rounded-lg disabled:opacity-40">Save corrections</button>
+                <button onClick={confirm} disabled={busy} className="flex-1 py-2 text-xs font-semibold bg-emerald-700 rounded-lg disabled:opacity-40">Confirm and compare</button>
+                <button onClick={async () => {
+                  if (!window.confirm('Delete this extracted draft?')) return
+                  await api.deleteQualificationSet(review.id); setReview(null); await load()
+                }} className="px-3 py-2 text-xs text-red-400 bg-pool-700 rounded-lg">Delete draft</button>
+              </div>
+            </div>
+          ) : <button onClick={() => compare(review.id)} disabled={busy} className="w-full py-2 text-xs font-semibold bg-teal-700 rounded-lg disabled:opacity-40">Recalculate from current swimmer times</button>}
+        </div>
+      )}
+
+      {assessments && (
+        <div className="space-y-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-pool-400">Squad comparison</p>
+          {assessments.swimmers.map(swimmer => (
+            <details key={swimmer.swimmer_id} className="bg-pool-900/45 rounded-lg p-2.5">
+              <summary className="list-none cursor-pointer flex justify-between gap-2">
+                <span className="text-xs font-semibold">{swimmer.swimmer}</span>
+                <span className={`text-xs capitalize ${statusStyle[swimmer.qualification_status] || 'text-pool-400'}`}>{swimmer.qualification_status.replace('_', ' ')}</span>
+              </summary>
+              <div className="mt-2 space-y-1">
+                {swimmer.events.filter(event => event.status !== 'no_time').sort((a, b) => (a.gap_seconds ?? 999) - (b.gap_seconds ?? 999)).slice(0, 12).map((event, index) => (
+                  <div key={`${event.standard_id}-${index}`} className="grid grid-cols-[1fr_auto] gap-2 text-xs border-t border-pool-700/60 pt-1">
+                    <span>{event.event} · {event.standard_type} <span className="text-pool-500">({event.course})</span></span>
+                    <span className={event.status === 'achieved' ? 'text-emerald-300' : event.status === 'chasing' ? 'text-amber-300' : 'text-pool-400'}>
+                      {event.status === 'conversion_required' ? 'conversion needed' : event.best_time_display ? `${event.best_time_display} / ${event.standard_display}${event.gap_seconds > 0 ? ` (+${event.gap_seconds.toFixed(2)})` : ''}` : event.status}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function MeetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -41,6 +228,12 @@ export default function MeetDetail() {
   const [combining, setCombining] = useState(false)
   const [raceAnalysis, setRaceAnalysis] = useState(null)
   const [analysingMeet, setAnalysingMeet] = useState(false)
+  const [showTimetableForm, setShowTimetableForm] = useState(false)
+  const [editingMeetSession, setEditingMeetSession] = useState(null)
+  const [timetableSaving, setTimetableSaving] = useState(false)
+  const [timetableForm, setTimetableForm] = useState({
+    name: '', date: '', warm_up_time: '', start_time: '', end_time: '', events_text: '', notes: '', order_index: 0,
+  })
 
   const load = async () => {
     const [m, sq] = await Promise.all([api.getMeet(id), api.getSwimmers({ active: true })])
@@ -151,6 +344,7 @@ export default function MeetDetail() {
     }
     setCombining(true)
     try {
+      await api.importMeetTimetable(id, { ...scheduleExtracted, replace: true })
       await api.combineExtractions(id, {
         events: scheduleExtracted.events || [],
         swimmers: entriesExtracted.swimmers || {},
@@ -163,6 +357,63 @@ export default function MeetDetail() {
       alert('Error combining extractions: ' + e.message)
     }
     setCombining(false)
+  }
+
+  const openTimetableForm = (session = null) => {
+    setEditingMeetSession(session?.id || null)
+    setTimetableForm(session ? {
+      ...session,
+      date: session.date || '',
+      warm_up_time: session.warm_up_time || '',
+      start_time: session.start_time || '',
+      end_time: session.end_time || '',
+      notes: session.notes || '',
+      events_text: (session.events || []).map(event => {
+        if (typeof event === 'string') return event
+        return `${event.number ? `${event.number}. ` : ''}${event.name || ''}${event.start_time ? ` @ ${event.start_time}` : ''}`
+      }).join('\n'),
+    } : {
+      name: '', date: meet.date || '', warm_up_time: '', start_time: '', end_time: '',
+      events_text: '', notes: '', order_index: meet.timetable?.length || 0,
+    })
+    setShowTimetableForm(true)
+  }
+
+  const parseTimetableEvents = (text) => text.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+    const match = line.match(/^(?:(\d+[A-Za-z]?)\.\s*)?(.*?)(?:\s+@\s+(\d{1,2}:\d{2}))?$/)
+    return { number: match?.[1] || null, name: match?.[2] || line, start_time: match?.[3] || null }
+  })
+
+  const saveTimetableSession = async () => {
+    if (!timetableForm.name.trim()) return
+    setTimetableSaving(true)
+    const payload = {
+      ...timetableForm,
+      date: timetableForm.date || null,
+      warm_up_time: timetableForm.warm_up_time || null,
+      start_time: timetableForm.start_time || null,
+      end_time: timetableForm.end_time || null,
+      notes: timetableForm.notes || null,
+      events: parseTimetableEvents(timetableForm.events_text),
+    }
+    delete payload.events_text
+    try {
+      if (editingMeetSession) await api.updateMeetSession(id, editingMeetSession, payload)
+      else await api.createMeetSession(id, payload)
+      setShowTimetableForm(false)
+      await load()
+    } catch (e) { alert(e.message) }
+    setTimetableSaving(false)
+  }
+
+  const saveExtractedTimetable = async () => {
+    setTimetableSaving(true)
+    try {
+      await api.importMeetTimetable(id, { ...scheduleExtracted, replace: true })
+      setScheduleExtracted(null)
+      await load()
+    } catch (e) { alert(e.message) }
+    setTimetableSaving(false)
   }
 
   const daysUntil = meet.date
@@ -211,6 +462,83 @@ export default function MeetDetail() {
           <p className="text-sm text-pool-200">{meet.notes}</p>
         </div>
       )}
+
+      {/* Persisted competition timetable */}
+      <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold text-pool-200">Competition timetable</h2>
+            <p className="text-xs text-pool-500 mt-0.5">Used by season, taper and weekly planning.</p>
+          </div>
+          <button onClick={() => openTimetableForm()} className="text-xs text-accent-400 font-semibold">+ Add session</button>
+        </div>
+
+        {(meet.timetable || []).length === 0 && !showTimetableForm && (
+          <p className="text-xs text-pool-500 py-2">No competition sessions saved yet. Add one manually or import the schedule below.</p>
+        )}
+
+        {(meet.timetable || []).map(session => (
+          <div key={session.id} className="border border-pool-700 rounded-xl p-3 space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-pool-200">{session.name}</p>
+                <p className="text-xs text-pool-400">
+                  {session.date ? fmtDateRange(session.date) : 'Date TBC'}
+                  {session.warm_up_time ? ` · warm-up ${session.warm_up_time}` : ''}
+                  {session.start_time ? ` · start ${session.start_time}` : ''}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => openTimetableForm(session)} className="text-xs text-accent-400">Edit</button>
+                <button onClick={async () => {
+                  if (!window.confirm(`Delete ${session.name}?`)) return
+                  await api.deleteMeetSession(id, session.id)
+                  load()
+                }} className="text-xs text-red-400">Delete</button>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {(session.events || []).map((event, idx) => (
+                <span key={idx} className="text-xs bg-pool-700 rounded px-2 py-1 text-pool-300">
+                  {typeof event === 'string' ? event : `${event.number ? `${event.number}. ` : ''}${event.name}${event.start_time ? ` · ${event.start_time}` : ''}`}
+                </span>
+              ))}
+            </div>
+            {session.notes && <p className="text-xs text-pool-500">{session.notes}</p>}
+          </div>
+        ))}
+
+        {showTimetableForm && (
+          <div className="border border-accent-700/50 bg-pool-900/30 rounded-xl p-3 space-y-2">
+            <input value={timetableForm.name} onChange={e => setTimetableForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="Session name, e.g. Saturday AM" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+            <div className="grid grid-cols-2 gap-2">
+              <input type="date" value={timetableForm.date} onChange={e => setTimetableForm(f => ({ ...f, date: e.target.value }))}
+                className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+              <input type="time" value={timetableForm.warm_up_time} onChange={e => setTimetableForm(f => ({ ...f, warm_up_time: e.target.value }))}
+                title="Warm-up time" className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+              <input type="time" value={timetableForm.start_time} onChange={e => setTimetableForm(f => ({ ...f, start_time: e.target.value }))}
+                title="Start time" className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+              <input type="time" value={timetableForm.end_time} onChange={e => setTimetableForm(f => ({ ...f, end_time: e.target.value }))}
+                title="End time" className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
+            </div>
+            <textarea rows={6} value={timetableForm.events_text} onChange={e => setTimetableForm(f => ({ ...f, events_text: e.target.value }))}
+              placeholder={'One event per line, e.g.\n1. 400 Freestyle\n5. 100 Backstroke @ 10:30'}
+              className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs border border-pool-600 resize-y" />
+            <textarea rows={2} value={timetableForm.notes} onChange={e => setTimetableForm(f => ({ ...f, notes: e.target.value }))}
+              placeholder="Session notes" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs border border-pool-600 resize-none" />
+            <div className="flex gap-2">
+              <button onClick={() => setShowTimetableForm(false)} className="flex-1 py-2 text-xs bg-pool-700 rounded-lg">Cancel</button>
+              <button onClick={saveTimetableSession} disabled={timetableSaving || !timetableForm.name.trim()}
+                className="flex-1 py-2 text-xs font-semibold bg-accent-600 rounded-lg disabled:opacity-40">
+                {timetableSaving ? 'Saving…' : 'Save session'}
+              </button>
+            </div>
+          </div>
+        )}
+      </section>
+
+      <QualificationPanel meetId={Number(id)} />
 
       {/* Race Analysis */}
       <div className="bg-pool-800 rounded-xl p-4 space-y-3">
@@ -340,6 +668,10 @@ export default function MeetDetail() {
                 ))}
               </div>
             )}
+            <button onClick={saveExtractedTimetable} disabled={timetableSaving}
+              className="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-40 rounded-lg py-2 text-xs font-semibold">
+              {timetableSaving ? 'Saving…' : 'Save as competition timetable'}
+            </button>
           </div>
         )}
 

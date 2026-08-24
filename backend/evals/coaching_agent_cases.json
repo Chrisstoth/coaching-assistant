@@ -1,0 +1,147 @@
+[
+  {
+    "id": "meet-date",
+    "prompt": "When is the East Region short-course meet?",
+    "topics": ["competition"],
+    "expected_handling": "agent",
+    "expected_route": "fast",
+    "expected_tools": ["list_meets"],
+    "success": "Returns the stored meet date and does not invent an entry deadline."
+  },
+  {
+    "id": "swimmer-times",
+    "prompt": "Show me Ava's latest 100 free times.",
+    "topics": ["performance"],
+    "expected_handling": "agent",
+    "expected_route": "fast",
+    "expected_tools": ["find_swimmer", "get_swim_times"],
+    "success": "Resolves Ava and returns only relevant 100 freestyle times."
+  },
+  {
+    "id": "qualification-list",
+    "prompt": "Which swimmers have achieved the regional standard?",
+    "topics": ["competition"],
+    "expected_handling": "agent",
+    "expected_route": "fast",
+    "expected_tools": ["get_qualification_status"],
+    "success": "Uses confirmed stored assessments and distinguishes achieved from chasing."
+  },
+  {
+    "id": "recent-session",
+    "prompt": "What was the main set last Tuesday?",
+    "topics": ["register"],
+    "expected_handling": "agent",
+    "expected_route": "fast",
+    "expected_tools": ["get_recent_sessions"],
+    "success": "Reports the matching stored session or clearly says none was found."
+  },
+  {
+    "id": "load-count",
+    "prompt": "How many sessions has Noah attended this month?",
+    "topics": ["performance"],
+    "expected_handling": "agent",
+    "expected_route": "fast",
+    "expected_tools": ["find_swimmer", "get_training_load"],
+    "success": "Uses recorded attendance and states the denominator/data coverage."
+  },
+  {
+    "id": "compare-readiness",
+    "prompt": "Compare Ava and Noah's current readiness and tell me what it means for this week.",
+    "topics": ["performance"],
+    "expected_handling": "agent",
+    "expected_route": "primary",
+    "expected_tools": ["find_swimmer", "get_swimmer_summary", "get_training_load"],
+    "success": "Separates evidence from judgement and gives practical shared-session adjustments."
+  },
+  {
+    "id": "qualification-judgement",
+    "prompt": "What do you think we should do if Ava misses the regional qualifying time?",
+    "topics": ["competition", "planning"],
+    "expected_handling": "agent",
+    "expected_route": "primary",
+    "expected_tools": ["find_swimmer", "get_qualification_status", "get_planning_state"],
+    "success": "Checks the fallback pathway and does not assume the regional macro still applies."
+  },
+  {
+    "id": "training-pattern",
+    "prompt": "Analyse why Noah has faded late in threshold sets over the last month.",
+    "topics": ["performance"],
+    "expected_handling": "agent",
+    "expected_route": "primary",
+    "expected_tools": ["find_swimmer", "get_training_load", "get_observations"],
+    "success": "Uses longitudinal evidence, acknowledges missing data and avoids medical diagnosis."
+  },
+  {
+    "id": "coach-challenge",
+    "prompt": "I think the group needs more speed work. What do you think?",
+    "topics": ["coaching_intent"],
+    "expected_handling": "agent",
+    "expected_route": "primary",
+    "expected_tools": ["get_season_plan", "get_recent_sessions"],
+    "success": "Checks the block goal and recent distribution before agreeing or challenging."
+  },
+  {
+    "id": "season-thread",
+    "prompt": "Summarise where we are.",
+    "topics": [],
+    "thread_type": "season_plan",
+    "expected_handling": "agent",
+    "expected_route": "primary",
+    "expected_tools": ["get_season_plan"],
+    "success": "Keeps season-planning judgement on the primary model."
+  },
+  {
+    "id": "status-change",
+    "prompt": "Put Ava on injury status from today.",
+    "topics": ["biological"],
+    "expected_handling": "confirmation",
+    "expected_route": "primary",
+    "expected_tools": ["find_swimmer"],
+    "success": "Proposes a confirmation card and makes no database change before approval."
+  },
+  {
+    "id": "session-generation",
+    "prompt": "Plan Thursday evening's threshold session for Silver 1.",
+    "topics": ["planning", "session_writing"],
+    "expected_handling": "session_specialist",
+    "expected_route": "specialist",
+    "expected_tools": [],
+    "success": "Produces a reviewable session draft grounded in the current micro/meso plan."
+  },
+  {
+    "id": "macro-generation",
+    "prompt": "Build the second macro around Regionals with fallbacks for non-qualifiers.",
+    "topics": ["planning", "competition"],
+    "expected_handling": "macro_specialist",
+    "expected_route": "specialist",
+    "expected_tools": [],
+    "success": "Produces pathways and a reviewable macro draft without saving automatically."
+  },
+  {
+    "id": "micro-generation",
+    "prompt": "Plan next week's microcycle from the current meso.",
+    "topics": ["planning"],
+    "expected_handling": "micro_specialist",
+    "expected_route": "specialist",
+    "expected_tools": [],
+    "success": "Maintains progression, recovery and target-meet timing in a reviewable draft."
+  },
+  {
+    "id": "adaptation-review",
+    "prompt": "How is Ava doing? Give me an adaptation review.",
+    "topics": ["performance"],
+    "expected_handling": "adaptation_specialist",
+    "expected_route": "specialist",
+    "expected_tools": [],
+    "success": "Uses the systematic swimmer-review framework and identifies evidence gaps."
+  },
+  {
+    "id": "no-data",
+    "prompt": "Show me Liam's lactate results.",
+    "topics": ["performance"],
+    "expected_handling": "agent",
+    "expected_route": "fast",
+    "expected_tools": ["find_swimmer", "get_observations"],
+    "success": "Says no lactate results are stored instead of inferring values."
+  }
+]

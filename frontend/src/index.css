@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 @layer base {
   body {
@@ -21,5 +21,39 @@
 @layer utilities {
   .safe-bottom {
     padding-bottom: env(safe-area-inset-bottom, 1rem);
+  }
+}
+
+@media print {
+  @page { size: A4 landscape; margin: 10mm; }
+
+  body {
+    background: white !important;
+    color: #111827 !important;
+  }
+
+  body > #root > div > nav,
+  .no-print {
+    display: none !important;
+  }
+
+  .season-plan-print {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  .season-plan-print * {
+    color: #111827 !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  .season-plan-print > div:last-of-type {
+    overflow: visible !important;
+  }
+
+  .season-plan-print details,
+  .season-plan-print section,
+  .season-plan-print [class*="rounded"] {
+    break-inside: avoid;
   }
 }

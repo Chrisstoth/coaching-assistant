@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import date, timedelta
 from collections import defaultdict
@@ -19,6 +19,7 @@ PHASE_COLOURS = {
 VOLUME_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
 
 class BlockIn(BaseModel):
+    macro_id: Optional[int] = None
     name: str
     squad: Optional[str] = None
     phase_type: Optional[str] = None
@@ -28,13 +29,89 @@ class BlockIn(BaseModel):
     group_intents: Optional[dict] = None
     notes: Optional[str] = None
 
+
+class BlockUpdate(BaseModel):
+    macro_id: Optional[int] = None
+    name: Optional[str] = None
+    squad: Optional[str] = None
+    phase_type: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    emphasis: Optional[dict] = None
+    group_intents: Optional[dict] = None
+    notes: Optional[str] = None
+
+
+class MacroIn(BaseModel):
+    season_id: Optional[int] = None
+    primary_meet_id: Optional[int] = None
+    sequence_index: int = 0
+    name: str
+    squad: Optional[str] = None
+    date_from: date
+    date_to: date
+    narrative: Optional[str] = None
+    group_definitions: Optional[dict] = None
+    mesos: list[BlockIn] = Field(default_factory=list)
+
+
+class MacroUpdate(BaseModel):
+    season_id: Optional[int] = None
+    primary_meet_id: Optional[int] = None
+    sequence_index: Optional[int] = None
+    name: Optional[str] = None
+    squad: Optional[str] = None
+    date_from: Optional[date] = None
+    date_to: Optional[date] = None
+    narrative: Optional[str] = None
+    group_definitions: Optional[dict] = None
+
+
+class MicrocycleIn(BaseModel):
+    macro_id: Optional[int] = None
+    block_id: Optional[int] = None
+    squad: Optional[str] = None
+    week_start: date
+    week_end: Optional[date] = None
+    label: str
+    meso_position_note: Optional[str] = None
+    progression_note: Optional[str] = None
+    recovery_placement: Optional[str] = None
+    next_week_direction: Optional[str] = None
+    coach_flags: list = Field(default_factory=list)
+    sessions: list = Field(default_factory=list)
+    status: str = "draft"
+    notes: Optional[str] = None
+
+
+class MicrocycleUpdate(BaseModel):
+    macro_id: Optional[int] = None
+    block_id: Optional[int] = None
+    squad: Optional[str] = None
+    week_start: Optional[date] = None
+    week_end: Optional[date] = None
+    label: Optional[str] = None
+    meso_position_note: Optional[str] = None
+    progression_note: Optional[str] = None
+    recovery_placement: Optional[str] = None
+    next_week_direction: Optional[str] = None
+    coach_flags: Optional[list] = None
+    sessions: Optional[list] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+def _ensure_date_order(date_from: date, date_to: date, label: str):
+    if date_to < date_from:
+        raise HTTPException(422, f"{label} end date must be on or after its start date")
+
 def _block_out(b: models.SeasonBlock, today: date) -> dict:
     total_days = (b.date_to - b.date_from).days + 1
     total_weeks = max(1, round(total_days / 7))
     days_in = max(0, (today - b.date_from).days)
     week_in = min(total_weeks, days_in // 7 + 1) if b.date_from <= today <= b.date_to else None
     return {
-        "id": b.id, "name": b.name, "squad": b.squad, "phase_type": b.phase_type,
+        "id": b.id, "macro_id": b.macro_id, "name": b.name, "squad": b.squad, "phase_type": b.phase_type,
         "date_from": b.date_from.isoformat(), "date_to": b.date_to.isoformat(),
         "emphasis": b.emphasis, "group_intents": b.group_intents, "notes": b.notes,
         "created_at": b.created_at,
@@ -42,6 +119,20 @@ def _block_out(b: models.SeasonBlock, today: date) -> dict:
         "is_past": b.date_to < today,
         "week_in": week_in, "total_weeks": total_weeks,
         "colour": PHASE_COLOURS.get(b.phase_type or '', 'pool'),
+    }
+
+
+def _micro_out(m: models.Microcycle) -> dict:
+    return {
+        "id": m.id, "macro_id": m.macro_id, "block_id": m.block_id,
+        "squad": m.squad, "week_start": m.week_start.isoformat(),
+        "week_end": m.week_end.isoformat(), "label": m.label,
+        "meso_position_note": m.meso_position_note,
+        "progression_note": m.progression_note,
+        "recovery_placement": m.recovery_placement,
+        "next_week_direction": m.next_week_direction,
+        "coach_flags": m.coach_flags or [], "sessions": m.sessions or [],
+        "status": m.status, "notes": m.notes, "created_at": m.created_at,
     }
 
 
@@ -57,7 +148,8 @@ def get_macros(db: Session = Depends(get_db)):
     for m in macros:
         mesos = db.query(models.SeasonBlock).filter(models.SeasonBlock.macro_id == m.id).order_by(models.SeasonBlock.date_from).all()
         result.append({
-            "id": m.id, "name": m.name, "squad": m.squad,
+            "id": m.id, "season_id": m.season_id, "primary_meet_id": m.primary_meet_id,
+            "sequence_index": m.sequence_index, "name": m.name, "squad": m.squad,
             "date_from": m.date_from.isoformat(), "date_to": m.date_to.isoformat(),
             "narrative": m.narrative, "group_definitions": m.group_definitions,
             "created_at": m.created_at,
@@ -69,28 +161,34 @@ def get_macros(db: Session = Depends(get_db)):
 
 
 @router.post("/macros", status_code=201)
-def create_macro(data: dict, db: Session = Depends(get_db)):
+def create_macro(data: MacroIn, db: Session = Depends(get_db)):
+    _ensure_date_order(data.date_from, data.date_to, "Macro")
     macro = models.TrainingMacro(
-        name=data["name"],
-        squad=data.get("squad"),
-        date_from=data["date_from"],
-        date_to=data["date_to"],
-        narrative=data.get("narrative"),
-        group_definitions=data.get("group_definitions"),
+        season_id=data.season_id,
+        primary_meet_id=data.primary_meet_id,
+        sequence_index=data.sequence_index,
+        name=data.name,
+        squad=data.squad,
+        date_from=data.date_from,
+        date_to=data.date_to,
+        narrative=data.narrative,
+        group_definitions=data.group_definitions,
     )
     db.add(macro)
     db.flush()
 
-    for meso_data in data.get("mesos", []):
+    for meso_data in data.mesos:
+        _ensure_date_order(meso_data.date_from, meso_data.date_to, "Meso")
         meso = models.SeasonBlock(
             macro_id=macro.id,
-            name=meso_data["name"],
-            squad=data.get("squad"),
-            phase_type=meso_data.get("phase_type"),
-            date_from=meso_data["date_from"],
-            date_to=meso_data["date_to"],
-            group_intents=meso_data.get("group_intents"),
-            notes=meso_data.get("notes"),
+            name=meso_data.name,
+            squad=meso_data.squad or data.squad,
+            phase_type=meso_data.phase_type,
+            date_from=meso_data.date_from,
+            date_to=meso_data.date_to,
+            emphasis=meso_data.emphasis,
+            group_intents=meso_data.group_intents,
+            notes=meso_data.notes,
         )
         db.add(meso)
 
@@ -99,7 +197,8 @@ def create_macro(data: dict, db: Session = Depends(get_db)):
     today = date.today()
     mesos = db.query(models.SeasonBlock).filter(models.SeasonBlock.macro_id == macro.id).all()
     return {
-        "id": macro.id, "name": macro.name, "squad": macro.squad,
+        "id": macro.id, "season_id": macro.season_id, "primary_meet_id": macro.primary_meet_id,
+        "sequence_index": macro.sequence_index, "name": macro.name, "squad": macro.squad,
         "date_from": macro.date_from.isoformat(), "date_to": macro.date_to.isoformat(),
         "narrative": macro.narrative, "group_definitions": macro.group_definitions,
         "mesos": [_block_out(b, today) for b in mesos],
@@ -107,13 +206,16 @@ def create_macro(data: dict, db: Session = Depends(get_db)):
 
 
 @router.patch("/macros/{macro_id}")
-def update_macro(macro_id: int, data: dict, db: Session = Depends(get_db)):
+def update_macro(macro_id: int, data: MacroUpdate, db: Session = Depends(get_db)):
     macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
     if not macro:
         raise HTTPException(404, "Macro not found")
-    for k, v in data.items():
-        if hasattr(macro, k) and k not in ("id", "mesos"):
-            setattr(macro, k, v)
+    changes = data.model_dump(exclude_unset=True)
+    next_from = changes.get("date_from", macro.date_from)
+    next_to = changes.get("date_to", macro.date_to)
+    _ensure_date_order(next_from, next_to, "Macro")
+    for k, v in changes.items():
+        setattr(macro, k, v)
     db.commit()
     db.refresh(macro)
     return macro
@@ -140,6 +242,7 @@ def get_blocks(db: Session = Depends(get_db)):
 
 @router.post("/blocks", status_code=201)
 def create_block(data: BlockIn, db: Session = Depends(get_db)):
+    _ensure_date_order(data.date_from, data.date_to, "Meso")
     block = models.SeasonBlock(**data.model_dump())
     db.add(block)
     db.commit()
@@ -147,13 +250,16 @@ def create_block(data: BlockIn, db: Session = Depends(get_db)):
     return block
 
 @router.patch("/blocks/{block_id}")
-def update_block(block_id: int, data: dict, db: Session = Depends(get_db)):
+def update_block(block_id: int, data: BlockUpdate, db: Session = Depends(get_db)):
     block = db.query(models.SeasonBlock).filter(models.SeasonBlock.id == block_id).first()
     if not block:
         raise HTTPException(404, "Block not found")
-    for k, v in data.items():
-        if hasattr(block, k):
-            setattr(block, k, v)
+    changes = data.model_dump(exclude_unset=True)
+    next_from = changes.get("date_from", block.date_from)
+    next_to = changes.get("date_to", block.date_to)
+    _ensure_date_order(next_from, next_to, "Meso")
+    for k, v in changes.items():
+        setattr(block, k, v)
     db.commit()
     db.refresh(block)
     return block
@@ -164,6 +270,79 @@ def delete_block(block_id: int, db: Session = Depends(get_db)):
     if not block:
         raise HTTPException(404, "Block not found")
     db.delete(block)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Microcycles (weekly plans)
+# ---------------------------------------------------------------------------
+
+@router.get("/microcycles")
+def get_microcycles(
+    macro_id: Optional[int] = None,
+    block_id: Optional[int] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.Microcycle)
+    if macro_id is not None:
+        q = q.filter(models.Microcycle.macro_id == macro_id)
+    if block_id is not None:
+        q = q.filter(models.Microcycle.block_id == block_id)
+    if date_from is not None:
+        q = q.filter(models.Microcycle.week_end >= date_from)
+    if date_to is not None:
+        q = q.filter(models.Microcycle.week_start <= date_to)
+    return [_micro_out(m) for m in q.order_by(models.Microcycle.week_start).all()]
+
+
+@router.post("/microcycles", status_code=201)
+def create_microcycle(data: MicrocycleIn, db: Session = Depends(get_db)):
+    week_end = data.week_end or data.week_start + timedelta(days=6)
+    _ensure_date_order(data.week_start, week_end, "Microcycle")
+    duplicate = db.query(models.Microcycle).filter(
+        models.Microcycle.block_id == data.block_id,
+        models.Microcycle.week_start == data.week_start,
+    ).first()
+    if duplicate:
+        raise HTTPException(409, "A microcycle already exists for this block and week")
+    if data.block_id is not None:
+        block = db.query(models.SeasonBlock).filter(models.SeasonBlock.id == data.block_id).first()
+        if not block:
+            raise HTTPException(404, "Meso block not found")
+        if data.week_start > block.date_to or week_end < block.date_from:
+            raise HTTPException(422, "Microcycle must overlap its meso block")
+    payload = data.model_dump(exclude={"week_end"})
+    micro = models.Microcycle(**payload, week_end=week_end)
+    db.add(micro)
+    db.commit()
+    db.refresh(micro)
+    return _micro_out(micro)
+
+
+@router.patch("/microcycles/{micro_id}")
+def update_microcycle(micro_id: int, data: MicrocycleUpdate, db: Session = Depends(get_db)):
+    micro = db.query(models.Microcycle).filter(models.Microcycle.id == micro_id).first()
+    if not micro:
+        raise HTTPException(404, "Microcycle not found")
+    changes = data.model_dump(exclude_unset=True)
+    next_start = changes.get("week_start", micro.week_start)
+    next_end = changes.get("week_end", micro.week_end)
+    _ensure_date_order(next_start, next_end, "Microcycle")
+    for key, value in changes.items():
+        setattr(micro, key, value)
+    db.commit()
+    db.refresh(micro)
+    return _micro_out(micro)
+
+
+@router.delete("/microcycles/{micro_id}", status_code=204)
+def delete_microcycle(micro_id: int, db: Session = Depends(get_db)):
+    micro = db.query(models.Microcycle).filter(models.Microcycle.id == micro_id).first()
+    if not micro:
+        raise HTTPException(404, "Microcycle not found")
+    db.delete(micro)
     db.commit()
 
 
@@ -275,6 +454,7 @@ def get_season_summary(db: Session = Depends(get_db)):
             "date_to": m.date_to.isoformat() if m.date_to else None,
             "course": m.course, "level": m.level,
             "target_count": target_count, "a_count": a_count,
+            "timetable_session_count": db.query(models.MeetSession).filter(models.MeetSession.meet_id == m.id).count(),
         })
 
     # Actual energy system distribution over current block period (or last 4 weeks if no block)

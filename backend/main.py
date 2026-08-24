@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes
-from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards
 from backend.auth_dep import verify_token
 
 
@@ -190,6 +190,8 @@ app.include_router(season.router, prefix="/season", tags=["Season Plan"], depend
 app.include_router(skills.router, prefix="/skills", tags=["Skills"], dependencies=_auth)
 app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"], dependencies=_auth)
 app.include_router(cohorts.router, prefix="/cohorts", tags=["Cohorts"], dependencies=_auth)
+app.include_router(planning_agent.router, prefix="/planning-agent", tags=["Planning Agent"], dependencies=_auth)
+app.include_router(qualification_standards.router, prefix="/qualification-standards", tags=["Qualification Standards"], dependencies=_auth)
 
 
 @app.get("/health")

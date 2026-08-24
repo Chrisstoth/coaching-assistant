@@ -449,7 +449,7 @@ def submit_register(
         db.flush()
 
         # AI characterisation if attended and AI requested
-        if body.run_ai and entry_data.attended:
+        if body.run_ai and entry_data.attended and (entry_data.coach_observation or "").strip():
             try:
                 characterisation = claude_service.characterise_session_entry(
                     swimmer, session, entry, db
@@ -460,7 +460,7 @@ def submit_register(
                     session_id=session_id,
                     analysis_type="session_response",
                     content=characterisation,
-                    model_used="claude-sonnet-4-6",
+                    model_used=claude_service.FAST_MODEL,
                 ))
             except Exception as e:
                 entry.ai_characterisation = f"[AI error: {str(e)}]"

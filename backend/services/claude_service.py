@@ -3,6 +3,7 @@ Claude API integration for coaching analysis, profiling, and planning.
 """
 import os
 import json
+import inspect
 from typing import Optional
 import anthropic
 from sqlalchemy.orm import Session as DBSession
@@ -10,16 +11,102 @@ from sqlalchemy.orm import Session as DBSession
 from backend import models
 
 _client: Optional[anthropic.Anthropic] = None
+_client_proxy = None
 
 
-def get_client() -> anthropic.Anthropic:
+def _get_raw_client() -> anthropic.Anthropic:
     global _client
     if _client is None:
         _client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
     return _client
 
 
-MODEL = "claude-sonnet-4-6"
+class _MessagesProxy:
+    def create(self, **kwargs):
+        operation = kwargs.pop("operation", None) or inspect.currentframe().f_back.f_code.co_name
+        return create_message(operation=operation, **kwargs)
+
+
+class _ClientProxy:
+    messages = _MessagesProxy()
+
+
+def get_client():
+    """Compatibility client that routes all message calls through telemetry."""
+    global _client_proxy
+    if _client_proxy is None:
+        _client_proxy = _ClientProxy()
+    return _client_proxy
+
+
+MODEL = os.getenv("ANTHROPIC_PRIMARY_MODEL", "claude-sonnet-5")
+FAST_MODEL = os.getenv("ANTHROPIC_FAST_MODEL", "claude-haiku-4-5-20251001")
+PRIMARY_EFFORT = os.getenv("ANTHROPIC_EFFORT", "medium")
+PLANNING_EFFORT = os.getenv("ANTHROPIC_PLANNING_EFFORT", "high")
+TRANSCRIPTION_MODEL = os.getenv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe")
+
+_MODEL_PRICES_PER_MTOK = {
+    "claude-sonnet-5": (2.0, 10.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-haiku-4-5-20251001": (1.0, 5.0),
+    "gpt-4o-mini-transcribe": (1.25, 5.0),
+}
+
+
+def _usage_value(usage, name: str) -> int:
+    value = getattr(usage, name, 0) if usage is not None else 0
+    return int(value or 0)
+
+
+def record_ai_usage(provider: str, model: str, operation: str, *, input_tokens=0,
+                    output_tokens=0, cache_read_tokens=0, cache_write_tokens=0):
+    """Persist token counts and an estimate without storing prompts or personal data."""
+    input_price, output_price = _MODEL_PRICES_PER_MTOK.get(model, (0.0, 0.0))
+    estimated_cost = (
+        input_tokens * input_price
+        + output_tokens * output_price
+        + cache_read_tokens * input_price * 0.1
+        + cache_write_tokens * input_price * 1.25
+    ) / 1_000_000
+    try:
+        from backend.database import SessionLocal
+        with SessionLocal() as usage_db:
+            usage_db.add(models.AIUsageLog(
+                provider=provider,
+                model=model,
+                operation=operation,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                estimated_cost_usd=estimated_cost,
+            ))
+            usage_db.commit()
+    except Exception:
+        # Telemetry must never make a coaching request fail.
+        pass
+
+
+def create_message(*, model: Optional[str] = None, operation: Optional[str] = None,
+                   effort: Optional[str] = None, **kwargs):
+    """Cost-aware Claude call with central model routing and usage telemetry."""
+    selected_model = model or MODEL
+    if selected_model == MODEL and selected_model.startswith("claude-sonnet-5"):
+        kwargs.setdefault("output_config", {"effort": effort or PRIMARY_EFFORT})
+    response = _get_raw_client().messages.create(model=selected_model, **kwargs)
+    usage = getattr(response, "usage", None)
+    caller = inspect.currentframe().f_back.f_code.co_name if operation is None else operation
+    record_ai_usage(
+        "anthropic",
+        selected_model,
+        caller,
+        input_tokens=_usage_value(usage, "input_tokens"),
+        output_tokens=_usage_value(usage, "output_tokens"),
+        cache_read_tokens=_usage_value(usage, "cache_read_input_tokens"),
+        cache_write_tokens=_usage_value(usage, "cache_creation_input_tokens"),
+    )
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -49,29 +136,17 @@ How to behave as a coaching partner:
 - Use the coaching context provided below to make responses specific to this squad, not generic.
 
 What this system can do — you have a live database:
-- Swimmer records are real and persistent. You can see the squad, their profiles, observations, times, and session history below.
-- When the coach says something that implies a change to a swimmer's record (status change, new observation, benchmark, coaching intent), acknowledge what you're noting and say it will be saved — the system handles this automatically from the conversation.
-- Swimmer status values: "active", "sabbatical", "injury". If a coach says someone is going on sabbatical or is injured, confirm the status change and note it explicitly (e.g. "I'll mark [name] as sabbatical") — the system will detect this and prompt a save action.
-- You can help write sessions, plan blocks, review training load, and analyse performance — all grounded in the actual data below.
-You have direct access to the coaching database via tools. Use them proactively:
-- get_recent_sessions: fetch what was actually trained recently — use this when the coach asks about last week, recent sessions, what was done
-- get_swimmer_detail: fetch a swimmer's full profile, times, and observations — use when discussing a specific swimmer
-- update_swimmer_status: directly update a swimmer to sabbatical/injury/active — do this immediately when the coach states it, confirm in your reply
-- add_swimmer_observation: save a coaching observation or intent to a swimmer's profile — use when the coach makes a meaningful observation worth keeping
-- get_season_plan: fetch full macro/meso plan with IDs, group definitions, upcoming meets — always call this before creating or editing a plan
-- create_season_plan: build a new macro with meso phases from a coach description
-- update_season_plan: edit an existing macro (narrative, dates, group definitions)
-- add_meso: add a phase to an existing macro
-- update_meso: edit a meso's dates, phase type, or group intents
-- delete_meso: remove a phase (only when explicitly asked)
-- update_session: edit a session's title, coach intent, notes, or group content
-
-Do not wait to be asked to use tools — if a question implies needing data you don't have in context, fetch it. If the coach states a status change or observation worth saving, save it. When editing a plan, always call get_season_plan first to get the correct IDs.
+- Swimmer records, times, observations, loads, qualifications and plans are real and persistent.
+- Use the read-only database tools proactively instead of guessing or asking the coach to repeat stored facts.
+- Retrieve the smallest useful slice: resolve the swimmer first, then request only the times, observations, load or planning state needed.
+- Never claim that a database change has been made. Conversational changes are proposed and applied only through the app's confirmation or draft-review workflow.
+- Specialist session, macro, meso, micro and taper requests are handled by structured planning workflows outside this general conversation.
+- If evidence is missing, say what was checked and ask one focused question.
 """
 
 
-def get_tools() -> list:
-    """Return the list of tool schemas for Claude tool-use calls."""
+def _legacy_write_capable_tools() -> list:
+    """Deprecated schemas retained temporarily while the read-only agent beds in."""
     return [
         {
             "name": "get_recent_sessions",
@@ -251,9 +326,384 @@ def get_tools() -> list:
     ]
 
 
+def get_tools() -> list:
+    """Compact, read-only tools for the conversational coaching agent.
+
+    Planning and data changes are deliberately handled by the app's review and
+    confirmation flows. Keeping this schema small also avoids paying to resend
+    large tool descriptions with every conversational turn.
+    """
+    return [
+        {
+            "name": "find_swimmer",
+            "description": "Resolve a swimmer name to an ID before requesting their data.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"name": {"type": "string"}},
+                "required": ["name"],
+            },
+        },
+        {
+            "name": "get_swimmer_summary",
+            "description": "Get a compact profile, attendance and current readiness summary for one swimmer ID.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"swimmer_id": {"type": "integer"}},
+                "required": ["swimmer_id"],
+            },
+        },
+        {
+            "name": "get_swim_times",
+            "description": "Get recent or event-specific race times for one swimmer.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_id": {"type": "integer"},
+                    "event": {"type": "string"},
+                    "course": {"type": "string", "enum": ["SCM", "LCM"]},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["swimmer_id"],
+            },
+        },
+        {
+            "name": "get_training_load",
+            "description": "Get aggregated training volume and attendance for one swimmer over a recent period.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_id": {"type": "integer"},
+                    "days": {"type": "integer"},
+                },
+                "required": ["swimmer_id"],
+            },
+        },
+        {
+            "name": "get_observations",
+            "description": "Get recent coach observations for one swimmer, optionally filtered by type.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_id": {"type": "integer"},
+                    "days": {"type": "integer"},
+                    "obs_type": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["swimmer_id"],
+            },
+        },
+        {
+            "name": "get_qualification_status",
+            "description": "Get a swimmer's latest qualification assessments and gaps.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_id": {"type": "integer"},
+                    "standard_set_id": {"type": "integer"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["swimmer_id"],
+            },
+        },
+        {
+            "name": "get_planning_state",
+            "description": "Get cached pathway, phase, target-meet and open planning-alert state.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_id": {"type": "integer"},
+                    "macro_id": {"type": "integer"},
+                },
+                "required": [],
+            },
+        },
+        {
+            "name": "list_meets",
+            "description": "List upcoming meets with target and entry counts.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"days_ahead": {"type": "integer"}},
+                "required": [],
+            },
+        },
+        {
+            "name": "get_recent_sessions",
+            "description": "Get recent session content and attendance. Use only when session-level detail is needed.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"days": {"type": "integer"}},
+                "required": [],
+            },
+        },
+        {
+            "name": "get_season_plan",
+            "description": "Get the existing macros, mesocycles, groups and target meets.",
+            "input_schema": {"type": "object", "properties": {}, "required": []},
+        },
+        {
+            "name": "get_session_context",
+            "description": "Get pool slot, expected swimmer and recent-load context for a day or time of day.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "day_of_week": {"type": "integer", "minimum": 0, "maximum": 6},
+                    "time_period": {"type": "string", "enum": ["AM", "PM"]},
+                },
+                "required": [],
+            },
+        },
+    ]
+
+
 def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
     """Execute a tool call and return the result as a string."""
     from datetime import date as date_type, timedelta
+
+    def as_date(value):
+        if isinstance(value, str):
+            return date_type.fromisoformat(value)
+        return value
+
+    def dump(value):
+        return json.dumps(value, default=str, separators=(",", ":"))
+
+    if tool_name == "find_swimmer":
+        name = " ".join(str(tool_input.get("name") or "").split())
+        if not name:
+            return dump({"error": "name is required"})
+        matches = (
+            db.query(models.Swimmer)
+            .filter(models.Swimmer.name.ilike(f"%{name}%"), models.Swimmer.active == True)
+            .order_by(models.Swimmer.name)
+            .limit(8)
+            .all()
+        )
+        return dump({"matches": [
+            {"id": s.id, "name": s.name, "squad": s.squad, "status": s.status}
+            for s in matches
+        ]})
+
+    if tool_name == "get_swimmer_summary":
+        swimmer_id = int(tool_input["swimmer_id"])
+        swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).first()
+        if not swimmer:
+            return dump({"error": "swimmer not found"})
+        today = date_type.today()
+        latest_profiles = {}
+        for profile_type in ("race", "training"):
+            profile = (
+                db.query(models.SwimmerProfileVersion)
+                .filter(
+                    models.SwimmerProfileVersion.swimmer_id == swimmer_id,
+                    models.SwimmerProfileVersion.profile_type == profile_type,
+                )
+                .order_by(models.SwimmerProfileVersion.created_at.desc())
+                .first()
+            )
+            if profile:
+                latest_profiles[profile_type] = {
+                    "data": profile.data,
+                    "change": profile.change_summary,
+                    "as_of": profile.created_at,
+                }
+        load_events = (
+            db.query(models.SwimmerLoadEvent)
+            .filter(
+                models.SwimmerLoadEvent.swimmer_id == swimmer_id,
+                models.SwimmerLoadEvent.resolved == False,
+            )
+            .order_by(models.SwimmerLoadEvent.date_from.desc())
+            .limit(5)
+            .all()
+        )
+        return dump({
+            "id": swimmer.id,
+            "name": swimmer.name,
+            "dob": swimmer.dob,
+            "gender": swimmer.gender,
+            "squad": swimmer.squad,
+            "status": swimmer.status,
+            "target_events": swimmer.target_events or [],
+            "strengths": swimmer.strengths,
+            "weaknesses": swimmer.weaknesses,
+            "profile_notes": (swimmer.profile_notes or "")[:800],
+            "physical_profile": swimmer.physical_profile,
+            "psychological_profile": swimmer.psychological_profile,
+            "synthesised_profiles": latest_profiles,
+            "attendance": build_attendance_stats(swimmer_id, db),
+            "active_load_events": [
+                {"type": e.event_type, "from": e.date_from, "to": e.date_to,
+                 "severity": e.severity, "description": e.description}
+                for e in load_events
+            ],
+            "as_of": today,
+        })
+
+    if tool_name == "get_swim_times":
+        swimmer_id = int(tool_input["swimmer_id"])
+        limit = max(1, min(int(tool_input.get("limit", 12)), 30))
+        query = db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer_id)
+        if tool_input.get("event"):
+            query = query.filter(models.SwimTime.event.ilike(f"%{tool_input['event']}%"))
+        if tool_input.get("course"):
+            query = query.filter(models.SwimTime.course == tool_input["course"])
+        rows = query.order_by(models.SwimTime.date.desc()).limit(limit).all()
+        return dump({"times": [
+            {"event": r.event, "course": r.course, "time_seconds": r.time_seconds,
+             "wa_points": r.wa_points, "date": r.date, "meet": r.meet,
+             "level": r.level, "round": r.round}
+            for r in rows
+        ]})
+
+    if tool_name == "get_training_load":
+        swimmer_id = int(tool_input["swimmer_id"])
+        days = max(7, min(int(tool_input.get("days", 28)), 90))
+        cutoff = date_type.today() - timedelta(days=days)
+        rows = (
+            db.query(models.SwimmerSessionLoad)
+            .filter(
+                models.SwimmerSessionLoad.swimmer_id == swimmer_id,
+                models.SwimmerSessionLoad.session_date >= cutoff,
+            )
+            .order_by(models.SwimmerSessionLoad.session_date.desc())
+            .all()
+        )
+        totals = {}
+        total_metres = 0.0
+        for row in rows:
+            for zone, value in (row.volume_breakdown or {}).items():
+                if isinstance(value, (int, float)):
+                    totals[zone] = totals.get(zone, 0.0) + value
+                    total_metres += value
+        entries = (
+            db.query(models.SessionEntry)
+            .join(models.Session)
+            .filter(
+                models.SessionEntry.swimmer_id == swimmer_id,
+                models.Session.date >= cutoff,
+                models.Session.status != "cancelled",
+            )
+            .all()
+        )
+        recorded = [e for e in entries if e.attended is not None]
+        attended = len([e for e in recorded if e.attended])
+        return dump({
+            "days": days,
+            "sessions_with_load": len(rows),
+            "total_metres": total_metres,
+            "volume_by_zone": totals,
+            "attendance": {"attended": attended, "recorded": len(recorded)},
+            "recent_sessions": [
+                {"date": r.session_date, "group": r.group_number,
+                 "sub_group": r.sub_group_label, "volume": r.volume_breakdown or {}}
+                for r in rows[:12]
+            ],
+        })
+
+    if tool_name == "get_observations":
+        swimmer_id = int(tool_input["swimmer_id"])
+        days = max(7, min(int(tool_input.get("days", 56)), 180))
+        limit = max(1, min(int(tool_input.get("limit", 12)), 30))
+        cutoff = date_type.today() - timedelta(days=days)
+        query = db.query(models.SwimmerObservation).filter(
+            models.SwimmerObservation.swimmer_id == swimmer_id,
+            models.SwimmerObservation.date >= cutoff,
+        )
+        if tool_input.get("obs_type"):
+            query = query.filter(models.SwimmerObservation.obs_type == tool_input["obs_type"])
+        rows = query.order_by(models.SwimmerObservation.date.desc()).limit(limit).all()
+        return dump({"observations": [
+            {"date": r.date, "type": r.obs_type, "event": r.event,
+             "energy_zone": r.energy_zone, "content": r.content[:700],
+             "structured": r.structured}
+            for r in rows
+        ]})
+
+    if tool_name == "get_qualification_status":
+        swimmer_id = int(tool_input["swimmer_id"])
+        limit = max(1, min(int(tool_input.get("limit", 20)), 50))
+        query = db.query(models.QualificationAssessment).filter(
+            models.QualificationAssessment.swimmer_id == swimmer_id
+        )
+        if tool_input.get("standard_set_id"):
+            query = query.filter(
+                models.QualificationAssessment.standard_set_id == int(tool_input["standard_set_id"])
+            )
+        rows = query.order_by(models.QualificationAssessment.calculated_at.desc()).limit(limit).all()
+        return dump({"assessments": [
+            {"set_id": r.standard_set_id, "set": r.standard_set.name,
+             "event": r.standard.event_name, "course": r.standard.course,
+             "standard_type": r.standard.standard_type,
+             "standard_seconds": r.standard.time_seconds, "status": r.status,
+             "best_seconds": r.best_time_seconds, "gap_seconds": r.gap_seconds,
+             "gap_percent": r.gap_percent, "reason": r.eligibility_reason}
+            for r in rows
+        ]})
+
+    if tool_name == "get_planning_state":
+        query = db.query(models.PlanningSnapshot)
+        if tool_input.get("swimmer_id"):
+            query = query.filter(models.PlanningSnapshot.swimmer_id == int(tool_input["swimmer_id"]))
+        if tool_input.get("macro_id"):
+            query = query.filter(models.PlanningSnapshot.macro_id == int(tool_input["macro_id"]))
+        snapshots = query.order_by(
+            models.PlanningSnapshot.as_of_date.desc(), models.PlanningSnapshot.id.desc()
+        ).limit(20).all()
+        rec_query = db.query(models.PlanningRecommendation).filter(
+            models.PlanningRecommendation.status.in_(["open", "accepted", "snoozed"])
+        )
+        if tool_input.get("swimmer_id"):
+            rec_query = rec_query.filter(
+                models.PlanningRecommendation.swimmer_id == int(tool_input["swimmer_id"])
+            )
+        if tool_input.get("macro_id"):
+            rec_query = rec_query.filter(
+                models.PlanningRecommendation.macro_id == int(tool_input["macro_id"])
+            )
+        recommendations = rec_query.order_by(models.PlanningRecommendation.created_at.desc()).limit(15).all()
+        return dump({
+            "snapshots": [
+                {"swimmer_id": s.swimmer_id, "swimmer": s.swimmer.name,
+                 "macro_id": s.macro_id, "pathway": s.pathway.name,
+                 "as_of": s.as_of_date, "target_meet": s.target_meet.name if s.target_meet else None,
+                 "target_date": s.target_date, "weeks_to_target": s.weeks_to_target,
+                 "phase": s.current_phase, "race_specific_start": s.race_specific_start,
+                 "taper_start": s.taper_start, "load_multiplier": s.load_multiplier,
+                 "qualification": s.qualification_status, "flags": s.flags or []}
+                for s in snapshots
+            ],
+            "recommendations": [
+                {"id": r.id, "kind": r.kind, "severity": r.severity,
+                 "title": r.title, "detail": r.detail[:700], "status": r.status,
+                 "follow_up_at": r.follow_up_at}
+                for r in recommendations
+            ],
+        })
+
+    if tool_name == "list_meets":
+        days = max(14, min(int(tool_input.get("days_ahead", 120)), 366))
+        today = date_type.today()
+        rows = (
+            db.query(models.Meet)
+            .filter(models.Meet.date >= today, models.Meet.date <= today + timedelta(days=days))
+            .order_by(models.Meet.date)
+            .limit(40)
+            .all()
+        )
+        return dump({"meets": [
+            {"id": m.id, "name": m.name, "date": m.date, "date_to": m.date_to,
+             "course": m.course, "level": m.level, "location": m.location,
+             "target_count": len(m.targets), "entry_count": len(m.entries)}
+            for m in rows
+        ]})
+
+    if tool_name == "get_session_context":
+        hint = {
+            "dow": tool_input.get("day_of_week"),
+            "time_period": tool_input.get("time_period"),
+        }
+        context = build_session_writing_context(db, hint)
+        return context[:12000] if context else "No matching session context found."
 
     if tool_name == "get_recent_sessions":
         days = min(int(tool_input.get("days", 14)), 60)
@@ -356,7 +806,8 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
             return f"Macro ID {macro_id} not found."
         for field in ("name", "narrative", "date_from", "date_to", "group_definitions"):
             if field in tool_input:
-                setattr(macro, field, tool_input[field])
+                value = as_date(tool_input[field]) if field in ("date_from", "date_to") else tool_input[field]
+                setattr(macro, field, value)
         db.commit()
         return f"Updated macro '{macro.name}'."
 
@@ -370,8 +821,8 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
             name=tool_input["name"],
             squad=macro.squad,
             phase_type=tool_input.get("phase_type"),
-            date_from=tool_input["date_from"],
-            date_to=tool_input["date_to"],
+            date_from=as_date(tool_input["date_from"]),
+            date_to=as_date(tool_input["date_to"]),
             group_intents=tool_input.get("group_intents"),
             notes=tool_input.get("notes"),
         )
@@ -386,7 +837,8 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
             return f"Meso ID {meso_id} not found."
         for field in ("name", "phase_type", "date_from", "date_to", "group_intents", "notes"):
             if field in tool_input:
-                setattr(meso, field, tool_input[field])
+                value = as_date(tool_input[field]) if field in ("date_from", "date_to") else tool_input[field]
+                setattr(meso, field, value)
         db.commit()
         return f"Updated meso '{meso.name}'."
 
@@ -483,8 +935,8 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
             macro = models.TrainingMacro(
                 name=tool_input["name"],
                 squad=tool_input.get("squad"),
-                date_from=tool_input["date_from"],
-                date_to=tool_input["date_to"],
+                date_from=as_date(tool_input["date_from"]),
+                date_to=as_date(tool_input["date_to"]),
                 narrative=tool_input.get("narrative"),
                 group_definitions=tool_input.get("group_definitions"),
             )
@@ -498,8 +950,8 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
                     name=meso_data["name"],
                     squad=tool_input.get("squad"),
                     phase_type=meso_data.get("phase_type"),
-                    date_from=meso_data["date_from"],
-                    date_to=meso_data["date_to"],
+                    date_from=as_date(meso_data["date_from"]),
+                    date_to=as_date(meso_data["date_to"]),
                     group_intents=meso_data.get("group_intents"),
                     notes=meso_data.get("notes"),
                 )
@@ -519,7 +971,14 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
     return f"Unknown tool: {tool_name}"
 
 
-def get_system_prompt(db: DBSession, extra: str = "") -> str:
+def get_system_prompt(
+    db: DBSession,
+    extra: str = "",
+    include_squad_snapshot: bool = True,
+    include_recent_sessions: bool = True,
+    include_active_notes: bool = True,
+    include_approaching_targets: bool = True,
+) -> str:
     """Build the full system prompt: base identity + coaching context + squad snapshot + recent sessions + active coaching notes."""
     from datetime import date as date_type
     profile = (
@@ -531,36 +990,42 @@ def get_system_prompt(db: DBSession, extra: str = "") -> str:
     if profile:
         parts.append(f"---\nCOACHING CONTEXT:\n{profile.summary}")
 
-    squad_snap = build_squad_snapshot(db)
-    if squad_snap:
-        parts.append(f"---\n{squad_snap}")
+    if include_squad_snapshot:
+        squad_snap = build_squad_snapshot(db)
+        if squad_snap:
+            parts.append(f"---\n{squad_snap}")
 
-    sessions_snap = build_recent_sessions_summary(db)
-    if sessions_snap:
-        parts.append(f"---\n{sessions_snap}")
+    if include_recent_sessions:
+        sessions_snap = build_recent_sessions_summary(db)
+        if sessions_snap:
+            parts.append(f"---\n{sessions_snap}")
 
     # Active coaching notes — temporary plans pinned to date ranges
     today = date_type.today()
-    active_notes = (
-        db.query(models.CoachingNote)
-        .filter(
-            models.CoachingNote.active == True,
-            models.CoachingNote.date_to >= today,
+    active_notes = []
+    if include_active_notes:
+        active_notes = (
+            db.query(models.CoachingNote)
+            .filter(
+                models.CoachingNote.active == True,
+                models.CoachingNote.date_to >= today,
+            )
+            .order_by(models.CoachingNote.date_from)
+            .limit(12)
+            .all()
         )
-        .order_by(models.CoachingNote.date_from)
-        .all()
-    )
     if active_notes:
         note_lines = ["ACTIVE COACHING NOTES (temporary plans — do not treat as permanent profile data):"]
         for n in active_notes:
             swimmers_str = f" [{', '.join(n.swimmer_names)}]" if n.swimmer_names else ""
-            note_lines.append(f"\n[{n.title}{swimmers_str} | {n.date_from} to {n.date_to}]\n{n.body}")
+            note_lines.append(f"\n[{n.title}{swimmers_str} | {n.date_from} to {n.date_to}]\n{n.body[:1200]}")
         parts.append("---\n" + "\n".join(note_lines))
 
     # Approaching swimmer targets — surface any unachieved targets with deadlines in the next 8 weeks
-    approaching_targets = _build_approaching_targets(db, today)
-    if approaching_targets:
-        parts.append(f"---\n{approaching_targets}")
+    if include_approaching_targets:
+        approaching_targets = _build_approaching_targets(db, today)
+        if approaching_targets:
+            parts.append(f"---\n{approaching_targets}")
 
     if extra:
         parts.append(f"---\n{extra}")
@@ -652,7 +1117,7 @@ def get_season_plan_system_prompt(db: DBSession, macro_id: int = None) -> str:
     meets = db.query(models.Meet).filter(
         models.Meet.date >= today,
         models.Meet.date <= cutoff,
-    ).order_by(models.Meet.date).all()
+    ).order_by(models.Meet.date).limit(30).all()
 
     if meets:
         meet_lines = ["KEY COMPETITIONS (next 12 months — the macro must be built around these):"]
@@ -1182,12 +1647,21 @@ def build_meets_context(db: DBSession, months_ahead: int = 3) -> str:
         db.query(models.Meet)
         .filter(models.Meet.date >= today, models.Meet.date <= cutoff)
         .order_by(models.Meet.date)
+        .limit(12)
         .all()
     )
     if not meets:
         return ""
 
     lines = [f"UPCOMING MEETS (next {months_ahead} months):"]
+    meet_ids = [m.id for m in meets]
+    targets = db.query(models.MeetTarget).filter(models.MeetTarget.meet_id.in_(meet_ids)).all()
+    swimmer_ids = {target.swimmer_id for target in targets}
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.id.in_(swimmer_ids)).all() if swimmer_ids else []
+    swimmer_by_id = {swimmer.id: swimmer for swimmer in swimmers}
+    targets_by_meet = {}
+    for target in targets:
+        targets_by_meet.setdefault(target.meet_id, []).append(target)
     for m in meets:
         date_str = m.date.isoformat() if m.date else "date TBC"
         end_str = f"–{m.date_to.isoformat()}" if m.date_to else ""
@@ -1195,13 +1669,19 @@ def build_meets_context(db: DBSession, months_ahead: int = 3) -> str:
         level = f" [{m.level}]" if m.level else ""
         lines.append(f"  {m.name} | {date_str}{end_str}{course}{level} | {m.location or ''}")
 
-        targets = (
-            db.query(models.MeetTarget)
-            .filter(models.MeetTarget.meet_id == m.id)
-            .all()
-        )
-        for t in targets:
-            swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == t.swimmer_id).first()
+        for session in list(m.timetable_sessions or [])[:4]:
+            times = ", ".join(filter(None, [
+                f"warm-up {session.warm_up_time}" if session.warm_up_time else None,
+                f"start {session.start_time}" if session.start_time else None,
+            ]))
+            event_names = [
+                (event.get("name") or str(event)) if isinstance(event, dict) else str(event)
+                for event in (session.events or [])[:12]
+            ]
+            lines.append(f"    Session: {session.name} | {session.date or 'date TBC'}{f' | {times}' if times else ''} | {', '.join(event_names) or 'events TBC'}")
+
+        for t in targets_by_meet.get(m.id, []):
+            swimmer = swimmer_by_id.get(t.swimmer_id)
             if not swimmer:
                 continue
             events_str = ", ".join(t.events or [])
@@ -1707,7 +2187,7 @@ Rules:
 - Return null for suggested_action if intent is general or confidence is low"""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=200,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -2426,7 +2906,7 @@ Return only the JSON array."""
 
     try:
         response = get_client().messages.create(
-            model=MODEL,
+            model=FAST_MODEL,
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -2519,7 +2999,7 @@ Return only the JSON array."""
 
     try:
         response = get_client().messages.create(
-            model=MODEL,
+            model=FAST_MODEL,
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -3633,7 +4113,7 @@ Write in professional coaching language. Be specific where the coach provided sp
 Keep it under 400 words."""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=600,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -3684,7 +4164,7 @@ Return a JSON array only — no other text:
 [{{"swimmer_id": <int>, "observation": "<text or null>"}}, ...]"""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=1500,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -3740,7 +4220,7 @@ Coach observation: {entry.coach_observation or 'No observation recorded'}
 Characterise this swimmer's response to this session."""
 
     response = get_client().messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         max_tokens=500,
         system=get_system_prompt(db, extra=SESSION_RESPONSE_SYSTEM),
         messages=[{"role": "user", "content": prompt}],
@@ -3879,6 +4359,7 @@ Return as JSON: {{
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=1000,
         system=get_system_prompt(db),
         messages=[{"role": "user", "content": prompt}],
@@ -4003,6 +4484,7 @@ Rules:
 
     response = get_client().messages.create(
         model=MODEL,
+        effort=PLANNING_EFFORT,
         max_tokens=2500,
         system=get_system_prompt(db),
         messages=[{"role": "user", "content": prompt}],

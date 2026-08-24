@@ -250,9 +250,28 @@ export default function CoachAI() {
       // Skill result — meso plan draft
       if (res.skill_result?.type === 'meso_plan' && res.skill_result.draft) {
         setSuggestedAction({
-          label: 'View Season Plan to create this block',
+          label: 'Review and save this block',
           type: 'view_season_plan',
+          plan_type: 'meso',
           meso_draft: res.skill_result.draft,
+        })
+      }
+
+      if (res.skill_result?.type === 'macro_plan' && res.skill_result.draft) {
+        setSuggestedAction({
+          label: 'Review and save this season plan',
+          type: 'view_season_plan',
+          plan_type: 'macro',
+          macro_draft: res.skill_result.draft,
+        })
+      }
+
+      if (res.skill_result?.type === 'micro_plan' && res.skill_result.draft) {
+        setSuggestedAction({
+          label: 'Review and save this weekly plan',
+          type: 'view_season_plan',
+          plan_type: 'micro',
+          micro_draft: res.skill_result.draft,
         })
       }
 
@@ -391,6 +410,9 @@ export default function CoachAI() {
         setSuggestedAction(null)
         return
       } else if (type === 'view_season_plan') {
+        if (suggestedAction.plan_type) {
+          sessionStorage.setItem('dx_plan_handoff', JSON.stringify(suggestedAction))
+        }
         navigate('/season')
         return
       } else if (type === 'view_swimmer' && swimmer_id) {
@@ -398,6 +420,22 @@ export default function CoachAI() {
         return
       } else if (type === 'status_change' && swimmer_id && suggestedAction.new_status) {
         await api.updateSwimmer(swimmer_id, { status: suggestedAction.new_status })
+        setActionResult('saved')
+        setSuggestedAction(null)
+      } else if (type === 'benchmark_capture' && swimmer_id) {
+        const result = await api.saveBenchmarkFromChat(swimmer_id, conversationContext)
+        if (result.saved?.length > 0) {
+          setSavedBenchmarksToast(result.saved)
+          setTimeout(() => setSavedBenchmarksToast(null), 5000)
+        }
+        setActionResult('saved')
+        setSuggestedAction(null)
+      } else if (type === 'coaching_intent' && swimmer_id) {
+        const result = await api.saveCoachingIntentFromChat(swimmer_id, conversationContext)
+        if (result.saved?.length > 0) {
+          setSavedIntentsToast(result.saved)
+          setTimeout(() => setSavedIntentsToast(null), 7000)
+        }
         setActionResult('saved')
         setSuggestedAction(null)
       } else if (type === 'session_writing') {
@@ -1310,7 +1348,7 @@ function RegisterCard({ data, onDismiss, onSaved }) {
   const handleSubmit = async () => {
     setSaving(true)
     try {
-      const res = await api.submitRegister({ session_id: data.session_id, attendance })
+      const res = await api.submitChatRegister({ session_id: data.session_id, attendance })
       onSaved(data.session_id, res.feedback_prompt || null)
     } catch (err) {
       alert(`Could not save register: ${err.message}`)

@@ -1,7 +1,7 @@
 from typing import Optional, Union
 import base64
 import difflib
-from datetime import datetime
+from datetime import datetime, date as date_type
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend.database import get_db
 from backend import models
 from backend.services import openai_service
+from backend.services.event_normalizer import sync_meet_session_events, upsert_meet_entry, canonicalize_event
 
 router = APIRouter()
 
@@ -41,6 +42,17 @@ class MeetTargetUpdate(BaseModel):
     events: Optional[list[str]] = None
     priority: Optional[str] = None
     target_times: Optional[dict] = None
+    notes: Optional[str] = None
+
+
+class MeetSessionIn(BaseModel):
+    name: str
+    date: Optional[date_type] = None
+    warm_up_time: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    order_index: int = 0
+    events: list = Field(default_factory=list)
     notes: Optional[str] = None
 
 
@@ -110,12 +122,15 @@ def add_target(meet_id: int, body: MeetTargetCreate, db: DBSession = Depends(get
             existing.target_times = body.target_times
         if body.notes is not None:
             existing.notes = body.notes
+        _sync_target_entries(existing, db)
         db.commit()
         db.refresh(existing)
         return _target_out(existing, db)
 
     target = models.MeetTarget(meet_id=meet_id, **body.model_dump())
     db.add(target)
+    db.flush()
+    _sync_target_entries(target, db)
     db.commit()
     db.refresh(target)
     return _target_out(target, db)
@@ -137,6 +152,7 @@ def update_target(meet_id: int, target_id: int, body: MeetTargetUpdate, db: DBSe
         target.target_times = body.target_times
     if body.notes is not None:
         target.notes = body.notes
+    _sync_target_entries(target, db)
     db.commit()
     return _target_out(target, db)
 
@@ -149,8 +165,116 @@ def remove_target(meet_id: int, target_id: int, db: DBSession = Depends(get_db))
     ).first()
     if not target:
         raise HTTPException(status_code=404, detail="Target not found")
+    db.query(models.MeetEntry).filter(
+        models.MeetEntry.meet_id == meet_id,
+        models.MeetEntry.swimmer_id == target.swimmer_id,
+    ).delete()
     db.delete(target)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Persisted competition timetable
+# ---------------------------------------------------------------------------
+
+@router.get("/{meet_id}/timetable")
+def get_timetable(meet_id: int, db: DBSession = Depends(get_db)):
+    _get_or_404(meet_id, db)
+    rows = db.query(models.MeetSession).filter(
+        models.MeetSession.meet_id == meet_id,
+    ).order_by(models.MeetSession.date, models.MeetSession.order_index, models.MeetSession.start_time).all()
+    return [_session_out(row) for row in rows]
+
+
+@router.post("/{meet_id}/timetable", status_code=201)
+def create_timetable_session(meet_id: int, body: MeetSessionIn, db: DBSession = Depends(get_db)):
+    _get_or_404(meet_id, db)
+    row = models.MeetSession(meet_id=meet_id, **body.model_dump())
+    db.add(row)
+    db.flush()
+    sync_meet_session_events(row, db)
+    db.commit()
+    db.refresh(row)
+    return _session_out(row)
+
+
+@router.put("/{meet_id}/timetable/{session_id}")
+def update_timetable_session(meet_id: int, session_id: int, body: MeetSessionIn, db: DBSession = Depends(get_db)):
+    row = db.query(models.MeetSession).filter(
+        models.MeetSession.id == session_id,
+        models.MeetSession.meet_id == meet_id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Timetable session not found")
+    for key, value in body.model_dump().items():
+        setattr(row, key, value)
+    db.flush()
+    sync_meet_session_events(row, db)
+    db.commit()
+    db.refresh(row)
+    return _session_out(row)
+
+
+@router.delete("/{meet_id}/timetable/{session_id}", status_code=204)
+def delete_timetable_session(meet_id: int, session_id: int, db: DBSession = Depends(get_db)):
+    row = db.query(models.MeetSession).filter(
+        models.MeetSession.id == session_id,
+        models.MeetSession.meet_id == meet_id,
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Timetable session not found")
+    event_ids = [event.id for event in row.normalized_events]
+    if event_ids:
+        db.query(models.MeetEntry).filter(models.MeetEntry.meet_event_id.in_(event_ids)).update(
+            {"meet_event_id": None}, synchronize_session=False,
+        )
+    db.delete(row)
+    db.commit()
+
+
+@router.post("/{meet_id}/timetable/import")
+def import_timetable(meet_id: int, body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Replace or append timetable sessions from reviewed extraction output."""
+    meet = _get_or_404(meet_id, db)
+    sessions = body.get("sessions") or _sessions_from_extraction(body, meet)
+    if not sessions:
+        raise HTTPException(status_code=422, detail="No timetable sessions supplied")
+    if body.get("replace", True):
+        old_sessions = db.query(models.MeetSession).filter(models.MeetSession.meet_id == meet_id).all()
+        old_event_ids = [event.id for session in old_sessions for event in session.normalized_events]
+        if old_event_ids:
+            db.query(models.MeetEntry).filter(models.MeetEntry.meet_event_id.in_(old_event_ids)).update(
+                {"meet_event_id": None}, synchronize_session=False,
+            )
+        for old_session in old_sessions:
+            db.delete(old_session)
+        db.flush()
+    created = []
+    for index, item in enumerate(sessions):
+        raw_date = item.get("date")
+        parsed_date = None
+        if raw_date and raw_date != "TBD":
+            try:
+                parsed_date = datetime.fromisoformat(str(raw_date)).date()
+            except ValueError:
+                parsed_date = None
+        row = models.MeetSession(
+            meet_id=meet_id,
+            name=item.get("name") or (f"Session {index + 1}"),
+            date=parsed_date,
+            warm_up_time=item.get("warm_up_time"),
+            start_time=item.get("start_time"),
+            end_time=item.get("end_time"),
+            order_index=item.get("order_index", index),
+            events=_normalise_events(item.get("events") or []),
+            notes=item.get("notes"),
+        )
+        db.add(row)
+        db.flush()
+        sync_meet_session_events(row, db)
+        created.append(row)
+    db.commit()
+    return [_session_out(row) for row in created]
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +311,7 @@ async def extract_schedule(
     return {
         "events": schedule_data.get("events", []),
         "by_date": schedule_data.get("by_date", {}),
+        "sessions": schedule_data.get("sessions", []),
         "meet_id": meet_id,
     }
 
@@ -291,6 +416,7 @@ async def combine_extractions(
 
                     if existing:
                         existing.events = list(set(existing.events or []) | set(events_list))
+                        _sync_target_entries(existing, db, source="document")
                     else:
                         target = models.MeetTarget(
                             meet_id=meet_id,
@@ -299,6 +425,8 @@ async def combine_extractions(
                             priority="B"
                         )
                         db.add(target)
+                        db.flush()
+                        _sync_target_entries(target, db, source="document")
 
                     result["assigned"].append(swimmer_name)
                 except Exception as e:
@@ -331,6 +459,7 @@ def _meet_summary(m: models.Meet, db: DBSession) -> dict:
         "course": m.course,
         "level": m.level,
         "swimmer_count": count,
+        "timetable_session_count": db.query(models.MeetSession).filter(models.MeetSession.meet_id == m.id).count(),
     }
 
 
@@ -341,11 +470,16 @@ def _meet_detail(m: models.Meet, db: DBSession) -> dict:
         "warm_up_time": m.warm_up_time,
         "notes": m.notes,
         "targets": [_target_out(t, db) for t in targets],
+        "timetable": [_session_out(s) for s in m.timetable_sessions],
     }
 
 
 def _target_out(t: models.MeetTarget, db: DBSession) -> dict:
     swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == t.swimmer_id).first()
+    entries = db.query(models.MeetEntry).filter(
+        models.MeetEntry.meet_id == t.meet_id,
+        models.MeetEntry.swimmer_id == t.swimmer_id,
+    ).all()
     return {
         "id": t.id,
         "swimmer_id": t.swimmer_id,
@@ -355,4 +489,72 @@ def _target_out(t: models.MeetTarget, db: DBSession) -> dict:
         "priority": t.priority,
         "target_times": t.target_times or {},
         "notes": t.notes,
+        "scheduled_entries": [{
+            "id": entry.id, "event": entry.event_name, "canonical_event": entry.canonical_event,
+            "target_time": entry.target_time, "entry_time": entry.entry_time,
+            "timetable_linked": bool(entry.meet_event_id),
+            "session": entry.meet_event.meet_session.name if entry.meet_event and entry.meet_event.meet_session else None,
+            "scheduled_time": entry.meet_event.scheduled_time if entry.meet_event else None,
+        } for entry in entries],
+    }
+
+
+def _sync_target_entries(target: models.MeetTarget, db: DBSession, source: str = "manual") -> None:
+    desired = {canonicalize_event(event) for event in (target.events or [])}
+    existing = db.query(models.MeetEntry).filter(
+        models.MeetEntry.meet_id == target.meet_id,
+        models.MeetEntry.swimmer_id == target.swimmer_id,
+    ).all()
+    for entry in existing:
+        if entry.canonical_event not in desired:
+            db.delete(entry)
+    for event in target.events or []:
+        upsert_meet_entry(
+            target.meet_id, target.swimmer_id, event, db,
+            priority=target.priority, target_time=(target.target_times or {}).get(event), source=source,
+        )
+
+
+def _normalise_events(events: list) -> list:
+    return [event if isinstance(event, dict) else {"name": str(event)} for event in events]
+
+
+def _sessions_from_extraction(body: dict, meet: models.Meet) -> list:
+    result = []
+    for index, (day, events) in enumerate((body.get("by_date") or {}).items()):
+        parsed_day = None
+        if day != "TBD":
+            try:
+                parsed_day = datetime.fromisoformat(day).date()
+            except ValueError:
+                parsed_day = None
+        label = parsed_day.strftime("%A %d %B") if parsed_day else f"Competition session {index + 1}"
+        result.append({
+            "name": label,
+            "date": parsed_day.isoformat() if parsed_day else None,
+            "order_index": index,
+            "events": events,
+        })
+    if not result and body.get("events"):
+        result.append({
+            "name": "Competition session",
+            "date": meet.date.isoformat() if meet.date else None,
+            "order_index": 0,
+            "events": body["events"],
+        })
+    return result
+
+
+def _session_out(row: models.MeetSession) -> dict:
+    return {
+        "id": row.id,
+        "meet_id": row.meet_id,
+        "name": row.name,
+        "date": row.date.isoformat() if row.date else None,
+        "warm_up_time": row.warm_up_time,
+        "start_time": row.start_time,
+        "end_time": row.end_time,
+        "order_index": row.order_index,
+        "events": row.events or [],
+        "notes": row.notes,
     }

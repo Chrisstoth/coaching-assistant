@@ -272,6 +272,43 @@ function GroupTargetCard({ target }) {
   )
 }
 
+function AssistantInboxPreview({ inbox }) {
+  const items = (inbox?.items || []).filter(item => item.status === 'open').slice(0, 3)
+  const openCount = inbox?.counts?.open || 0
+  const progressCount = inbox?.counts?.in_progress || 0
+  if (openCount === 0 && progressCount === 0) return null
+
+  return (
+    <section className="bg-pool-800 border border-pool-700 rounded-2xl overflow-hidden">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-pool-700/70">
+        <div>
+          <p className="text-xs font-semibold text-accent-300 uppercase tracking-wide">Assistant coach</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">
+            {openCount} need{openCount === 1 ? 's' : ''} a decision
+            {progressCount > 0 ? ` · ${progressCount} in progress` : ''}
+          </p>
+        </div>
+        <Link to="/assistant" className="text-xs text-accent-400 font-semibold">Open inbox →</Link>
+      </div>
+      {items.length > 0 && (
+        <div className="divide-y divide-pool-700/60">
+          {items.map(item => (
+            <Link key={item.id} to="/assistant" className="block px-4 py-3 active:bg-pool-700/50">
+              <div className="flex items-start gap-2.5">
+                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${item.severity === 'warning' ? 'bg-amber-400' : 'bg-teal-400'}`} />
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-pool-200">{item.title}</p>
+                  <p className="text-xs text-pool-500 mt-0.5 line-clamp-2">{item.detail}</p>
+                </div>
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function Dashboard() {
   const [calendar, setCalendar] = useState([])
   const [pulse, setPulse] = useState([])
@@ -280,6 +317,7 @@ export default function Dashboard() {
   const [coachingNotes, setCoachingNotes] = useState([])
   const [coachingProfile, setCoachingProfile] = useState(null)
   const [meetCountdowns, setMeetCountdowns] = useState({ group_targets: [], upcoming_meets: [] })
+  const [assistantInbox, setAssistantInbox] = useState({ items: [], counts: {} })
 
   useEffect(() => {
     setLoading(true)
@@ -289,12 +327,14 @@ export default function Dashboard() {
       api.getAIContextStatus().catch(() => null),
       api.getSquadPulse().catch(() => []),
       api.getMeetCountdowns().catch(() => ({ group_targets: [], upcoming_meets: [] })),
-    ]).then(([cal, notes, ctx, pulseData, countdowns]) => {
+      api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
+    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox]) => {
       setCalendar(cal)
       setCoachingNotes(notes)
       setCoachingProfile(ctx)
       setPulse(pulseData)
       setMeetCountdowns(countdowns)
+      setAssistantInbox(inbox)
       setLoading(false)
     })
   }, [])
@@ -343,6 +383,8 @@ export default function Dashboard() {
           {today.getHours() < 12 ? 'Morning' : today.getHours() < 17 ? 'Afternoon' : 'Evening'}
         </h1>
       </div>
+
+      <AssistantInboxPreview inbox={assistantInbox} />
 
       {/* Group target meet countdowns */}
       {meetCountdowns.group_targets.length > 0 && (

@@ -3,7 +3,7 @@ import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
 
 export default function Import() {
-  const [tab, setTab] = useState('roster')
+  const [tab, setTab] = useState('combined')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [plannedSessions, setPlannedSessions] = useState([])
@@ -22,10 +22,9 @@ export default function Import() {
       <h1 className="text-xl font-bold pt-2">Import Data</h1>
 
       {/* Tab selector */}
-      <div className="grid grid-cols-4 bg-pool-800 rounded-xl p-1 gap-1">
+      <div className="grid grid-cols-3 bg-pool-800 rounded-xl p-1 gap-1">
         {[
-          { id: 'roster', label: 'Squad' },
-          { id: 'csv', label: 'Times' },
+          { id: 'combined', label: 'Squad + Times' },
           { id: 'excel', label: 'Sessions' },
           { id: 'photo', label: 'Photo' },
         ].map((t) => (
@@ -41,8 +40,7 @@ export default function Import() {
         ))}
       </div>
 
-      {tab === 'roster' && <RosterImport setResult={setResult} setLoading={setLoading} loading={loading} />}
-      {tab === 'csv' && <CSVImport setResult={setResult} setLoading={setLoading} loading={loading} />}
+      {tab === 'combined' && <CombinedImport setResult={setResult} setLoading={setLoading} loading={loading} />}
       {tab === 'excel' && <ExcelImport setResult={setResult} setLoading={setLoading} loading={loading} plannedSessions={plannedSessions} />}
       {tab === 'photo' && <PhotoImport setResult={setResult} setLoading={setLoading} loading={loading} plannedSessions={plannedSessions} />}
 
@@ -52,6 +50,110 @@ export default function Import() {
           <pre className="text-pool-300 text-xs whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
         </div>
       )}
+    </div>
+  )
+}
+
+
+function CombinedImport({ setResult, setLoading, loading }) {
+  const [file, setFile] = useState(null)
+  const [trackerFile, setTrackerFile] = useState(null)
+  const [squad, setSquad] = useState('Silver 1')
+  const [replaceExisting, setReplaceExisting] = useState(true)
+  const [reconcileRoster, setReconcileRoster] = useState(true)
+
+  const submit = async () => {
+    if (!file) return
+    setLoading(true)
+    setResult(null)
+    try {
+      const res = await api.importCombinedSwims(file, trackerFile, squad, replaceExisting, reconcileRoster)
+      setResult(res)
+      setFile(null)
+    } catch (e) {
+      setResult({ error: e.message })
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-pool-400 text-sm">
+        Import one combined .xlsx workbook containing every current squad member and all their race times.
+      </p>
+
+      <label className="block space-y-1">
+        <span className="text-xs text-pool-400">Squad name</span>
+        <input
+          value={squad}
+          onChange={(e) => setSquad(e.target.value)}
+          className="w-full bg-pool-800 rounded-xl px-3 py-2.5 text-sm border border-pool-700 focus:border-accent-500 focus:outline-none"
+        />
+      </label>
+
+      <label className="block bg-pool-800 rounded-xl p-4 text-center cursor-pointer border-2 border-dashed border-pool-600 hover:border-accent-500 transition-colors">
+        <input
+          type="file"
+          accept=".xlsx"
+          className="hidden"
+          onChange={(e) => setFile(e.target.files[0])}
+        />
+        {file ? (
+          <p className="text-sm text-pool-200">{file.name}</p>
+        ) : (
+          <>
+            <p className="text-sm text-accent-400 font-medium">Select combined workbook</p>
+            <p className="text-xs text-pool-500 mt-1">Current members + all swims</p>
+          </>
+        )}
+      </label>
+
+      <label className="block bg-pool-800 rounded-xl p-3 cursor-pointer border border-pool-700 hover:border-accent-500 transition-colors">
+        <input
+          type="file"
+          accept=".csv"
+          className="hidden"
+          onChange={(e) => setTrackerFile(e.target.files[0])}
+        />
+        <p className="text-xs text-pool-300 font-medium">
+          {trackerFile ? trackerFile.name : 'Add tracker names CSV (optional)'}
+        </p>
+        <p className="text-[11px] text-pool-500 mt-1">
+          Adds Homeclub and CS start date. Needed once; future imports preserve the saved values.
+        </p>
+      </label>
+
+      <label className="flex items-start gap-3 bg-pool-800 rounded-xl p-3">
+        <input
+          type="checkbox"
+          checked={replaceExisting}
+          onChange={(e) => setReplaceExisting(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span className="text-xs text-pool-400 leading-relaxed">
+          Replace existing race times for swimmers in this workbook. Coaching notes, profiles, observations and session history are preserved.
+        </span>
+      </label>
+
+      <label className="flex items-start gap-3 bg-pool-800 rounded-xl p-3">
+        <input
+          type="checkbox"
+          checked={reconcileRoster}
+          onChange={(e) => setReconcileRoster(e.target.checked)}
+          className="mt-0.5"
+        />
+        <span className="text-xs text-pool-400 leading-relaxed">
+          Treat this as the complete current roster. Existing {squad || 'squad'} swimmers missing from the workbook are marked inactive, never deleted.
+        </span>
+      </label>
+
+      <button
+        onClick={submit}
+        disabled={loading || !file || !squad.trim()}
+        className="w-full bg-accent-600 disabled:opacity-40 rounded-xl py-3 font-semibold text-sm"
+      >
+        {loading ? 'Importing squad + times…' : 'Import Combined Workbook'}
+      </button>
     </div>
   )
 }
