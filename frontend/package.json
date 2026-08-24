@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node scripts/check-api-contract.mjs && node scripts/test-offline-queue.mjs && node scripts/check-chat-behaviour.mjs",
+    "test": "node scripts/check-api-contract.mjs && node scripts/test-offline-queue.mjs && node scripts/check-chat-behaviour.mjs && node scripts/test-session-proximity.mjs",
     "preview": "vite preview",
     "serve": "vite build && vite preview --host --port 5173"
   },

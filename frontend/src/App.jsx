@@ -24,6 +24,7 @@ import SessionPrint from './pages/SessionPrint'
 import Login from './pages/Login'
 import ProfileWizard from './pages/ProfileWizard'
 import AssistantInbox from './pages/AssistantInbox'
+import TodaySession from './pages/TodaySession'
 
 function RequireAuth({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />
@@ -232,6 +233,7 @@ export default function App() {
             <main className="flex-1 overflow-y-auto pb-20 pt-12">
               <Routes>
                 <Route path="/" element={<Dashboard />} />
+          <Route path="/today-session" element={<TodaySession />} />
           <Route path="/swimmers" element={<Swimmers />} />
           <Route path="/swimmers/new" element={<NewSwimmer />} />
           <Route path="/swimmers/:id" element={<SwimmerDetail />} />

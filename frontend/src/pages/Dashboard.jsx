@@ -2,6 +2,39 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import useLongPress from '../hooks/useLongPress'
+import { proximateSessions } from '../sessionProximity'
+
+function TodaySessionCard({ sessions }) {
+  if (sessions.length === 0) return null
+  return (
+    <section className="bg-gradient-to-br from-accent-900/55 to-pool-800 border border-accent-600/50 rounded-2xl p-4 shadow-lg shadow-black/10">
+      <div className="flex items-center gap-2">
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-60" />
+          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent-400" />
+        </span>
+        <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">On deck now</p>
+      </div>
+      <div className="mt-3 space-y-2">
+        {sessions.map(session => {
+          const query = session.session_id ? `session=${session.session_id}` : `slot=${session.slot_id}`
+          return (
+            <Link key={`${session.session_id || 'slot'}-${session.slot_id || session.label}`} to={`/today-session?${query}`}
+              className="flex items-center justify-between gap-3 bg-pool-900/45 border border-pool-700/60 rounded-xl px-3.5 py-3 active:opacity-75">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Today’s session'}</p>
+                <p className="text-xs text-pool-400 mt-0.5">
+                  {[session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}
+                </p>
+              </div>
+              <span className="text-xs font-semibold text-accent-300 shrink-0">Open today →</span>
+            </Link>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
 
 function sessionAmPm(s) {
   const timeStr = s.time || s.start_time
@@ -547,6 +580,7 @@ export default function Dashboard() {
   const allItems = calendar.flatMap(day =>
     (day.items || []).map(item => ({ ...item, date: day.date }))
   )
+  const currentSessions = proximateSessions(calendar, today)
   const upcomingSessions = allItems.filter(s =>
     s.date >= todayStr && (s.status === 'planned' || !s.status) && s.session_id
   ).slice(0, 3)
@@ -593,6 +627,8 @@ export default function Dashboard() {
           {today.getHours() < 12 ? 'Morning' : today.getHours() < 17 ? 'Afternoon' : 'Evening'}
         </h1>
       </div>
+
+      {!loading && <TodaySessionCard sessions={currentSessions} />}
 
       {!loading && !activeSeason && <SeasonStartCard onStarted={handleSeasonStarted} />}
       {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} notice={seasonNotice} />}
