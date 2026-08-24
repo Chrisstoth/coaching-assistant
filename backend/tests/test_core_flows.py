@@ -115,6 +115,31 @@ class CoreFlowTests(unittest.TestCase):
         parsed = _extract_register_date("Monday PM 24thaugust", today=date(2026, 8, 24))
         self.assertEqual(parsed, date(2026, 8, 24))
 
+    def test_session_context_uses_named_weekday_without_index_ambiguity(self):
+        with SessionLocal() as db:
+            monday = models.PoolSlot(
+                day_of_week=0, time="20:30", end_time="21:30",
+                label="Named Monday PM", active=True,
+            )
+            tuesday = models.PoolSlot(
+                day_of_week=1, time="20:00", end_time="21:00",
+                label="Named Tuesday PM", active=True,
+            )
+            db.add_all([monday, tuesday])
+            db.commit()
+            monday_id, tuesday_id = monday.id, tuesday.id
+
+            context = execute_tool(
+                "get_session_context", {"day": "Monday", "time_period": "PM"}, db,
+            )
+            self.assertIn("Named Monday PM", context)
+            self.assertNotIn("Named Tuesday PM", context)
+
+            db.query(models.PoolSlot).filter(
+                models.PoolSlot.id.in_([monday_id, tuesday_id]),
+            ).delete(synchronize_session=False)
+            db.commit()
+
     def test_agent_read_tools_return_compact_stored_evidence(self):
         with SessionLocal() as db:
             swimmer = models.Swimmer(name="Agent Tool Swimmer", squad="Agent Test")

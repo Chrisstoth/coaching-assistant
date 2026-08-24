@@ -146,6 +146,7 @@ How to behave as a coaching partner:
 What this system can do — you have a live database:
 - Swimmer records, times, observations, loads, qualifications and plans are real and persistent.
 - Use the read-only database tools proactively instead of guessing or asking the coach to repeat stored facts.
+- For timetable facts, use get_session_context with the weekday name. Never infer that a stored slot is missing from model context alone.
 - Retrieve the smallest useful slice: resolve the swimmer first, then request only the times, observations, load or planning state needed.
 - Never claim that a database change has been made. Conversational changes are proposed and applied only through the app's confirmation or draft-review workflow.
 - Specialist session, macro, meso, micro and taper requests are handled by structured planning workflows outside this general conversation.
@@ -484,7 +485,15 @@ def get_tools() -> list:
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "day_of_week": {"type": "integer", "minimum": 0, "maximum": 6},
+                    "day": {
+                        "type": "string",
+                        "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+                        "description": "Preferred weekday input; use the name stated by the coach.",
+                    },
+                    "day_of_week": {
+                        "type": "integer", "minimum": 0, "maximum": 6,
+                        "description": "Legacy input only: 0=Monday, 1=Tuesday, 2=Wednesday, 3=Thursday, 4=Friday, 5=Saturday, 6=Sunday.",
+                    },
                     "time_period": {"type": "string", "enum": ["AM", "PM"]},
                 },
                 "required": [],
@@ -774,8 +783,16 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
         ]})
 
     if tool_name == "get_session_context":
+        day_names = {
+            "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+            "friday": 4, "saturday": 5, "sunday": 6,
+        }
+        named_day = str(tool_input.get("day") or "").strip().lower()
+        day_of_week = day_names.get(named_day)
+        if day_of_week is None:
+            day_of_week = tool_input.get("day_of_week")
         hint = {
-            "dow": tool_input.get("day_of_week"),
+            "dow": day_of_week,
             "time_period": tool_input.get("time_period"),
         }
         context = build_session_writing_context(db, hint)
