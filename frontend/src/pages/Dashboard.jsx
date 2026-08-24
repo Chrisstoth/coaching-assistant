@@ -275,9 +275,24 @@ function SeasonStartCard({ onStarted }) {
     setError('')
     try {
       const season = await api.startPlanningSeason({ ...form, is_current: true })
-      onStarted(season)
+      await onStarted(season, 'Season started and saved.')
     } catch (err) {
-      setError(err.message || 'Could not start the season')
+      // The server may have committed successfully even if the response was
+      // interrupted. Read back the durable state before showing a failure.
+      try {
+        const current = await api.getCurrentPlanningSeason()
+        const matches = current
+          && current.name === form.name
+          && current.date_from === form.date_from
+          && current.date_to === form.date_to
+        if (matches) {
+          await onStarted(current, 'Season was saved successfully. The confirmation response was interrupted.')
+          return
+        }
+      } catch {
+        // Keep the original error below, with a safe retry instruction.
+      }
+      setError(`${err.message || 'Could not confirm the season save'}. Refresh before trying again; it may already have saved.`)
     } finally {
       setSaving(false)
     }
@@ -342,7 +357,7 @@ function SeasonStartCard({ onStarted }) {
   )
 }
 
-function CurrentSeasonCard({ season, pulse }) {
+function CurrentSeasonCard({ season, pulse, notice }) {
   const established = pulse.filter(sw => sw.attendance_state === 'established').length
   const building = pulse.filter(sw => sw.attendance_state === 'building_baseline').length
   return (
@@ -358,6 +373,9 @@ function CurrentSeasonCard({ season, pulse }) {
       </div>
       {building > 0 && (
         <p className="text-[11px] text-pool-500 mt-2">Keep taking registers; attendance flags begin after 4 recorded opportunities per swimmer.</p>
+      )}
+      {notice && (
+        <p className="text-[11px] text-emerald-300 mt-2">{notice}</p>
       )}
     </section>
   )
@@ -491,6 +509,7 @@ export default function Dashboard() {
   const [assistantInbox, setAssistantInbox] = useState({ items: [], counts: {} })
   const [currentSeason, setCurrentSeason] = useState(null)
   const [availability, setAvailability] = useState({ items: [], current_count: 0, upcoming_count: 0 })
+  const [seasonNotice, setSeasonNotice] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -537,8 +556,9 @@ export default function Dashboard() {
     s.date < todayStr && s.status !== 'cancelled' && !s.registered && s.session_id
   ).slice(0, 3)
 
-  const handleSeasonStarted = async (season) => {
+  const handleSeasonStarted = async (season, notice = '') => {
     setCurrentSeason(season)
+    setSeasonNotice(notice)
     const [pulseData, inbox] = await Promise.all([
       api.getSquadPulse().catch(() => []),
       api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
@@ -575,7 +595,7 @@ export default function Dashboard() {
       </div>
 
       {!loading && !activeSeason && <SeasonStartCard onStarted={handleSeasonStarted} />}
-      {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} />}
+      {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} notice={seasonNotice} />}
 
       {!loading && <AvailabilityCard report={availability} />}
 
