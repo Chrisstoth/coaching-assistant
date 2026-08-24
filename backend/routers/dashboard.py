@@ -112,26 +112,31 @@ def squad_pulse(db: DBSession = Depends(get_db)):
 
     swimmer_ids = [s.id for s in swimmers]
 
-    # Sessions attended last 4 weeks (count of SwimmerSessionLoad entries)
-    loads = db.query(
-        models.SwimmerSessionLoad.swimmer_id,
-    ).filter(
-        models.SwimmerSessionLoad.swimmer_id.in_(swimmer_ids),
-        models.SwimmerSessionLoad.session_date >= four_weeks_ago,
-    ).all()
+    # Current-season attendance comes only from explicitly recorded registers.
+    current_season = db.query(models.Season).filter(
+        models.Season.is_current.is_(True),
+    ).order_by(models.Season.date_from.desc()).first()
+    monitoring_start = max(four_weeks_ago, current_season.date_from) if current_season else four_weeks_ago
+    attendance_rows = []
+    if current_season and current_season.date_from <= today <= current_season.date_to:
+        attendance_rows = db.query(
+            models.SessionEntry.swimmer_id,
+            models.SessionEntry.attended,
+        ).join(
+            models.Session, models.SessionEntry.session_id == models.Session.id,
+        ).filter(
+            models.SessionEntry.swimmer_id.in_(swimmer_ids),
+            models.SessionEntry.attended.is_not(None),
+            models.Session.date >= monitoring_start,
+            models.Session.date <= today,
+            models.Session.status != "cancelled",
+        ).all()
     attended_by_swimmer = defaultdict(int)
-    for (sw_id,) in loads:
-        attended_by_swimmer[sw_id] += 1
-
-    # Expected sessions: SwimmerSlot count × 4 weeks
-    slots = db.query(
-        models.SwimmerSlot.swimmer_id,
-    ).filter(
-        models.SwimmerSlot.swimmer_id.in_(swimmer_ids),
-    ).all()
-    slots_by_swimmer = defaultdict(int)
-    for (sw_id,) in slots:
-        slots_by_swimmer[sw_id] += 1
+    recorded_by_swimmer = defaultdict(int)
+    for sw_id, attended in attendance_rows:
+        recorded_by_swimmer[sw_id] += 1
+        if attended:
+            attended_by_swimmer[sw_id] += 1
 
     # Approaching targets (deadline ≤ 8 weeks, unachieved)
     targets = db.query(models.SwimmerTarget).filter(
@@ -190,8 +195,15 @@ def squad_pulse(db: DBSession = Depends(get_db)):
     result = []
     for sw in swimmers:
         attended = attended_by_swimmer.get(sw.id, 0)
-        slots_per_week = slots_by_swimmer.get(sw.id, 3)
-        expected = slots_per_week * 4
+        recorded = recorded_by_swimmer.get(sw.id, 0)
+        if not current_season or today < current_season.date_from:
+            attendance_state = "season_not_started"
+        elif today > current_season.date_to:
+            attendance_state = "season_ended"
+        elif recorded < 4:
+            attendance_state = "building_baseline"
+        else:
+            attendance_state = "established"
 
         # Approaching target
         target_data = None
@@ -228,7 +240,13 @@ def squad_pulse(db: DBSession = Depends(get_db)):
             "name": sw.name,
             "gender": sw.gender,
             "sessions_attended": attended,
-            "sessions_expected": max(expected, 1),
+            "sessions_expected": recorded,
+            "sessions_recorded": recorded,
+            "attendance_state": attendance_state,
+            "baseline_sessions_needed": max(0, 4 - recorded),
+            "monitoring_start": monitoring_start.isoformat(),
+            "season_id": current_season.id if current_season else None,
+            "season_name": current_season.name if current_season else None,
             "approaching_target": target_data,
             "last_observation": obs_data,
             "has_recent_skill_flag": sw.id in flagged,

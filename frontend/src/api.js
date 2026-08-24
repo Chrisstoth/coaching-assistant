@@ -343,6 +343,8 @@ export const api = {
 
   // Persisted planning intelligence
   getPlanningSeasons: () => request('GET', '/planning-agent/seasons'),
+  getCurrentPlanningSeason: () => request('GET', '/planning-agent/seasons/current'),
+  startPlanningSeason: (data) => request('POST', '/planning-agent/seasons/start', data),
   createPlanningSeason: (data) => request('POST', '/planning-agent/seasons', data),
   getPlanningPathways: (macroId) => request('GET', `/planning-agent/pathways${macroId ? `?macro_id=${macroId}` : ''}`),
   createPlanningPathway: (data) => request('POST', '/planning-agent/pathways', data),

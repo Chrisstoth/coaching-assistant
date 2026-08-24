@@ -144,6 +144,73 @@ def list_seasons(db: Session = Depends(get_db)):
     return [_season_out(s) for s in db.query(models.Season).order_by(models.Season.date_from).all()]
 
 
+@router.get("/seasons/current")
+def current_season(db: Session = Depends(get_db)):
+    row = db.query(models.Season).filter(
+        models.Season.is_current.is_(True),
+    ).order_by(models.Season.date_from.desc()).first()
+    return _season_out(row) if row else None
+
+
+@router.post("/seasons/start", status_code=201)
+def start_season(body: SeasonIn, db: Session = Depends(get_db)):
+    """Start a monitoring/planning season without deleting historical evidence."""
+    if body.date_to < body.date_from:
+        raise HTTPException(422, "Season end date must be on or after its start date")
+
+    existing = db.query(models.Season).filter(
+        models.Season.is_current.is_(True),
+        models.Season.name == body.name,
+        models.Season.date_from == body.date_from,
+        models.Season.date_to == body.date_to,
+    ).first()
+    if existing:
+        return {**_season_out(existing), "linked_macros": 0, "resolved_old_recommendations": 0}
+
+    db.query(models.Season).update({"is_current": False})
+    row = models.Season(**{**body.model_dump(), "is_current": True})
+    db.add(row)
+    db.flush()
+
+    overlapping_macros = db.query(models.TrainingMacro).filter(
+        models.TrainingMacro.date_from <= body.date_to,
+        models.TrainingMacro.date_to >= body.date_from,
+    ).all()
+    for macro in overlapping_macros:
+        macro.season_id = row.id
+
+    old_macro_ids = [macro_id for (macro_id,) in db.query(models.TrainingMacro.id).filter(
+        models.TrainingMacro.date_to < body.date_from,
+    ).all()]
+    resolved = 0
+    if old_macro_ids:
+        old_recommendations = db.query(models.PlanningRecommendation).filter(
+            models.PlanningRecommendation.macro_id.in_(old_macro_ids),
+            models.PlanningRecommendation.status.in_(("open", "in_progress", "accepted", "snoozed")),
+        ).all()
+        now = datetime.now(timezone.utc)
+        for recommendation in old_recommendations:
+            previous_status = recommendation.status
+            recommendation.status = "resolved"
+            recommendation.resolved_at = now
+            recommendation.updated_at = now
+            recommendation.follow_up_at = None
+            record_recommendation_event(db, recommendation, "season_rollover_resolved", {
+                "from": previous_status,
+                "new_season_id": row.id,
+                "new_season": row.name,
+            })
+            resolved += 1
+
+    db.commit()
+    db.refresh(row)
+    return {
+        **_season_out(row),
+        "linked_macros": len(overlapping_macros),
+        "resolved_old_recommendations": resolved,
+    }
+
+
 @router.post("/seasons", status_code=201)
 def create_season(body: SeasonIn, db: Session = Depends(get_db)):
     if body.date_to < body.date_from:

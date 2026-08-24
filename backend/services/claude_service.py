@@ -1053,6 +1053,32 @@ def _coaching_context_for_prompt(profile: models.CoachingProfile, *, full: bool 
     return compact[:COACHING_CONTEXT_CHAR_LIMIT]
 
 
+def _current_season_prompt_context(db: DBSession) -> str:
+    """Small, durable season boundary supplied to every planning conversation."""
+    from datetime import date as date_type
+
+    season = db.query(models.Season).filter(
+        models.Season.is_current.is_(True),
+    ).order_by(models.Season.date_from.desc()).first()
+    if not season:
+        return (
+            "CURRENT SEASON: Not started in the app. Treat recent attendance as "
+            "unbaselined and ask the coach to start the season before judging patterns."
+        )
+    today = date_type.today()
+    if today < season.date_from:
+        position = f"starts in {(season.date_from - today).days} days"
+    elif today > season.date_to:
+        position = f"ended {(today - season.date_to).days} days ago"
+    else:
+        position = f"week {(today - season.date_from).days // 7 + 1}"
+    return (
+        f"CURRENT SEASON: {season.name} | {season.date_from} to {season.date_to} | {position}. "
+        "History before the start remains useful background. For current attendance, a missing "
+        "register is unknown, not an absence; only judge a pattern from recorded opportunities."
+    )
+
+
 def get_system_prompt(
     db: DBSession,
     extra: str = "",
@@ -1069,7 +1095,7 @@ def get_system_prompt(
         .filter(models.CoachingProfile.is_current == True)
         .first()
     )
-    parts = [BASE_SYSTEM]
+    parts = [BASE_SYSTEM, f"---\n{_current_season_prompt_context(db)}"]
     if profile:
         coaching_context = _coaching_context_for_prompt(
             profile,
@@ -1152,7 +1178,7 @@ Always show where you are in the hierarchy. If you're planning a meso, say which
 def get_season_plan_system_prompt(db: DBSession, macro_id: int = None) -> str:
     """Build the system prompt for a season planning thread — includes macro/meso context."""
     from datetime import date as date_type
-    parts = [SEASON_PLAN_BASE]
+    parts = [SEASON_PLAN_BASE, f"---\n{_current_season_prompt_context(db)}"]
 
     # Coaching philosophy
     profile = (
@@ -1244,7 +1270,7 @@ CRITICAL: You cannot reliably judge adaptation from times alone. A swimmer may b
 def get_athlete_plan_system_prompt(db: DBSession) -> str:
     """Build the system prompt for an athlete planning thread."""
     from datetime import date as date_type, timedelta
-    parts = [ATHLETE_PLAN_BASE]
+    parts = [ATHLETE_PLAN_BASE, f"---\n{_current_season_prompt_context(db)}"]
 
     # Coaching philosophy
     profile = (
@@ -2321,6 +2347,10 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
 
     today = date_type.today()
     four_weeks_ago = today - timedelta(weeks=4)
+    current_season = db.query(models.Season).filter(
+        models.Season.is_current.is_(True),
+    ).order_by(models.Season.date_from.desc()).first()
+    monitoring_start = max(four_weeks_ago, current_season.date_from) if current_season else four_weeks_ago
 
     # All-time
     all_entries = (
@@ -2333,16 +2363,20 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
     overall_pct = round(all_attended / all_total * 100) if all_total else None
 
     # Last 4 weeks
-    recent_entries = (
-        db.query(models.SessionEntry, models.Session)
-        .join(models.Session, models.SessionEntry.session_id == models.Session.id)
-        .filter(
-            models.SessionEntry.swimmer_id == swimmer_id,
-            models.Session.date >= four_weeks_ago,
-            models.Session.status != 'cancelled',
+    recent_entries = []
+    if current_season and current_season.date_from <= today <= current_season.date_to:
+        recent_entries = (
+            db.query(models.SessionEntry, models.Session)
+            .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+            .filter(
+                models.SessionEntry.swimmer_id == swimmer_id,
+                models.SessionEntry.attended.is_not(None),
+                models.Session.date >= monitoring_start,
+                models.Session.date <= today,
+                models.Session.status != 'cancelled',
+            )
+            .all()
         )
-        .all()
-    )
     four_week_total = len(recent_entries)
     four_week_attended = sum(1 for e, _ in recent_entries if e.attended)
     four_week_pct = round(four_week_attended / four_week_total * 100) if four_week_total else None
@@ -2396,16 +2430,21 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
 
     # Weekly breakdown — last 8 weeks
     eight_weeks_ago = today - timedelta(weeks=8)
-    weekly_rows = (
-        db.query(models.SessionEntry, models.Session)
-        .join(models.Session, models.SessionEntry.session_id == models.Session.id)
-        .filter(
-            models.SessionEntry.swimmer_id == swimmer_id,
-            models.Session.date >= eight_weeks_ago,
-            models.Session.status != 'cancelled',
+    weekly_start = max(eight_weeks_ago, current_season.date_from) if current_season else eight_weeks_ago
+    weekly_rows = []
+    if current_season and current_season.date_from <= today <= current_season.date_to:
+        weekly_rows = (
+            db.query(models.SessionEntry, models.Session)
+            .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+            .filter(
+                models.SessionEntry.swimmer_id == swimmer_id,
+                models.SessionEntry.attended.is_not(None),
+                models.Session.date >= weekly_start,
+                models.Session.date <= today,
+                models.Session.status != 'cancelled',
+            )
+            .all()
         )
-        .all()
-    )
     week_map: dict = {}
     for entry, session in weekly_rows:
         iso = session.date.isocalendar()
@@ -2424,6 +2463,14 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
         "four_week_pct": four_week_pct,
         "four_week_attended": four_week_attended,
         "four_week_total": four_week_total,
+        "attendance_state": (
+            "season_not_started" if not current_season or today < current_season.date_from
+            else "season_ended" if today > current_season.date_to
+            else "building_baseline" if four_week_total < 4
+            else "established"
+        ),
+        "monitoring_start": monitoring_start.isoformat(),
+        "current_season": current_season.name if current_season else None,
         "per_slot": per_slot,
         "weekly": weekly,
     }

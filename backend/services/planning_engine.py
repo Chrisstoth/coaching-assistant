@@ -173,9 +173,16 @@ def wake_due_followups(db: DBSession, now: Optional[datetime] = None) -> int:
 
 def refresh_all_macros(db: DBSession, as_of: Optional[date] = None) -> dict:
     """Refresh every macro with active pathways; this is local and makes no AI calls."""
-    macro_ids = [row[0] for row in db.query(models.PlanningPathway.macro_id).filter(
-        models.PlanningPathway.active.is_(True),
-    ).distinct().all()]
+    macro_query = db.query(models.PlanningPathway.macro_id).join(
+        models.TrainingMacro,
+        models.PlanningPathway.macro_id == models.TrainingMacro.id,
+    ).filter(models.PlanningPathway.active.is_(True))
+    current_season = db.query(models.Season).filter(
+        models.Season.is_current.is_(True),
+    ).order_by(models.Season.date_from.desc()).first()
+    if current_season:
+        macro_query = macro_query.filter(models.TrainingMacro.season_id == current_season.id)
+    macro_ids = [row[0] for row in macro_query.distinct().all()]
     totals = {"macros": 0, "pathways": 0, "swimmers": 0, "snapshots": 0, "follow_ups_due": 0}
     for macro_id in macro_ids:
         counts = refresh_macro(macro_id, db, as_of)

@@ -3,7 +3,7 @@ import io
 import json
 import tempfile
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 from pathlib import Path
@@ -353,6 +353,137 @@ class CoreFlowTests(unittest.TestCase):
             usage.json()["configuration"]["history_limits"]["general"],
             GENERAL_HISTORY,
         )
+
+    def test_season_rollover_builds_attendance_baseline_without_erasing_history(self):
+        start = date.today() - timedelta(days=3)
+        end = start.replace(year=start.year + 1)
+        with SessionLocal() as db:
+            original_macro_seasons = {
+                macro.id: macro.season_id for macro in db.query(models.TrainingMacro).all()
+            }
+            original_current_season_ids = {
+                season.id for season in db.query(models.Season).filter(models.Season.is_current.is_(True)).all()
+            }
+            swimmer = models.Swimmer(name="Rollover Baseline Swimmer", squad="Silver 1")
+            db.add(swimmer)
+            db.flush()
+            swimmer_id = swimmer.id
+            historical_time = models.SwimTime(
+                swimmer_id=swimmer_id, event="100 Freestyle SCM", course="SCM",
+                distance=100, stroke="Freestyle", time_seconds=70.0,
+                date=start - timedelta(days=30),
+            )
+            old_macro = models.TrainingMacro(
+                name="Old season macro", date_from=start - timedelta(days=100),
+                date_to=start - timedelta(days=1),
+            )
+            current_macro = models.TrainingMacro(
+                name="New season macro", date_from=start, date_to=end,
+            )
+            db.add_all([historical_time, old_macro, current_macro])
+            db.flush()
+            old_recommendation = models.PlanningRecommendation(
+                macro_id=old_macro.id, kind="old_test", severity="warning",
+                title="Old concern", detail="Belongs to the old season",
+                fingerprint=f"rollover-test-{swimmer_id}", status="open",
+            )
+            historical_session = models.Session(
+                date=start - timedelta(days=1), squad="Silver 1", status="completed",
+            )
+            db.add_all([old_recommendation, historical_session])
+            db.flush()
+            db.add(models.SessionEntry(
+                session_id=historical_session.id, swimmer_id=swimmer_id, attended=False,
+            ))
+            db.commit()
+            old_macro_id = old_macro.id
+            current_macro_id = current_macro.id
+            old_recommendation_id = old_recommendation.id
+            historical_time_id = historical_time.id
+
+        before = self.client.get("/dashboard/squad-pulse", headers=self.headers)
+        self.assertEqual(before.status_code, 200, before.text)
+        row = next(item for item in before.json() if item["id"] == swimmer_id)
+        self.assertEqual(row["attendance_state"], "season_not_started")
+        self.assertEqual(row["sessions_expected"], 0)
+
+        started = self.client.post(
+            "/planning-agent/seasons/start", headers=self.headers,
+            json={
+                "name": "Rollover Test Season", "squad": "Silver 1",
+                "date_from": start.isoformat(), "date_to": end.isoformat(),
+                "narrative": "Build a clean opening baseline.", "is_current": True,
+            },
+        )
+        self.assertEqual(started.status_code, 201, started.text)
+        self.assertGreaterEqual(started.json()["linked_macros"], 1)
+        self.assertGreaterEqual(started.json()["resolved_old_recommendations"], 1)
+        season_id = started.json()["id"]
+
+        with SessionLocal() as db:
+            self.assertIsNotNone(db.get(models.SwimTime, historical_time_id))
+            self.assertEqual(db.get(models.TrainingMacro, current_macro_id).season_id, season_id)
+            recommendation = db.get(models.PlanningRecommendation, old_recommendation_id)
+            self.assertEqual(recommendation.status, "resolved")
+            self.assertTrue(any(event.event_type == "season_rollover_resolved" for event in recommendation.events))
+            for index in range(3):
+                session = models.Session(
+                    date=start + timedelta(days=index), squad="Silver 1", status="completed",
+                )
+                db.add(session)
+                db.flush()
+                db.add(models.SessionEntry(
+                    session_id=session.id, swimmer_id=swimmer_id, attended=index == 0,
+                ))
+            db.commit()
+
+        building = self.client.get("/dashboard/squad-pulse", headers=self.headers).json()
+        row = next(item for item in building if item["id"] == swimmer_id)
+        self.assertEqual(row["attendance_state"], "building_baseline")
+        self.assertEqual(row["sessions_expected"], 3)
+        self.assertEqual(row["sessions_attended"], 1)
+
+        with SessionLocal() as db:
+            session = models.Session(date=date.today(), squad="Silver 1", status="completed")
+            db.add(session)
+            db.flush()
+            db.add(models.SessionEntry(session_id=session.id, swimmer_id=swimmer_id, attended=False))
+            db.commit()
+
+        established = self.client.get("/dashboard/squad-pulse", headers=self.headers).json()
+        row = next(item for item in established if item["id"] == swimmer_id)
+        self.assertEqual(row["attendance_state"], "established")
+        self.assertEqual(row["sessions_expected"], 4)
+        self.assertEqual(row["sessions_attended"], 1)
+
+        with SessionLocal() as db:
+            session_ids = [item[0] for item in db.query(models.Session.id).join(
+                models.SessionEntry, models.SessionEntry.session_id == models.Session.id,
+            ).filter(models.SessionEntry.swimmer_id == swimmer_id).all()]
+            db.query(models.SessionEntry).filter(models.SessionEntry.swimmer_id == swimmer_id).delete()
+            db.query(models.Session).filter(models.Session.id.in_(session_ids)).delete(synchronize_session=False)
+            db.query(models.PlanningRecommendationEvent).filter(
+                models.PlanningRecommendationEvent.recommendation_id == old_recommendation_id,
+            ).delete()
+            db.query(models.PlanningRecommendation).filter(
+                models.PlanningRecommendation.id == old_recommendation_id,
+            ).delete()
+            db.query(models.SwimTime).filter(models.SwimTime.id == historical_time_id).delete()
+            db.query(models.TrainingMacro).filter(
+                models.TrainingMacro.id.in_([old_macro_id, current_macro_id]),
+            ).delete(synchronize_session=False)
+            for macro_id, prior_season_id in original_macro_seasons.items():
+                macro = db.get(models.TrainingMacro, macro_id)
+                if macro:
+                    macro.season_id = prior_season_id
+            db.flush()
+            db.query(models.Season).filter(models.Season.id == season_id).delete()
+            if original_current_season_ids:
+                db.query(models.Season).filter(
+                    models.Season.id.in_(original_current_season_ids),
+                ).update({"is_current": True}, synchronize_session=False)
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
 
     def test_combined_workbook_imports_roster_and_replaces_times(self):
         legacy = self.client.post(

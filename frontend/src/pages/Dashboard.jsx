@@ -123,6 +123,20 @@ function AttendanceBar({ attended, expected }) {
   )
 }
 
+function AttendanceStatus({ swimmer }) {
+  if (swimmer.attendance_state === 'established') {
+    return <AttendanceBar attended={swimmer.sessions_attended} expected={swimmer.sessions_expected} />
+  }
+  const label = swimmer.attendance_state === 'building_baseline'
+    ? `${swimmer.sessions_recorded || 0}/4 baseline`
+    : 'Not baselined'
+  return (
+    <span className="text-[10px] text-teal-300 bg-teal-900/25 border border-teal-800/40 px-1.5 py-0.5 rounded-md whitespace-nowrap">
+      {label}
+    </span>
+  )
+}
+
 function TargetChip({ target }) {
   const { weeks_out, days_out, gap_seconds } = target
   const urgent = weeks_out <= 2
@@ -142,8 +156,8 @@ function TargetChip({ target }) {
 }
 
 function SwimmerPulseRow({ swimmer }) {
-  const { id, name, sessions_attended, sessions_expected, approaching_target, last_observation, has_recent_skill_flag } = swimmer
-  const noData = sessions_attended === 0 && !last_observation && !approaching_target
+  const { id, name, approaching_target, last_observation, has_recent_skill_flag } = swimmer
+  const noData = swimmer.sessions_recorded === 0 && !last_observation && !approaching_target
 
   return (
     <Link to={`/swimmers/${id}`} className="block active:opacity-70 transition-opacity">
@@ -153,7 +167,7 @@ function SwimmerPulseRow({ swimmer }) {
           <span className="text-sm font-medium text-pool-200 w-28 shrink-0 truncate">{name}</span>
 
           {/* Attendance */}
-          <AttendanceBar attended={sessions_attended} expected={sessions_expected} />
+          <AttendanceStatus swimmer={swimmer} />
 
           {/* Spacer */}
           <div className="flex-1" />
@@ -174,7 +188,7 @@ function SwimmerPulseRow({ swimmer }) {
             {last_observation.snippet}
           </p>
         )}
-        {noData && (
+        {noData && swimmer.attendance_state === 'established' && (
           <p className="text-[11px] text-pool-700 mt-1">No recent data</p>
         )}
       </div>
@@ -200,7 +214,7 @@ function SquadPulse({ pulse }) {
 
       {/* Legend */}
       <div className="flex items-center gap-3 mb-2 px-0.5">
-        <span className="text-[10px] text-pool-600">Attendance (4wk)</span>
+        <span className="text-[10px] text-pool-600">Recorded attendance</span>
         <div className="flex gap-1 items-center">
           <div className="w-1.5 h-2.5 rounded-sm bg-emerald-500" />
           <span className="text-[10px] text-pool-600">≥80%</span>
@@ -228,6 +242,115 @@ function SquadPulse({ pulse }) {
         >
           {expanded ? '↑ Show less' : `↓ Show ${pulse.length - PREVIEW} more`}
         </button>
+      )}
+    </section>
+  )
+}
+
+function SeasonStartCard({ onStarted }) {
+  const now = new Date()
+  const year = now.getFullYear()
+  const seasonEndYear = now.getMonth() >= 6 ? year + 1 : year
+  const [expanded, setExpanded] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [form, setForm] = useState({
+    name: `${seasonEndYear - 1}/${String(seasonEndYear).slice(-2)} Season`,
+    squad: 'Silver 1',
+    date_from: now.toISOString().slice(0, 10),
+    date_to: `${seasonEndYear}-07-31`,
+    narrative: '',
+  })
+
+  const submit = async (event) => {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      const season = await api.startPlanningSeason({ ...form, is_current: true })
+      onStarted(season)
+    } catch (err) {
+      setError(err.message || 'Could not start the season')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <section className="bg-teal-900/20 border border-teal-700/40 rounded-2xl p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-teal-300 uppercase tracking-wide">New season</p>
+          <h2 className="font-semibold text-pool-100 mt-1">Start the current-season baseline</h2>
+          <p className="text-xs text-pool-400 mt-1 leading-relaxed">
+            This keeps every old time and coaching note, but stops last season's missing registers being treated as current concerns.
+          </p>
+        </div>
+        {!expanded && (
+          <button onClick={() => setExpanded(true)} className="shrink-0 bg-teal-700 hover:bg-teal-600 rounded-lg px-3 py-2 text-xs font-semibold">
+            Start
+          </button>
+        )}
+      </div>
+      {expanded && (
+        <form onSubmit={submit} className="mt-4 space-y-3 border-t border-teal-800/40 pt-4">
+          <label className="block text-xs text-pool-400">
+            Season name
+            <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+              className="mt-1 w-full bg-pool-900 border border-pool-600 rounded-lg px-3 py-2.5 text-sm text-pool-100" />
+          </label>
+          <label className="block text-xs text-pool-400">
+            Squad
+            <input value={form.squad} onChange={e => setForm({ ...form, squad: e.target.value })}
+              className="mt-1 w-full bg-pool-900 border border-pool-600 rounded-lg px-3 py-2.5 text-sm text-pool-100" />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block text-xs text-pool-400">
+              Starts
+              <input required type="date" value={form.date_from} onChange={e => setForm({ ...form, date_from: e.target.value })}
+                className="mt-1 w-full bg-pool-900 border border-pool-600 rounded-lg px-2 py-2.5 text-sm text-pool-100" />
+            </label>
+            <label className="block text-xs text-pool-400">
+              Ends
+              <input required type="date" value={form.date_to} onChange={e => setForm({ ...form, date_to: e.target.value })}
+                className="mt-1 w-full bg-pool-900 border border-pool-600 rounded-lg px-2 py-2.5 text-sm text-pool-100" />
+            </label>
+          </div>
+          <label className="block text-xs text-pool-400">
+            Opening intent (optional)
+            <textarea rows="2" value={form.narrative} onChange={e => setForm({ ...form, narrative: e.target.value })}
+              placeholder="e.g. Re-establish routines, assess current capacity, then build towards winter meets"
+              className="mt-1 w-full bg-pool-900 border border-pool-600 rounded-lg px-3 py-2.5 text-sm text-pool-100 resize-none" />
+          </label>
+          {error && <p className="text-xs text-red-300">{error}</p>}
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setExpanded(false)} className="flex-1 bg-pool-700 rounded-lg py-2.5 text-sm font-semibold">Cancel</button>
+            <button disabled={saving} className="flex-1 bg-teal-700 disabled:opacity-50 rounded-lg py-2.5 text-sm font-semibold">
+              {saving ? 'Starting...' : 'Start season'}
+            </button>
+          </div>
+        </form>
+      )}
+    </section>
+  )
+}
+
+function CurrentSeasonCard({ season, pulse }) {
+  const established = pulse.filter(sw => sw.attendance_state === 'established').length
+  const building = pulse.filter(sw => sw.attendance_state === 'building_baseline').length
+  return (
+    <section className="bg-pool-800/60 border border-pool-700/60 rounded-xl px-3.5 py-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-teal-300 truncate">{season.name}</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">Current baseline starts {season.date_from}</p>
+        </div>
+        <span className="text-[11px] text-pool-400 shrink-0">
+          {building > 0 ? `${established}/${pulse.length} established` : `${established} established`}
+        </span>
+      </div>
+      {building > 0 && (
+        <p className="text-[11px] text-pool-500 mt-2">Keep taking registers; attendance flags begin after 4 recorded opportunities per swimmer.</p>
       )}
     </section>
   )
@@ -318,6 +441,7 @@ export default function Dashboard() {
   const [coachingProfile, setCoachingProfile] = useState(null)
   const [meetCountdowns, setMeetCountdowns] = useState({ group_targets: [], upcoming_meets: [] })
   const [assistantInbox, setAssistantInbox] = useState({ items: [], counts: {} })
+  const [currentSeason, setCurrentSeason] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -328,13 +452,15 @@ export default function Dashboard() {
       api.getSquadPulse().catch(() => []),
       api.getMeetCountdowns().catch(() => ({ group_targets: [], upcoming_meets: [] })),
       api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
-    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox]) => {
+      api.getCurrentPlanningSeason().catch(() => null),
+    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season]) => {
       setCalendar(cal)
       setCoachingNotes(notes)
       setCoachingProfile(ctx)
       setPulse(pulseData)
       setMeetCountdowns(countdowns)
       setAssistantInbox(inbox)
+      setCurrentSeason(season)
       setLoading(false)
     })
   }, [])
@@ -346,6 +472,7 @@ export default function Dashboard() {
 
   const today = new Date()
   const todayStr = today.toISOString().split('T')[0]
+  const activeSeason = currentSeason && currentSeason.date_to >= todayStr ? currentSeason : null
 
   const allItems = calendar.flatMap(day =>
     (day.items || []).map(item => ({ ...item, date: day.date }))
@@ -355,8 +482,19 @@ export default function Dashboard() {
   ).slice(0, 3)
 
   const pendingRegister = allItems.filter(s =>
+    activeSeason && s.date >= activeSeason.date_from &&
     s.date < todayStr && s.status !== 'cancelled' && !s.registered && s.session_id
   ).slice(0, 3)
+
+  const handleSeasonStarted = async (season) => {
+    setCurrentSeason(season)
+    const [pulseData, inbox] = await Promise.all([
+      api.getSquadPulse().catch(() => []),
+      api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
+    ])
+    setPulse(pulseData)
+    setAssistantInbox(inbox)
+  }
 
   const handleDeleted = (sessionId) => {
     setCalendar(prev => prev.map(day => ({
@@ -368,7 +506,8 @@ export default function Dashboard() {
   // Swimmers needing attention from pulse (approaching target in ≤2 weeks or very low attendance)
   const flaggedSwimmers = pulse.filter(sw =>
     (sw.approaching_target && sw.approaching_target.weeks_out <= 2) ||
-    (sw.sessions_attended / sw.sessions_expected < 0.4 && sw.sessions_expected >= 4)
+    (sw.attendance_state === 'established' && sw.sessions_expected >= 4 &&
+      sw.sessions_attended / sw.sessions_expected < 0.4)
   )
 
   return (
@@ -383,6 +522,9 @@ export default function Dashboard() {
           {today.getHours() < 12 ? 'Morning' : today.getHours() < 17 ? 'Afternoon' : 'Evening'}
         </h1>
       </div>
+
+      {!loading && !activeSeason && <SeasonStartCard onStarted={handleSeasonStarted} />}
+      {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} />}
 
       <AssistantInboxPreview inbox={assistantInbox} />
 
