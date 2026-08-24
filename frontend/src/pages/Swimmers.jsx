@@ -11,6 +11,15 @@ const COHORT_COLOURS = {
   red: 'bg-red-900/50 text-red-300 border-red-700/50',
 }
 
+function profileStatusFor(swimmer) {
+  return swimmer.profile_status || {
+    state: swimmer.has_profile ? 'complete' : 'not_started',
+    completed_areas: swimmer.has_profile ? 9 : 0,
+    total_areas: 9,
+    living_built: 0,
+  }
+}
+
 export default function Swimmers() {
   const [swimmers, setSwimmers] = useState([])
   const [cohorts, setCohorts] = useState([])
@@ -111,9 +120,9 @@ export default function Swimmers() {
         </div>
       )}
 
-      {/* Needs profile banner */}
+      {/* Foundation profile progress */}
       {!loading && !selecting && (() => {
-        const noProfile = swimmers.filter(s => s.active && !s.has_profile)
+        const noProfile = swimmers.filter(s => s.active && profileStatusFor(s).state !== 'complete')
         if (noProfile.length === 0) return null
         return (
           <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl overflow-hidden">
@@ -124,7 +133,7 @@ export default function Swimmers() {
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
                 <span className="text-xs font-semibold text-amber-300">
-                  {noProfile.length} swimmer{noProfile.length !== 1 ? 's' : ''} need a profile
+                  {noProfile.length} foundation profile{noProfile.length !== 1 ? 's' : ''} need attention
                 </span>
               </div>
               <svg
@@ -136,17 +145,29 @@ export default function Swimmers() {
             </button>
             {showNoProfile && (
               <div className="px-4 pb-3 space-y-1.5">
-                {noProfile.map(s => (
-                  <div key={s.id} className="flex items-center justify-between">
-                    <span className="text-xs text-pool-300">{s.name}</span>
-                    <button
-                      onClick={() => navigate(`/swimmers/${s.id}/profile-wizard`)}
-                      className="text-xs text-accent-400 hover:text-accent-300 font-medium"
-                    >
-                      Build profile →
-                    </button>
-                  </div>
-                ))}
+                <p className="text-xs text-pool-400 pb-1">
+                  Finish the one-off coaching foundation. Race, training and technical profiles keep developing afterwards.
+                </p>
+                {noProfile.map(s => {
+                  const status = profileStatusFor(s)
+                  return (
+                    <div key={s.id} className="flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-xs text-pool-300 truncate">{s.name}</p>
+                        <p className="text-[10px] text-pool-500">
+                          {status.completed_areas}/{status.total_areas} foundation areas
+                          {status.living_built > 0 ? ` · ${status.living_built} living section${status.living_built !== 1 ? 's' : ''}` : ''}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => navigate(`/swimmers/${s.id}/profile-wizard`)}
+                        className="text-xs text-accent-400 hover:text-accent-300 font-medium shrink-0"
+                      >
+                        {status.state === 'not_started' ? 'Build foundation' : 'Continue'} →
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
@@ -160,6 +181,7 @@ export default function Swimmers() {
       ) : (
         <div className="space-y-2">
           {filtered.map((s) => {
+            const profileStatus = profileStatusFor(s)
             const statusColor = {
               'active': 'text-green-300 bg-green-900',
               'sabbatical': 'text-yellow-300 bg-yellow-900',
@@ -217,8 +239,19 @@ export default function Swimmers() {
                       {s.status === 'sabbatical' ? 'Sabbatical' : 'Injury'}
                     </span>
                   )}
-                  {s.active && !s.has_profile && (
-                    <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" title="No profile" />
+                  {s.active && profileStatus.state !== 'complete' && (
+                    <span
+                      className={`text-[10px] rounded-full px-2 py-0.5 shrink-0 ${
+                        profileStatus.state === 'in_progress'
+                          ? 'bg-amber-900/50 text-amber-300'
+                          : 'bg-pool-700 text-pool-400'
+                      }`}
+                      title={(profileStatus.missing_areas || []).join(', ')}
+                    >
+                      {profileStatus.state === 'in_progress'
+                        ? `Profile ${profileStatus.completed_areas}/${profileStatus.total_areas}`
+                        : 'No foundation'}
+                    </span>
                   )}
                   {s.planning_cohort_id && cohortMap[s.planning_cohort_id] && (
                     <button

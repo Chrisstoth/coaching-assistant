@@ -124,7 +124,7 @@ export default function ProfileWizard() {
         </button>
 
         <div className="text-center">
-          <p className="text-sm font-semibold text-pool-100">Profile Wizard</p>
+          <p className="text-sm font-semibold text-pool-100">Foundation Profile</p>
           {swimmer && <p className="text-xs text-pool-500">{swimmer.name}</p>}
         </div>
 
@@ -145,6 +145,12 @@ export default function ProfileWizard() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+        <div className="bg-accent-700/20 border border-accent-700/40 rounded-xl px-3 py-2.5">
+          <p className="text-xs font-medium text-accent-400">One foundation, nine coaching areas</p>
+          <p className="text-[11px] text-pool-400 mt-1 leading-relaxed">
+            Complete this core picture once. Future confirmed notes add to it, while race, training and technical summaries develop separately through the season.
+          </p>
+        </div>
         {loading && (
           <div className="flex justify-start">
             <div className="bg-pool-700 rounded-2xl rounded-bl-sm px-4 py-3">
@@ -185,7 +191,7 @@ export default function ProfileWizard() {
 
         {saved && (
           <div className="bg-green-900/20 border border-green-800/50 rounded-xl px-4 py-3 text-sm text-green-300 text-center">
-            Profile saved — {swimmer?.name}'s physical and psychological profiles have been updated.
+            Foundation saved — {swimmer?.name}'s existing profile has been safely updated.
             <br />
             <button
               onClick={() => navigate(`/swimmers/${id}`)}

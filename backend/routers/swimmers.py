@@ -10,6 +10,7 @@ from backend.database import get_db
 from backend import models
 from backend.services import claude_service
 from backend.services.importer import match_or_create_swimmer
+from backend.services.profile_status import build_profile_status
 
 router = APIRouter()
 
@@ -70,7 +71,24 @@ def list_swimmers(
     if squad:
         q = q.filter(models.Swimmer.squad == squad)
     swimmers = q.order_by(models.Swimmer.name).all()
-    return [_swimmer_summary(s) for s in swimmers]
+    swimmer_ids = [s.id for s in swimmers]
+    profile_types_by_swimmer: dict[int, set[str]] = {sid: set() for sid in swimmer_ids}
+    if swimmer_ids:
+        version_rows = (
+            db.query(
+                models.SwimmerProfileVersion.swimmer_id,
+                models.SwimmerProfileVersion.profile_type,
+            )
+            .filter(models.SwimmerProfileVersion.swimmer_id.in_(swimmer_ids))
+            .distinct()
+            .all()
+        )
+        for swimmer_id, profile_type in version_rows:
+            profile_types_by_swimmer[swimmer_id].add(profile_type)
+    return [
+        _swimmer_summary(s, profile_types_by_swimmer.get(s.id, set()))
+        for s in swimmers
+    ]
 
 
 @router.post("", status_code=201)
@@ -513,7 +531,15 @@ def wizard_save(swimmer_id: int, body: WizardSaveRequest, db: DBSession = Depend
     if not body.messages:
         raise HTTPException(status_code=422, detail="No conversation to save.")
     messages = [m.model_dump() for m in body.messages]
-    return claude_service.save_wizard_profile(swimmer, messages, db)
+    # Reassessments add to the foundation rather than replacing areas which
+    # were not discussed in this conversation.
+    preserve_existing = bool(swimmer.physical_profile or swimmer.psychological_profile)
+    return claude_service.save_wizard_profile(
+        swimmer,
+        messages,
+        db,
+        preserve_existing=preserve_existing,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -961,7 +987,8 @@ def _get_or_404(swimmer_id: int, db: DBSession) -> models.Swimmer:
     return swimmer
 
 
-def _swimmer_summary(s: models.Swimmer) -> dict:
+def _swimmer_summary(s: models.Swimmer, profile_types=()) -> dict:
+    profile_status = build_profile_status(s, profile_types)
     return {
         "id": s.id,
         "name": s.name,
@@ -975,7 +1002,9 @@ def _swimmer_summary(s: models.Swimmer) -> dict:
         "status": s.status,
         "target_events": s.target_events,
         "course_bias": s.course_bias,
-        "has_profile": bool(s.physical_profile or s.psychological_profile),
+        # Kept for older clients; new clients should use profile_status.
+        "has_profile": profile_status["has_profile"],
+        "profile_status": profile_status,
         "planning_cohort_id": s.planning_cohort_id,
     }
 
@@ -1014,6 +1043,15 @@ def _swimmer_detail(s: models.Swimmer, db: DBSession) -> dict:
         .order_by(models.SwimmerProfileVersion.created_at.desc())
         .first()
     )
+    profile_types = {
+        row[0]
+        for row in (
+            db.query(models.SwimmerProfileVersion.profile_type)
+            .filter(models.SwimmerProfileVersion.swimmer_id == s.id)
+            .distinct()
+            .all()
+        )
+    }
     return {
         "id": s.id,
         "name": s.name,
@@ -1040,6 +1078,7 @@ def _swimmer_detail(s: models.Swimmer, db: DBSession) -> dict:
         "latest_race_profile": _profile_version_out(latest_race) if latest_race else None,
         "latest_training_profile": _profile_version_out(latest_training) if latest_training else None,
         "latest_biological_profile": _profile_version_out(latest_biological) if latest_biological else None,
+        "profile_status": build_profile_status(s, profile_types),
     }
 
 

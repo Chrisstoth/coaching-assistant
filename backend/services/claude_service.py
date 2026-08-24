@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend import models
 from backend.services.availability import availability_ranges, is_excused
 from backend.services.event_normalizer import canonicalize_event, event_parts
+from backend.services.profile_status import build_profile_status
 
 _client: Optional[anthropic.Anthropic] = None
 _client_proxy = None
@@ -4811,12 +4812,16 @@ The profile you build must be useful for:
 - Group allocation decisions (Group 1/2/3 split)
 - Understanding how this swimmer will respond to different stimuli
 
-Profile areas to cover across the conversation:
+Foundation areas to cover across the conversation:
 1. AEROBIC BASE — how well the swimmer holds pace over distance, how quickly they fatigue in longer sets, what the coach sees in aerobic-dominant sessions
 2. SPRINT / POWER PROFILE — alactic power, max speed, top-end speed quality, 15m burst vs 50m held speed
 3. RACE PATTERNS — split tendency (positive/negative/even), where they fade, how they respond to race stress
 4. FATIGUE & RECOVERY — how long they need between hard efforts, how they look at the end of a hard week, recovery between sessions
 5. TRAINING RESPONSE — what types of training they seem to respond well to, what doesn't seem to work, any notable adaptation patterns the coach has observed
+6. MOTIVATION — what engages them, what reduces engagement, and whether motivation is mainly intrinsic or external
+7. COMPETITION MINDSET — how they respond to pressure, expectations, nerves, setbacks, and success
+8. HARD-TRAINING MINDSET — what happens psychologically in difficult sets and what support helps
+9. COACHABILITY — how they receive, understand, retain, and act on feedback
 
 Rules:
 - Ask one focused area at a time. Don't fire a list of questions.
@@ -4824,7 +4829,8 @@ Rules:
 - Build on what the coach says — ask follow-up questions to get specifics, not generic answers.
 - When you have enough on an area, move to the next one naturally.
 - Be professional and direct — coaching partner tone, not chatbot.
-- When you've covered all five areas, tell the coach you have enough to synthesise a profile and prompt them to save.
+- When you've covered all nine areas, briefly name any area that still lacks evidence. Once all nine have useful evidence, tell the coach the foundation is complete and prompt them to save.
+- If the supplied foundation progress says nothing is missing, treat this as a review: ask what has changed or what the coach wants to correct, rather than restarting the full interview.
 
 Open the conversation with a brief intro and your first targeted question — using the swimmer's times data to frame it."""
 
@@ -4881,10 +4887,29 @@ def wizard_chat(
         f"{e['event']} ({e.get('course','?')})" if isinstance(e, dict) else str(e)
         for e in (swimmer.target_events or [])
     ) or "not set"
+    existing_profile_types = {
+        row[0]
+        for row in (
+            db.query(models.SwimmerProfileVersion.profile_type)
+            .filter(models.SwimmerProfileVersion.swimmer_id == swimmer.id)
+            .distinct()
+            .all()
+        )
+    }
+    foundation_status = build_profile_status(swimmer, existing_profile_types)
+    completed_areas = ", ".join(
+        area["label"] for area in foundation_status["areas"] if area["complete"]
+    ) or "none"
+    missing_areas = ", ".join(foundation_status["missing_areas"]) or "none"
 
     swimmer_intro = f"""SWIMMER: {swimmer.name}
 Gender: {swimmer.gender or '?'} | Squad: {swimmer.squad or '?'} | Target events: {target_events}
 {age_context}
+
+FOUNDATION PROGRESS:
+Already covered: {completed_areas}
+Still missing: {missing_areas}
+If an area is already covered, preserve it and focus the interview on missing areas unless the coach explicitly wants to revise it.
 
 TIMES DATA:
 {times_summary}

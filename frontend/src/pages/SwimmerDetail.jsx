@@ -172,6 +172,83 @@ function BlockStatusCard({ status }) {
   )
 }
 
+function ProfileProgressCard({ status, onOpenWizard }) {
+  if (!status) return null
+  const complete = status.state === 'complete'
+  const started = status.state === 'in_progress'
+  const tone = complete
+    ? 'border-green-700/50 bg-green-900/10'
+    : started
+    ? 'border-amber-700/50 bg-amber-900/10'
+    : 'border-pool-700 bg-pool-800'
+  const accent = complete ? 'text-green-300' : started ? 'text-amber-300' : 'text-pool-300'
+
+  return (
+    <section className={`rounded-xl border p-4 space-y-4 ${tone}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="font-semibold text-sm text-pool-100">Profile foundation</h3>
+            <span className={`text-xs font-semibold ${accent}`}>
+              {status.completed_areas}/{status.total_areas} areas
+            </span>
+          </div>
+          <div className="h-1.5 bg-pool-700 rounded-full overflow-hidden mt-2">
+            <div
+              className={`h-full rounded-full ${complete ? 'bg-green-500' : 'bg-amber-500'}`}
+              style={{ width: `${status.completion_percent}%` }}
+            />
+          </div>
+          <p className={`text-xs font-medium mt-2 ${accent}`}>{status.label}</p>
+          <p className="text-xs text-pool-400 mt-1 leading-relaxed">
+            {complete
+              ? 'Ready to use for planning. New coaching notes can refine this foundation without replacing what is already known.'
+              : 'Finish these core coaching areas once. The profile can then keep developing through notes and observations.'}
+          </p>
+        </div>
+      </div>
+
+      {status.missing_areas?.length > 0 && (
+        <div>
+          <p className="text-[10px] uppercase tracking-wide text-pool-500 mb-1.5">Still to cover</p>
+          <div className="flex flex-wrap gap-1.5">
+            {status.missing_areas.map(area => (
+              <span key={area} className="text-[10px] bg-pool-800/80 border border-pool-700 rounded-full px-2 py-1 text-pool-300">
+                {area}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={onOpenWizard}
+        className="w-full bg-accent-600 hover:bg-accent-500 rounded-lg py-2.5 text-sm font-semibold transition-colors"
+      >
+        {status.next_action}
+      </button>
+
+      <div className="border-t border-pool-700/70 pt-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold text-pool-300">Living profile</p>
+            <p className="text-[10px] text-pool-500 mt-0.5">Built from evidence over the season; not required to finish the foundation.</p>
+          </div>
+          <span className="text-xs text-pool-400">{status.living_built}/{status.living_total}</span>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5 mt-2">
+          {status.living_sections?.map(section => (
+            <div key={section.key} className="flex items-center gap-1.5 text-xs">
+              <span className={section.built ? 'text-green-400' : 'text-pool-600'}>{section.built ? '✓' : '○'}</span>
+              <span className={section.built ? 'text-pool-300' : 'text-pool-500'}>{section.label}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 export default function SwimmerDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -411,6 +488,11 @@ export default function SwimmerDetail() {
       <div className="flex-1 overflow-y-auto p-4">
         {tab === 'Overview' && (
           <div className="space-y-4">
+
+            <ProfileProgressCard
+              status={swimmer.profile_status}
+              onOpenWizard={() => navigate(`/swimmers/${id}/profile-wizard`)}
+            />
 
             {/* Block Status */}
             {blockStatus && (
