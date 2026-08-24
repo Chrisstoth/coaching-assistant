@@ -32,6 +32,7 @@ export default function Register() {
               attended: r.attended ?? false,
               normally_attends: exp?.expected ?? null,
               exception_reason: exp?.exception_reason ?? null,
+              availability: exp?.availability ?? null,
               group_planned: r.group_planned ?? null,
               sub_group_planned: r.sub_group_planned ?? null,
               group_done: r.group_done ?? r.group_planned ?? null,
@@ -54,7 +55,10 @@ export default function Register() {
 
   const markAllPresent = () => {
     setSubmitted(null)
-    setEntries((prev) => prev.map((e) => ({ ...e, attended: true })))
+    setEntries((prev) => prev.map((e) => ({
+      ...e,
+      attended: e.exception_reason ? e.attended : true,
+    })))
   }
 
   const submit = async (runAI = true) => {
@@ -90,6 +94,7 @@ export default function Register() {
   }
 
   const presentCount = entries.filter((e) => e.attended).length
+  const excusedCount = entries.filter((e) => !e.attended && e.exception_reason).length
 
   // Build lookup: group_number -> sub_group labels available
   const subGroupsByGroup = {}
@@ -111,7 +116,9 @@ export default function Register() {
           <Link to={`/sessions/${id}`} className="text-pool-400 text-2xl">‹</Link>
           <div className="flex-1">
             <h1 className="text-base font-bold">{session.title || 'Register'}</h1>
-            <p className="text-pool-400 text-xs">{session.date} · {presentCount}/{entries.length} present</p>
+            <p className="text-pool-400 text-xs">
+              {session.date} · {presentCount} present{excusedCount > 0 ? ` · ${excusedCount} excused` : ''}
+            </p>
           </div>
           <button
             onClick={markAllPresent}
@@ -142,7 +149,10 @@ export default function Register() {
                     </span>
                   )}
                   {entry.exception_reason && (
-                    <span className="ml-2 text-yellow-500 capitalize">· {entry.exception_reason}</span>
+                    <span className="ml-2 text-yellow-500">
+                      · {entry.availability?.label || entry.exception_reason.replace('_', ' ')}
+                      {entry.availability?.detail ? ` — ${entry.availability.detail}` : ''}
+                    </span>
                   )}
                   {entry.normally_attends && !entry.exception_reason && (
                     <span className="ml-2 text-pool-600">· normally here</span>

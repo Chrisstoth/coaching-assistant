@@ -233,6 +233,7 @@ export const api = {
 
   // Dashboard
   getSquadPulse: () => request('GET', '/dashboard/squad-pulse'),
+  getSquadAvailability: (days = 42) => request('GET', `/dashboard/availability?days=${days}`),
   getMeetCountdowns: () => request('GET', '/dashboard/meet-countdowns'),
 
   // Skills

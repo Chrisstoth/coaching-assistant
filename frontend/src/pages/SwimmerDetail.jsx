@@ -1772,13 +1772,13 @@ export default function SwimmerDetail() {
 
             {/* Exceptions */}
             <section className="space-y-3">
-              <h3 className="font-semibold text-sm">Exceptions</h3>
-              <p className="text-pool-400 text-xs">Holiday, exams, injury — periods when this swimmer won't be attending.</p>
+              <h3 className="font-semibold text-sm">Availability</h3>
+              <p className="text-pool-400 text-xs">Holiday, competition, taper rest or another planned period when this swimmer won't train.</p>
 
               {exceptions.map((e) => (
                 <div key={e.id} className="bg-pool-800 rounded-xl p-3 flex justify-between items-center">
                   <div>
-                    <p className="text-sm font-medium capitalize">{e.reason}</p>
+                    <p className="text-sm font-medium capitalize">{e.reason.replace('_', ' ')}</p>
                     <p className="text-pool-400 text-xs">{e.date_from} → {e.date_to}</p>
                     {e.notes && <p className="text-pool-400 text-xs">{e.notes}</p>}
                   </div>
@@ -1792,8 +1792,8 @@ export default function SwimmerDetail() {
                   onChange={(e) => setExcForm({ ...excForm, reason: e.target.value })}
                   className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
                 >
-                  {['holiday', 'exams', 'work', 'injury', 'other'].map((r) => (
-                    <option key={r} value={r} className="capitalize">{r}</option>
+                  {['holiday', 'competition', 'planned_rest', 'taper_rest', 'exams', 'work', 'injury', 'other'].map((r) => (
+                    <option key={r} value={r} className="capitalize">{r.replace('_', ' ')}</option>
                   ))}
                 </select>
                 <div className="flex gap-2">

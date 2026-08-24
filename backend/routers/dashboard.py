@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
+from backend.services.availability import availability_ranges, is_excused
 
 router = APIRouter()
 
@@ -90,6 +91,46 @@ def meet_countdowns(db: DBSession = Depends(get_db)):
     return {"group_targets": group_targets, "upcoming_meets": upcoming_meets}
 
 
+@router.get("/availability")
+def squad_availability(days: int = 42, db: DBSession = Depends(get_db)):
+    """Current and upcoming excused non-training periods for active swimmers."""
+    today = date.today()
+    cutoff = today + timedelta(days=max(1, min(days, 180)))
+    swimmers = db.query(models.Swimmer).filter(
+        models.Swimmer.active == True,
+        models.Swimmer.status == "active",
+    ).order_by(models.Swimmer.name).all()
+    swimmer_map = {swimmer.id: swimmer for swimmer in swimmers}
+    ranges = availability_ranges(db, swimmer_map, today, cutoff)
+    source_priority = {"meet_entry": 0, "exception": 1, "load_event": 2}
+    items = []
+    seen = set()
+    for swimmer_id, events in ranges.items():
+        for event in sorted(events, key=lambda item: source_priority.get(item["source"], 9)):
+            key = (swimmer_id, event["reason"], event["date_from"], event["date_to"])
+            if key in seen:
+                continue
+            seen.add(key)
+            swimmer = swimmer_map.get(swimmer_id)
+            if not swimmer:
+                continue
+            items.append({
+                **event,
+                "swimmer_name": swimmer.name,
+                "date_from": event["date_from"].isoformat(),
+                "date_to": event["date_to"].isoformat(),
+                "is_current": event["date_from"] <= today <= event["date_to"],
+                "days_until": max(0, (event["date_from"] - today).days),
+            })
+    items.sort(key=lambda item: (not item["is_current"], item["date_from"], item["swimmer_name"]))
+    return {
+        "items": items,
+        "current_count": sum(item["is_current"] for item in items),
+        "upcoming_count": sum(not item["is_current"] for item in items),
+        "through": cutoff.isoformat(),
+    }
+
+
 @router.get("/squad-pulse")
 def squad_pulse(db: DBSession = Depends(get_db)):
     """
@@ -122,6 +163,7 @@ def squad_pulse(db: DBSession = Depends(get_db)):
         attendance_rows = db.query(
             models.SessionEntry.swimmer_id,
             models.SessionEntry.attended,
+            models.Session.date,
         ).join(
             models.Session, models.SessionEntry.session_id == models.Session.id,
         ).filter(
@@ -131,9 +173,14 @@ def squad_pulse(db: DBSession = Depends(get_db)):
             models.Session.date <= today,
             models.Session.status != "cancelled",
         ).all()
+    availability = availability_ranges(db, swimmer_ids, monitoring_start, today)
     attended_by_swimmer = defaultdict(int)
     recorded_by_swimmer = defaultdict(int)
-    for sw_id, attended in attendance_rows:
+    excused_by_swimmer = defaultdict(int)
+    for sw_id, attended, session_date in attendance_rows:
+        if not attended and is_excused(availability, sw_id, session_date):
+            excused_by_swimmer[sw_id] += 1
+            continue
         recorded_by_swimmer[sw_id] += 1
         if attended:
             attended_by_swimmer[sw_id] += 1
@@ -196,6 +243,10 @@ def squad_pulse(db: DBSession = Depends(get_db)):
     for sw in swimmers:
         attended = attended_by_swimmer.get(sw.id, 0)
         recorded = recorded_by_swimmer.get(sw.id, 0)
+        current_availability = next((
+            event for event in availability.get(sw.id, [])
+            if event["date_from"] <= today <= event["date_to"]
+        ), None)
         if not current_season or today < current_season.date_from:
             attendance_state = "season_not_started"
         elif today > current_season.date_to:
@@ -244,6 +295,12 @@ def squad_pulse(db: DBSession = Depends(get_db)):
             "sessions_recorded": recorded,
             "attendance_state": attendance_state,
             "baseline_sessions_needed": max(0, 4 - recorded),
+            "sessions_excused": excused_by_swimmer.get(sw.id, 0),
+            "current_availability": ({
+                **current_availability,
+                "date_from": current_availability["date_from"].isoformat(),
+                "date_to": current_availability["date_to"].isoformat(),
+            } if current_availability else None),
             "monitoring_start": monitoring_start.isoformat(),
             "season_id": current_season.id if current_season else None,
             "season_name": current_season.name if current_season else None,

@@ -157,7 +157,7 @@ function TargetChip({ target }) {
 
 function SwimmerPulseRow({ swimmer }) {
   const { id, name, approaching_target, last_observation, has_recent_skill_flag } = swimmer
-  const noData = swimmer.sessions_recorded === 0 && !last_observation && !approaching_target
+  const noData = swimmer.sessions_recorded === 0 && !last_observation && !approaching_target && !swimmer.current_availability
 
   return (
     <Link to={`/swimmers/${id}`} className="block active:opacity-70 transition-opacity">
@@ -186,6 +186,13 @@ function SwimmerPulseRow({ swimmer }) {
           <p className="text-[11px] text-pool-500 mt-1 ml-0 truncate leading-snug">
             <span className="text-pool-600">{last_observation.days_ago === 0 ? 'today' : last_observation.days_ago === 1 ? 'yesterday' : `${last_observation.days_ago}d ago`} · </span>
             {last_observation.snippet}
+          </p>
+        )}
+        {swimmer.current_availability && (
+          <p className="text-[11px] text-amber-400 mt-1 truncate">
+            {swimmer.current_availability.label}
+            {swimmer.current_availability.detail ? ` — ${swimmer.current_availability.detail}` : ''}
+            {` · until ${swimmer.current_availability.date_to}`}
           </p>
         )}
         {noData && swimmer.attendance_state === 'established' && (
@@ -356,6 +363,47 @@ function CurrentSeasonCard({ season, pulse }) {
   )
 }
 
+function AvailabilityCard({ report }) {
+  const [expanded, setExpanded] = useState(false)
+  const items = report?.items || []
+  if (items.length === 0) return null
+  const visible = expanded ? items : items.slice(0, 5)
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <div className="w-1.5 h-4 bg-amber-500 rounded-full" />
+          <h2 className="font-semibold text-sm">Squad availability</h2>
+        </div>
+        <span className="text-[11px] text-pool-500">
+          {report.current_count || 0} away now · {report.upcoming_count || 0} upcoming
+        </span>
+      </div>
+      <div className="bg-pool-800 border border-pool-700 rounded-2xl divide-y divide-pool-700/60">
+        {visible.map((item, index) => (
+          <Link key={`${item.swimmer_id}-${item.date_from}-${item.reason}-${index}`} to={`/swimmers/${item.swimmer_id}`}
+            className="flex items-center justify-between gap-3 px-4 py-3 active:bg-pool-700/50">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-pool-200 truncate">{item.swimmer_name}</p>
+              <p className="text-xs text-pool-500 truncate">
+                {item.detail || item.label} · {item.date_from === item.date_to ? item.date_from : `${item.date_from} → ${item.date_to}`}
+              </p>
+            </div>
+            <span className={`text-[10px] px-2 py-1 rounded-md shrink-0 ${
+              item.is_current ? 'bg-amber-900/50 text-amber-300' : 'bg-pool-700 text-pool-400'
+            }`}>{item.is_current ? item.label : `in ${item.days_until}d`}</span>
+          </Link>
+        ))}
+      </div>
+      {items.length > 5 && (
+        <button onClick={() => setExpanded(value => !value)} className="w-full text-xs text-pool-500 py-2">
+          {expanded ? 'Show less' : `Show ${items.length - 5} more`}
+        </button>
+      )}
+    </section>
+  )
+}
+
 function GroupTargetCard({ target }) {
   const { group, meet_name, days_out, meet_id } = target
   const weeks = Math.ceil(days_out / 7)
@@ -442,6 +490,7 @@ export default function Dashboard() {
   const [meetCountdowns, setMeetCountdowns] = useState({ group_targets: [], upcoming_meets: [] })
   const [assistantInbox, setAssistantInbox] = useState({ items: [], counts: {} })
   const [currentSeason, setCurrentSeason] = useState(null)
+  const [availability, setAvailability] = useState({ items: [], current_count: 0, upcoming_count: 0 })
 
   useEffect(() => {
     setLoading(true)
@@ -453,7 +502,8 @@ export default function Dashboard() {
       api.getMeetCountdowns().catch(() => ({ group_targets: [], upcoming_meets: [] })),
       api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
       api.getCurrentPlanningSeason().catch(() => null),
-    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season]) => {
+      api.getSquadAvailability().catch(() => ({ items: [], current_count: 0, upcoming_count: 0 })),
+    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData]) => {
       setCalendar(cal)
       setCoachingNotes(notes)
       setCoachingProfile(ctx)
@@ -461,6 +511,7 @@ export default function Dashboard() {
       setMeetCountdowns(countdowns)
       setAssistantInbox(inbox)
       setCurrentSeason(season)
+      setAvailability(availabilityData)
       setLoading(false)
     })
   }, [])
@@ -525,6 +576,8 @@ export default function Dashboard() {
 
       {!loading && !activeSeason && <SeasonStartCard onStarted={handleSeasonStarted} />}
       {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} />}
+
+      {!loading && <AvailabilityCard report={availability} />}
 
       <AssistantInboxPreview inbox={assistantInbox} />
 

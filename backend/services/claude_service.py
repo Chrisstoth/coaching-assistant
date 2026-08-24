@@ -10,6 +10,7 @@ import anthropic
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services.availability import availability_ranges, is_excused
 from backend.services.event_normalizer import canonicalize_event, event_parts
 
 _client: Optional[anthropic.Anthropic] = None
@@ -289,6 +290,36 @@ def _legacy_write_capable_tools() -> list:
                     }
                 },
                 "required": ["session_id"]
+            }
+        },
+        {
+            "name": "cancel_session",
+            "description": "Mark a whole squad session as cancelled and preserve the reason. Use when the coach says a session was/is cancelled, including bank holidays. Identify it by session_id where possible, otherwise by date plus optional squad/start time.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "session_id": {"type": "integer"},
+                    "date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "squad": {"type": "string"},
+                    "start_time": {"type": "string", "description": "HH:MM if the date has multiple sessions"},
+                    "reason": {"type": "string", "description": "e.g. Public holiday, pool unavailable, coach unavailable"}
+                },
+                "required": ["reason"]
+            }
+        },
+        {
+            "name": "add_swimmer_availability",
+            "description": "Save a period when one swimmer is not expected at normal training. Use for holidays, competitions not already linked through a meet entry, exams, work, injury, or a deliberate taper/planned rest day. This is excused and must not be described as poor attendance.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_id": {"type": "integer"},
+                    "reason": {"type": "string", "enum": ["holiday", "competition", "planned_rest", "taper_rest", "exams", "work", "injury", "other"]},
+                    "date_from": {"type": "string", "description": "YYYY-MM-DD"},
+                    "date_to": {"type": "string", "description": "YYYY-MM-DD"},
+                    "notes": {"type": "string"}
+                },
+                "required": ["swimmer_id", "reason", "date_from", "date_to"]
             }
         },
         {
@@ -923,6 +954,108 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
                     db.add(new_group)
         db.commit()
         return f"Updated session '{session.title or session.date}'."
+
+    elif tool_name == "cancel_session":
+        session = None
+        session_id = tool_input.get("session_id")
+        if session_id:
+            session = db.query(models.Session).filter(models.Session.id == session_id).first()
+            if not session:
+                return f"Session ID {session_id} not found."
+        else:
+            target_date = as_date(tool_input.get("date"))
+            if not target_date:
+                return "A session_id or date is required to cancel a session."
+            query = db.query(models.Session).filter(models.Session.date == target_date)
+            if tool_input.get("squad"):
+                query = query.filter(models.Session.squad == tool_input["squad"])
+            if tool_input.get("start_time"):
+                query = query.filter(models.Session.start_time == tool_input["start_time"])
+            matches = query.all()
+            if len(matches) > 1:
+                choices = ", ".join(f"ID {row.id} ({row.start_time or 'time unknown'}, {row.squad or 'no squad'})" for row in matches)
+                return f"More than one session matches {target_date}: {choices}. Ask the coach which one."
+            if matches:
+                session = matches[0]
+            else:
+                slot_query = db.query(models.PoolSlot).filter(
+                    models.PoolSlot.day_of_week == target_date.weekday(),
+                    models.PoolSlot.active.is_(True),
+                )
+                if tool_input.get("squad"):
+                    slot_query = slot_query.filter(models.PoolSlot.squad == tool_input["squad"])
+                if tool_input.get("start_time"):
+                    slot_query = slot_query.filter(models.PoolSlot.time == tool_input["start_time"])
+                slots = slot_query.all()
+                if len(slots) != 1:
+                    choices = ", ".join(
+                        f"slot {row.id} ({row.time}, {row.squad or 'no squad'}, {row.label or 'unlabelled'})"
+                        for row in slots[:8]
+                    )
+                    return f"I cannot uniquely identify the session on {target_date}. Matching choices: {choices or 'none'}. Ask for the time or squad."
+                slot = slots[0]
+                session = models.Session(
+                    date=target_date,
+                    start_time=slot.time,
+                    end_time=slot.end_time,
+                    squad=slot.squad,
+                    title=slot.label,
+                    pool_slot_id=slot.id,
+                    course=slot.course,
+                    source="calendar",
+                )
+                db.add(session)
+        session.status = "cancelled"
+        session.cancel_reason = tool_input["reason"].strip()
+        db.commit()
+        return f"Cancelled session ID {session.id} on {session.date}: {session.cancel_reason}."
+
+    elif tool_name == "add_swimmer_availability":
+        from backend.services.availability import normalise_reason
+
+        swimmer = db.query(models.Swimmer).filter(
+            models.Swimmer.id == tool_input.get("swimmer_id"),
+        ).first()
+        if not swimmer:
+            return f"Swimmer ID {tool_input.get('swimmer_id')} not found."
+        date_from = as_date(tool_input.get("date_from"))
+        date_to = as_date(tool_input.get("date_to"))
+        if not date_from or not date_to or date_to < date_from:
+            return "Availability requires a valid date range with the end on or after the start."
+        reason = normalise_reason(tool_input.get("reason"))
+        existing = db.query(models.SwimmerException).filter(
+            models.SwimmerException.swimmer_id == swimmer.id,
+            models.SwimmerException.reason == reason,
+            models.SwimmerException.date_from == date_from,
+            models.SwimmerException.date_to == date_to,
+        ).first()
+        if not existing:
+            db.add(models.SwimmerException(
+                swimmer_id=swimmer.id,
+                reason=reason,
+                date_from=date_from,
+                date_to=date_to,
+                notes=(tool_input.get("notes") or "").strip() or None,
+            ))
+        if reason == "competition":
+            load_event = db.query(models.SwimmerLoadEvent).filter(
+                models.SwimmerLoadEvent.swimmer_id == swimmer.id,
+                models.SwimmerLoadEvent.event_type == "competition",
+                models.SwimmerLoadEvent.date_from == date_from,
+                models.SwimmerLoadEvent.date_to == date_to,
+            ).first()
+            if not load_event:
+                db.add(models.SwimmerLoadEvent(
+                    swimmer_id=swimmer.id,
+                    event_type="competition",
+                    date_from=date_from,
+                    date_to=date_to,
+                    severity=2,
+                    description=(tool_input.get("notes") or "Competition").strip(),
+                    resolved=date_to <= date_type.today(),
+                ))
+        db.commit()
+        return f"Saved {reason.replace('_', ' ')} availability for {swimmer.name}: {date_from} to {date_to}."
 
     elif tool_name == "get_season_plan":
         today = date_type.today()
@@ -2353,13 +2486,30 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
     monitoring_start = max(four_weeks_ago, current_season.date_from) if current_season else four_weeks_ago
 
     # All-time
-    all_entries = (
-        db.query(models.SessionEntry)
-        .filter(models.SessionEntry.swimmer_id == swimmer_id)
+    all_rows = (
+        db.query(models.SessionEntry, models.Session)
+        .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+        .filter(
+            models.SessionEntry.swimmer_id == swimmer_id,
+            models.SessionEntry.attended.is_not(None),
+            models.Session.status != 'cancelled',
+        )
         .all()
     )
-    all_total = len(all_entries)
-    all_attended = sum(1 for e in all_entries if e.attended)
+    if all_rows:
+        all_start = min(session.date for _, session in all_rows)
+        all_end = max(session.date for _, session in all_rows)
+        excused_ranges = availability_ranges(db, [swimmer_id], all_start, all_end)
+    else:
+        excused_ranges = {}
+
+    def counts_as_opportunity(entry, session):
+        return bool(entry.attended) or not is_excused(excused_ranges, swimmer_id, session.date)
+
+    countable_all = [row for row in all_rows if counts_as_opportunity(*row)]
+    all_total = len(countable_all)
+    all_attended = sum(1 for entry, _ in countable_all if entry.attended)
+    all_excused = len(all_rows) - all_total
     overall_pct = round(all_attended / all_total * 100) if all_total else None
 
     # Last 4 weeks
@@ -2377,8 +2527,10 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
             )
             .all()
         )
-    four_week_total = len(recent_entries)
-    four_week_attended = sum(1 for e, _ in recent_entries if e.attended)
+    countable_recent = [row for row in recent_entries if counts_as_opportunity(*row)]
+    four_week_total = len(countable_recent)
+    four_week_attended = sum(1 for e, _ in countable_recent if e.attended)
+    four_week_excused = len(recent_entries) - four_week_total
     four_week_pct = round(four_week_attended / four_week_total * 100) if four_week_total else None
 
     # Per slot — join session to slot via time+squad matching
@@ -2412,20 +2564,26 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
             continue
         session_ids = [s.id for s in matching]
         slot_entries = (
-            db.query(models.SessionEntry)
+            db.query(models.SessionEntry, models.Session)
+            .join(models.Session, models.SessionEntry.session_id == models.Session.id)
             .filter(
                 models.SessionEntry.swimmer_id == swimmer_id,
                 models.SessionEntry.session_id.in_(session_ids),
+                models.SessionEntry.attended.is_not(None),
             )
             .all()
         )
         if not slot_entries:
             continue
-        slot_attended = sum(1 for e in slot_entries if e.attended)
+        countable_slot = [row for row in slot_entries if counts_as_opportunity(*row)]
+        if not countable_slot:
+            continue
+        slot_attended = sum(1 for e, _ in countable_slot if e.attended)
         per_slot[label] = {
             "attended": slot_attended,
-            "total": len(slot_entries),
-            "pct": round(slot_attended / len(slot_entries) * 100),
+            "total": len(countable_slot),
+            "excused": len(slot_entries) - len(countable_slot),
+            "pct": round(slot_attended / len(countable_slot) * 100),
         }
 
     # Weekly breakdown — last 8 weeks
@@ -2450,7 +2608,10 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
         iso = session.date.isocalendar()
         key = f"{iso[0]}-W{iso[1]:02d}"
         if key not in week_map:
-            week_map[key] = {"week": key, "attended": 0, "total": 0}
+            week_map[key] = {"week": key, "attended": 0, "total": 0, "excused": 0}
+        if not counts_as_opportunity(entry, session):
+            week_map[key]["excused"] += 1
+            continue
         week_map[key]["total"] += 1
         if entry.attended:
             week_map[key]["attended"] += 1
@@ -2460,9 +2621,11 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
         "overall_pct": overall_pct,
         "overall_attended": all_attended,
         "overall_total": all_total,
+        "overall_excused": all_excused,
         "four_week_pct": four_week_pct,
         "four_week_attended": four_week_attended,
         "four_week_total": four_week_total,
+        "four_week_excused": four_week_excused,
         "attendance_state": (
             "season_not_started" if not current_season or today < current_season.date_from
             else "season_ended" if today > current_season.date_to

@@ -98,6 +98,124 @@ class CoreFlowTests(unittest.TestCase):
             db.delete(swimmer)
             db.commit()
 
+    def test_availability_excuses_holidays_competitions_and_taper_rest(self):
+        today = date.today()
+        competition_day = today + timedelta(days=1)
+        cancel_day = today + timedelta(days=2)
+        taper_day = today + timedelta(days=3)
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Availability Test Swimmer", squad="Silver 1")
+            slot = models.PoolSlot(
+                day_of_week=today.weekday(), time="05:55", end_time="07:00",
+                squad="Availability Test", label="Availability slot", active=True,
+            )
+            db.add_all([swimmer, slot])
+            db.flush()
+            swimmer_id, slot_id = swimmer.id, slot.id
+            db.add(models.SwimmerSlot(swimmer_id=swimmer_id, pool_slot_id=slot_id))
+            session = models.Session(
+                date=today, squad="Availability Test", start_time="05:55",
+                status="completed", pool_slot_id=slot_id,
+            )
+            db.add(session)
+            db.flush()
+            db.add(models.SessionEntry(
+                session_id=session.id, swimmer_id=swimmer_id, attended=False,
+            ))
+            cancel_session = models.Session(
+                date=cancel_day, squad="Availability Test", start_time="05:55",
+                status="planned",
+            )
+            db.add(cancel_session)
+            db.commit()
+            session_id = session.id
+            cancel_session_id = cancel_session.id
+
+        holiday = self.client.post(
+            f"/schedule/swimmers/{swimmer_id}/exceptions", headers=self.headers,
+            json={
+                "reason": "holiday", "date_from": today.isoformat(),
+                "date_to": today.isoformat(), "notes": "Start-of-season holiday",
+            },
+        )
+        self.assertEqual(holiday.status_code, 201, holiday.text)
+        holiday_id = holiday.json()["id"]
+
+        expected = self.client.get(
+            f"/schedule/expected/{today.isoformat()}?squad=Availability%20Test",
+            headers=self.headers,
+        )
+        self.assertEqual(expected.status_code, 200, expected.text)
+        expected_row = next(row for row in expected.json() if row["id"] == swimmer_id)
+        self.assertFalse(expected_row["expected"])
+        self.assertEqual(expected_row["availability"]["label"], "Holiday")
+
+        stats = self.client.get(
+            f"/swimmers/{swimmer_id}/attendance-stats", headers=self.headers,
+        )
+        self.assertEqual(stats.status_code, 200, stats.text)
+        self.assertEqual(stats.json()["overall_total"], 0)
+        self.assertEqual(stats.json()["overall_excused"], 1)
+
+        meet = self.client.post(
+            "/meets", headers=self.headers,
+            json={"name": "Availability Test Meet", "date": competition_day.isoformat()},
+        )
+        self.assertEqual(meet.status_code, 201, meet.text)
+        meet_id = meet.json()["id"]
+        target = self.client.post(
+            f"/meets/{meet_id}/targets", headers=self.headers,
+            json={"swimmer_id": swimmer_id, "events": ["100 Freestyle"], "priority": "B"},
+        )
+        self.assertEqual(target.status_code, 201, target.text)
+
+        report = self.client.get("/dashboard/availability?days=7", headers=self.headers)
+        self.assertEqual(report.status_code, 200, report.text)
+        swimmer_items = [item for item in report.json()["items"] if item["swimmer_id"] == swimmer_id]
+        self.assertTrue(any(item["reason"] == "holiday" and item["is_current"] for item in swimmer_items))
+        competition = next(item for item in swimmer_items if item["reason"] == "competition")
+        self.assertEqual(competition["detail"], "Availability Test Meet")
+        self.assertEqual(competition["source"], "meet_entry")
+
+        with SessionLocal() as tool_db:
+            cancelled = execute_tool(
+                "cancel_session",
+                {"session_id": cancel_session_id, "reason": "Public holiday"},
+                tool_db,
+            )
+        self.assertIn("Cancelled session", cancelled)
+        with SessionLocal() as db:
+            row = db.get(models.Session, cancel_session_id)
+            self.assertEqual(row.status, "cancelled")
+            self.assertEqual(row.cancel_reason, "Public holiday")
+
+        with SessionLocal() as tool_db:
+            saved = execute_tool(
+                "add_swimmer_availability",
+                {
+                    "swimmer_id": swimmer_id, "reason": "taper_rest",
+                    "date_from": taper_day.isoformat(), "date_to": taper_day.isoformat(),
+                    "notes": "Planned pre-meet rest",
+                },
+                tool_db,
+            )
+        self.assertIn("taper rest", saved)
+
+        with SessionLocal() as db:
+            db.query(models.SessionEntry).filter(models.SessionEntry.session_id == session_id).delete()
+            db.query(models.Session).filter(models.Session.id.in_([session_id, cancel_session_id])).delete(
+                synchronize_session=False,
+            )
+            db.query(models.SwimmerSlot).filter(models.SwimmerSlot.swimmer_id == swimmer_id).delete()
+            db.query(models.SwimmerException).filter(models.SwimmerException.swimmer_id == swimmer_id).delete()
+            db.query(models.SwimmerLoadEvent).filter(models.SwimmerLoadEvent.swimmer_id == swimmer_id).delete()
+            db.query(models.MeetEntry).filter(models.MeetEntry.swimmer_id == swimmer_id).delete()
+            db.query(models.MeetTarget).filter(models.MeetTarget.swimmer_id == swimmer_id).delete()
+            db.query(models.Meet).filter(models.Meet.id == meet_id).delete()
+            db.query(models.PoolSlot).filter(models.PoolSlot.id == slot_id).delete()
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
+
     def test_raw_migration_types_are_portable_to_postgres(self):
         self.assertEqual(
             _portable_column_type("DATETIME", "postgresql"),
@@ -426,6 +544,18 @@ class CoreFlowTests(unittest.TestCase):
             recommendation = db.get(models.PlanningRecommendation, old_recommendation_id)
             self.assertEqual(recommendation.status, "resolved")
             self.assertTrue(any(event.event_type == "season_rollover_resolved" for event in recommendation.events))
+            db.add(models.SwimmerException(
+                swimmer_id=swimmer_id, reason="holiday",
+                date_from=start, date_to=start, notes="Excused opening-day absence",
+            ))
+            excused_session = models.Session(
+                date=start, squad="Silver 1", status="completed",
+            )
+            db.add(excused_session)
+            db.flush()
+            db.add(models.SessionEntry(
+                session_id=excused_session.id, swimmer_id=swimmer_id, attended=False,
+            ))
             for index in range(3):
                 session = models.Session(
                     date=start + timedelta(days=index), squad="Silver 1", status="completed",
@@ -442,6 +572,7 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(row["attendance_state"], "building_baseline")
         self.assertEqual(row["sessions_expected"], 3)
         self.assertEqual(row["sessions_attended"], 1)
+        self.assertEqual(row["sessions_excused"], 1)
 
         with SessionLocal() as db:
             session = models.Session(date=date.today(), squad="Silver 1", status="completed")
@@ -461,6 +592,7 @@ class CoreFlowTests(unittest.TestCase):
                 models.SessionEntry, models.SessionEntry.session_id == models.Session.id,
             ).filter(models.SessionEntry.swimmer_id == swimmer_id).all()]
             db.query(models.SessionEntry).filter(models.SessionEntry.swimmer_id == swimmer_id).delete()
+            db.query(models.SwimmerException).filter(models.SwimmerException.swimmer_id == swimmer_id).delete()
             db.query(models.Session).filter(models.Session.id.in_(session_ids)).delete(synchronize_session=False)
             db.query(models.PlanningRecommendationEvent).filter(
                 models.PlanningRecommendationEvent.recommendation_id == old_recommendation_id,

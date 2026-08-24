@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
+from backend.services.availability import availability_on_date, normalise_reason
 
 router = APIRouter()
 
@@ -176,8 +177,29 @@ def add_exception(swimmer_id: int, body: ExceptionCreate, db: DBSession = Depend
     swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).first()
     if not swimmer:
         raise HTTPException(status_code=404, detail="Swimmer not found")
-    exc = models.SwimmerException(swimmer_id=swimmer_id, **body.model_dump())
+    if body.date_to < body.date_from:
+        raise HTTPException(status_code=422, detail="Availability end date must be on or after its start date")
+    payload = body.model_dump()
+    payload["reason"] = normalise_reason(payload["reason"])
+    exc = models.SwimmerException(swimmer_id=swimmer_id, **payload)
     db.add(exc)
+    if payload["reason"] == "competition":
+        existing_load = db.query(models.SwimmerLoadEvent).filter(
+            models.SwimmerLoadEvent.swimmer_id == swimmer_id,
+            models.SwimmerLoadEvent.event_type == "competition",
+            models.SwimmerLoadEvent.date_from == body.date_from,
+            models.SwimmerLoadEvent.date_to == body.date_to,
+        ).first()
+        if not existing_load:
+            db.add(models.SwimmerLoadEvent(
+                swimmer_id=swimmer_id,
+                event_type="competition",
+                date_from=body.date_from,
+                date_to=body.date_to,
+                severity=2,
+                description=body.notes or "Competition",
+                resolved=body.date_to <= date.today(),
+            ))
     db.commit()
     db.refresh(exc)
     return _exc_out(exc)
@@ -229,13 +251,8 @@ def expected_attendance(session_date: date, squad: Optional[str] = None, db: DBS
     ).all()
     swimmer_ids = list({l.swimmer_id for l in links})
 
-    # Remove swimmers with an active exception on this date
-    exceptions = db.query(models.SwimmerException).filter(
-        models.SwimmerException.swimmer_id.in_(swimmer_ids),
-        models.SwimmerException.date_from <= session_date,
-        models.SwimmerException.date_to >= session_date,
-    ).all()
-    excluded = {e.swimmer_id for e in exceptions}
+    availability = availability_on_date(db, swimmer_ids, session_date)
+    excluded = set(availability)
 
     swimmers = db.query(models.Swimmer).filter(
         models.Swimmer.id.in_(swimmer_ids),
@@ -248,9 +265,8 @@ def expected_attendance(session_date: date, squad: Optional[str] = None, db: DBS
             "name": s.name,
             "squad": s.squad,
             "expected": s.id not in excluded,
-            "exception_reason": next(
-                (e.reason for e in exceptions if e.swimmer_id == s.id), None
-            ),
+            "exception_reason": availability.get(s.id, {}).get("reason"),
+            "availability": _availability_out(availability.get(s.id)),
         }
         for s in swimmers
     ]
@@ -284,4 +300,14 @@ def _exc_out(e: models.SwimmerException) -> dict:
         "date_from": e.date_from,
         "date_to": e.date_to,
         "notes": e.notes,
+    }
+
+
+def _availability_out(item: Optional[dict]) -> Optional[dict]:
+    if not item:
+        return None
+    return {
+        **item,
+        "date_from": item["date_from"].isoformat(),
+        "date_to": item["date_to"].isoformat(),
     }

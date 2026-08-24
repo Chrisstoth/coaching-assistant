@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend.database import get_db
 from backend import models
 from backend.services.claude_service import get_client, MODEL, PLANNING_EFFORT
+from backend.services.availability import availability_ranges
 from backend.services.planning_engine import compact_context, refresh_macro
 
 router = APIRouter()
@@ -540,16 +541,15 @@ def _build_session_skill_context(db: DBSession, target_date: Optional[date] = No
                 lines.append(f"  {slot.time}-{slot.end_time or '?'}{duration_str} | {slot.course or 'SCM'} | {slot.lanes or '?'} lanes | blocks: {slot.has_blocks}")
 
         # Swimmer availability — check exceptions on this date
-        exceptions_today = db.query(models.SwimmerException).filter(
-            models.SwimmerException.date_from <= target_date,
-            models.SwimmerException.date_to >= target_date,
-        ).all()
-        if exceptions_today:
+        active_swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).all()
+        swimmer_map = {swimmer.id: swimmer for swimmer in active_swimmers}
+        availability_today = availability_ranges(db, swimmer_map, target_date, target_date)
+        if availability_today:
             lines.append(f"\nSWIMMER ABSENCES on {target_date}:")
-            for ex in exceptions_today:
-                sw = db.query(models.Swimmer).filter(models.Swimmer.id == ex.swimmer_id).first()
-                if sw:
-                    lines.append(f"  {sw.name}: {ex.reason}" + (f" ({ex.notes})" if ex.notes else ""))
+            for swimmer_id, events in availability_today.items():
+                swimmer = swimmer_map.get(swimmer_id)
+                for event in events[:1]:
+                    lines.append(f"  {swimmer.name}: {event['label']}" + (f" ({event['detail']})" if event['detail'] else ""))
 
     return "\n".join(lines)
 
@@ -3115,18 +3115,18 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
 
     # Swimmer availability — exceptions in the next 10 weeks (covers proposed block)
     lookahead = today + timedelta(weeks=10)
-    all_exceptions = db.query(models.SwimmerException).filter(
-        models.SwimmerException.date_to >= today,
-        models.SwimmerException.date_from <= lookahead,
-    ).order_by(models.SwimmerException.date_from).all()
+    availability_swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).all()
+    availability_map = {swimmer.id: swimmer for swimmer in availability_swimmers}
+    all_exceptions = availability_ranges(db, availability_map, today, lookahead)
 
     if all_exceptions:
         lines.append("SWIMMER AVAILABILITY ISSUES (next 10 weeks — factor into phase design):")
-        for ex in all_exceptions:
-            sw = db.query(models.Swimmer).filter(models.Swimmer.id == ex.swimmer_id).first()
-            if sw:
-                duration_days = (ex.date_to - max(ex.date_from, today)).days + 1
-                lines.append(f"  {sw.name}: {ex.reason} | {ex.date_from} to {ex.date_to} ({duration_days}d)" + (f" — {ex.notes}" if ex.notes else ""))
+        for swimmer_id, events in all_exceptions.items():
+            swimmer = availability_map.get(swimmer_id)
+            for event in events:
+                duration_days = (event["date_to"] - max(event["date_from"], today)).days + 1
+                detail = f" — {event['detail']}" if event["detail"] else ""
+                lines.append(f"  {swimmer.name}: {event['label']} | {event['date_from']} to {event['date_to']} ({duration_days}d){detail}")
         lines.append("(Consider whether these absences will break adaptation continuity for key swimmers)")
         lines.append("")
 
@@ -3592,19 +3592,19 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
         lines.append("")
 
     # Swimmer exceptions/availability issues this week
-    exceptions_this_week = db.query(models.SwimmerException).filter(
-        models.SwimmerException.date_to >= week_start,
-        models.SwimmerException.date_from <= week_end,
-    ).order_by(models.SwimmerException.date_from).all()
+    availability_swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).all()
+    availability_map = {swimmer.id: swimmer for swimmer in availability_swimmers}
+    exceptions_this_week = availability_ranges(db, availability_map, week_start, week_end)
 
     if exceptions_this_week:
         lines.append("AVAILABILITY ISSUES THIS WEEK:")
-        for ex in exceptions_this_week:
-            sw = db.query(models.Swimmer).filter(models.Swimmer.id == ex.swimmer_id).first()
-            if sw:
-                overlap_start = max(ex.date_from, week_start)
-                overlap_end = min(ex.date_to, week_end)
-                lines.append(f"  {sw.name}: {ex.reason} | {overlap_start} to {overlap_end}" + (f" — {ex.notes}" if ex.notes else ""))
+        for swimmer_id, events in exceptions_this_week.items():
+            swimmer = availability_map.get(swimmer_id)
+            for event in events:
+                overlap_start = max(event["date_from"], week_start)
+                overlap_end = min(event["date_to"], week_end)
+                detail = f" — {event['detail']}" if event["detail"] else ""
+                lines.append(f"  {swimmer.name}: {event['label']} | {overlap_start} to {overlap_end}{detail}")
         lines.append("")
 
     # Recent session history (last 2 weeks) — energy system emphasis
