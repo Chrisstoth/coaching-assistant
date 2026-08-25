@@ -127,6 +127,7 @@ export const api = {
   },
   startCalendarSession: (data) => request('POST', '/sessions/calendar/start', data),
   cancelCalendarSession: (data) => request('POST', '/sessions/calendar/cancel', data),
+  dismissCalendarSession: (data) => request('POST', '/sessions/calendar/dismiss', data),
 
   // Register
   getRegister: (sessionId) => request('GET', `/sessions/${sessionId}/register`),
@@ -162,10 +163,13 @@ export const api = {
     fd.append('event_names', JSON.stringify(filesWithEvents.map(f => f.eventName || '')))
     return request('POST', '/times/import/csv/bulk', fd, true)
   },
-  importExcel: (file, aiCheck = false) => {
+  importExcel: (file, aiCheck = false, context = null) => {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('ai_check', aiCheck ? 'true' : 'false')
+    if (context?.date) fd.append('expected_date', context.date)
+    if (context?.slotId) fd.append('expected_pool_slot_id', context.slotId)
+    if (context?.sessionId) fd.append('expected_session_id', context.sessionId)
     return request('POST', '/sessions/import/excel', fd, true)
   },
   confirmExcelImport: (draft, targetSessionId = null) => request('POST', '/sessions/import/excel/confirm', {

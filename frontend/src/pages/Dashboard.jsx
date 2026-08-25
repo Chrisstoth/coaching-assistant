@@ -1,144 +1,87 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import useLongPress from '../hooks/useLongPress'
-import { proximateSessions } from '../sessionProximity'
+import { isSessionNear, localDateKey, weeklySessionQueue } from '../sessionProximity'
 
-function TodaySessionCard({ sessions }) {
-  if (sessions.length === 0) return null
+function SessionDesk({ sessions, onRegister, onDismiss, busyKey }) {
+  if (sessions.length === 0) {
+    return (
+      <section className="bg-pool-800/70 border border-pool-700 rounded-2xl p-4">
+        <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Session desk</p>
+        <p className="text-sm text-pool-300 mt-2">No outstanding sessions this week.</p>
+        <p className="text-xs text-pool-500 mt-1">Completed, cancelled and dismissed sessions stay in the calendar.</p>
+      </section>
+    )
+  }
   return (
-    <section className="bg-gradient-to-br from-accent-900/55 to-pool-800 border border-accent-600/50 rounded-2xl p-4 shadow-lg shadow-black/10">
-      <div className="flex items-center gap-2">
-        <span className="relative flex h-2.5 w-2.5">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-400 opacity-60" />
-          <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent-400" />
-        </span>
-        <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">On deck now</p>
+    <section className="space-y-2.5">
+      <div className="flex items-end justify-between px-0.5">
+        <div>
+          <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Session desk</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">Everything still to handle this week</p>
+        </div>
+        <span className="text-xs text-pool-500">{sessions.length} remaining</span>
       </div>
-      <div className="mt-3 space-y-2">
+      <div className="space-y-2.5">
         {sessions.map(session => {
           const query = session.session_id ? `session=${session.session_id}` : `slot=${session.slot_id}`
+          const sessionDate = new Date(`${session.date}T12:00:00`)
+          const day = sessionDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+          const current = isSessionNear(session)
+          const key = `${session.date}-${session.session_id || `slot-${session.slot_id}`}`
+          const groups = session.groups || []
+          const mods = Object.entries(session.individual_mods || {})
           return (
-            <Link key={`${session.session_id || 'slot'}-${session.slot_id || session.label}`} to={`/today-session?${query}`}
-              className="flex items-center justify-between gap-3 bg-pool-900/45 border border-pool-700/60 rounded-xl px-3.5 py-3 active:opacity-75">
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Today’s session'}</p>
-                <p className="text-xs text-pool-400 mt-0.5">
-                  {[session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}
-                </p>
+            <article key={key} className={`rounded-2xl border p-3.5 ${current ? 'bg-accent-900/30 border-accent-600/50' : 'bg-pool-800 border-pool-700'}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {current && <span className="w-2 h-2 rounded-full bg-accent-400" />}
+                    <p className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</p>
+                  </div>
+                  <p className="text-xs text-pool-400 mt-1">
+                    {[day, session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}
+                  </p>
+                </div>
+                <button onClick={() => onDismiss(session)} className="text-[11px] text-pool-500 hover:text-pool-300 shrink-0 py-1">Dismiss</button>
               </div>
-              <span className="text-xs font-semibold text-accent-300 shrink-0">Open today →</span>
-            </Link>
+
+              {(session.coach_intent || session.coach_notes || groups.length > 0 || mods.length > 0) ? (
+                <div className="mt-3 border-t border-pool-700/70 pt-2.5 space-y-2">
+                  {session.coach_intent && <p className="text-xs text-pool-300 whitespace-pre-line"><span className="text-pool-500">Aim · </span>{session.coach_intent}</p>}
+                  {groups.map(group => (
+                    <div key={group.group_number} className="text-xs">
+                      <span className="font-semibold text-accent-300">G{group.group_number}</span>
+                      {group.description && <span className="text-pool-300"> · {group.description}</span>}
+                      {group.sets && <p className="text-pool-500 font-mono mt-0.5 line-clamp-2 whitespace-pre-line">{group.sets}</p>}
+                    </div>
+                  ))}
+                  {session.coach_notes && <p className="text-xs text-amber-200/90 line-clamp-2 whitespace-pre-line">{session.coach_notes}</p>}
+                  {mods.length > 0 && <p className="text-xs text-amber-300">{mods.length} individual note{mods.length === 1 ? '' : 's'} attached</p>}
+                </div>
+              ) : (
+                <p className="text-xs text-pool-500 mt-3 border-t border-pool-700/70 pt-2.5">No session plan attached yet.</p>
+              )}
+
+              <div className="grid grid-cols-3 gap-2 mt-3">
+                <button onClick={() => onRegister(session)} disabled={busyKey === key}
+                  className="bg-accent-600 disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold">
+                  {busyKey === key ? 'Opening…' : 'Take register'}
+                </button>
+                <Link to={`/import?tab=excel&date=${session.date}&slot=${session.slot_id || ''}&session=${session.session_id || ''}`}
+                  className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
+                  Import plan
+                </Link>
+                <Link to={`/today-session?${query}`}
+                  className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-300">
+                  Open dash
+                </Link>
+              </div>
+            </article>
           )
         })}
       </div>
     </section>
-  )
-}
-
-function sessionAmPm(s) {
-  const timeStr = s.time || s.start_time
-  if (timeStr) return parseInt(timeStr.slice(0, 2), 10) < 12 ? 'AM' : 'PM'
-  const label = (s.label || '').toLowerCase()
-  if (label.includes('morning') || label.includes(' am')) return 'AM'
-  if (label.includes('evening') || label.includes('afternoon') || label.includes(' pm')) return 'PM'
-  const match = (s.label || '').match(/(\d{1,2}):(\d{2})/)
-  if (match) return parseInt(match[1], 10) < 12 ? 'AM' : 'PM'
-  return null
-}
-
-function SessionActionSheet({ session, type, onClose, onDeleted }) {
-  const navigate = useNavigate()
-  const [deleting, setDeleting] = useState(false)
-  const [confirmDelete, setConfirmDelete] = useState(false)
-
-  const doDelete = async () => {
-    setDeleting(true)
-    try {
-      await api.deleteSession(session.session_id)
-      onDeleted(session.session_id)
-      onClose()
-    } catch (e) {
-      alert(`Error: ${e.message}`)
-      setDeleting(false)
-    }
-  }
-
-  const primaryAction = type === 'pending'
-    ? { label: 'Open Register', path: `/sessions/${session.session_id}/register` }
-    : { label: 'View Session', path: `/sessions/${session.session_id}` }
-
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={onClose}>
-      <div className="absolute inset-0 bg-black/60" />
-      <div className="relative bg-pool-800 rounded-t-2xl p-4 space-y-2 pb-8" onClick={e => e.stopPropagation()}>
-        <div className="w-10 h-1 bg-pool-600 rounded-full mx-auto mb-4" />
-        <p className="text-xs text-pool-400 text-center mb-3">{session._displayTitle}</p>
-        <button onClick={() => navigate(primaryAction.path)} className="w-full bg-accent-600 rounded-xl py-3 font-semibold text-sm">{primaryAction.label}</button>
-        <button onClick={() => navigate(`/sessions/${session.session_id}`)} className="w-full bg-pool-700 rounded-xl py-3 font-semibold text-sm">View / Edit Session</button>
-        {!confirmDelete ? (
-          <button onClick={() => setConfirmDelete(true)} className="w-full bg-pool-800 border border-red-900 rounded-xl py-3 font-semibold text-sm text-red-400">Delete Session</button>
-        ) : (
-          <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-3 space-y-2">
-            <p className="text-xs text-red-300 text-center">Delete this session and all register data?</p>
-            <div className="flex gap-2">
-              <button onClick={() => setConfirmDelete(false)} className="flex-1 bg-pool-700 rounded-lg py-2 text-sm font-semibold">Cancel</button>
-              <button onClick={doDelete} disabled={deleting} className="flex-1 bg-red-900 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold text-red-100">{deleting ? 'Deleting...' : 'Confirm Delete'}</button>
-            </div>
-          </div>
-        )}
-        <button onClick={onClose} className="w-full py-3 text-sm text-pool-400">Cancel</button>
-      </div>
-    </div>
-  )
-}
-
-function SessionCard({ s, type, onAction }) {
-  const navigate = useNavigate()
-  const sessionDate = new Date(s.date + 'T12:00:00')
-  const weekday = sessionDate.toLocaleDateString('en-GB', { weekday: 'long' })
-  const dateLabel = sessionDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-  const amPm = sessionAmPm(s)
-  const isPending = type === 'pending'
-  const daysAgo = isPending ? Math.floor((new Date() - sessionDate) / (1000 * 60 * 60 * 24)) : null
-  const subtitle = s.label && s.label !== 'Session' ? s.label : (s.title || null)
-  const displayTitle = `${weekday}${amPm ? ` ${amPm}` : ''}`
-  const handlers = useLongPress(
-    () => onAction({ ...s, _displayTitle: displayTitle }),
-    () => navigate(isPending ? `/sessions/${s.session_id}/register` : `/sessions/${s.session_id}`)
-  )
-
-  if (isPending) {
-    return (
-      <div {...handlers} className="flex items-center justify-between bg-pool-700 border border-accent-600/40 rounded-xl p-3.5 cursor-pointer select-none active:opacity-70 transition-opacity">
-        <div>
-          <p className="font-semibold text-sm text-pool-200">{displayTitle}</p>
-          <p className="text-pool-400 text-xs mt-0.5">
-            {dateLabel} · {daysAgo === 1 ? 'yesterday' : daysAgo === 0 ? 'today' : `${daysAgo}d ago`}
-            {subtitle ? ` · ${subtitle}` : ''}
-          </p>
-        </div>
-        <span className="text-accent-500 text-sm font-semibold">Log →</span>
-      </div>
-    )
-  }
-
-  const dayName = sessionDate.toLocaleDateString('en-GB', { weekday: 'short' })
-  const dayNum = sessionDate.getDate()
-  const groupCount = s.planned_content ? Object.keys(s.planned_content).length : 0
-  const upcomingTitle = s.title || subtitle || `${weekday}${amPm ? ` ${amPm}` : ''}`
-
-  return (
-    <div {...handlers} className="flex items-center justify-between bg-pool-700 border border-pool-600 rounded-xl p-3.5 cursor-pointer select-none active:opacity-70 transition-opacity">
-      <div className="flex-1">
-        <p className="font-semibold text-sm text-pool-200">{upcomingTitle}</p>
-        <div className="flex items-center gap-2 mt-1.5">
-          <span className="text-xs font-medium text-accent-400 bg-accent-600/15 px-2 py-0.5 rounded-md">{dayName} {dayNum}</span>
-          {groupCount > 0 && <span className="text-xs text-pool-400">{groupCount} group{groupCount !== 1 ? 's' : ''}</span>}
-        </div>
-      </div>
-      <span className="text-pool-400 text-lg ml-3">›</span>
-    </div>
   )
 }
 
@@ -532,10 +475,10 @@ function AssistantInboxPreview({ inbox }) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [calendar, setCalendar] = useState([])
   const [pulse, setPulse] = useState([])
   const [loading, setLoading] = useState(true)
-  const [activeSheet, setActiveSheet] = useState(null)
   const [coachingNotes, setCoachingNotes] = useState([])
   const [coachingProfile, setCoachingProfile] = useState(null)
   const [meetCountdowns, setMeetCountdowns] = useState({ group_targets: [], upcoming_meets: [] })
@@ -543,6 +486,7 @@ export default function Dashboard() {
   const [currentSeason, setCurrentSeason] = useState(null)
   const [availability, setAvailability] = useState({ items: [], current_count: 0, upcoming_count: 0 })
   const [seasonNotice, setSeasonNotice] = useState('')
+  const [busySessionKey, setBusySessionKey] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -574,21 +518,10 @@ export default function Dashboard() {
   }
 
   const today = new Date()
-  const todayStr = today.toISOString().split('T')[0]
+  const todayStr = localDateKey(today)
   const activeSeason = currentSeason && currentSeason.date_to >= todayStr ? currentSeason : null
 
-  const allItems = calendar.flatMap(day =>
-    (day.items || []).map(item => ({ ...item, date: day.date }))
-  )
-  const currentSessions = proximateSessions(calendar, today)
-  const upcomingSessions = allItems.filter(s =>
-    s.date >= todayStr && (s.status === 'planned' || !s.status) && s.session_id
-  ).slice(0, 3)
-
-  const pendingRegister = allItems.filter(s =>
-    activeSeason && s.date >= activeSeason.date_from &&
-    s.date < todayStr && s.status !== 'cancelled' && !s.registered && s.session_id
-  ).slice(0, 3)
+  const sessionQueue = weeklySessionQueue(calendar, today)
 
   const handleSeasonStarted = async (season, notice = '') => {
     setCurrentSeason(season)
@@ -601,11 +534,41 @@ export default function Dashboard() {
     setAssistantInbox(inbox)
   }
 
-  const handleDeleted = (sessionId) => {
-    setCalendar(prev => prev.map(day => ({
-      ...day,
-      items: (day.items || []).filter(item => item.session_id !== sessionId),
-    })))
+  const openRegister = async (item) => {
+    const key = `${item.date}-${item.session_id || `slot-${item.slot_id}`}`
+    setBusySessionKey(key)
+    try {
+      if (item.session_id) {
+        navigate(`/sessions/${item.session_id}/register`)
+        return
+      }
+      const created = await api.startCalendarSession({ pool_slot_id: item.slot_id, date: item.date })
+      navigate(`/sessions/${created.id}/register`)
+    } catch (error) {
+      alert(`Could not open register: ${error.message}`)
+      setBusySessionKey('')
+    }
+  }
+
+  const dismissSession = async (item) => {
+    if (!window.confirm(`Remove ${item.title || item.label || 'this session'} from the home session desk?`)) return
+    try {
+      await api.dismissCalendarSession({
+        date: item.date,
+        pool_slot_id: item.slot_id || null,
+        session_id: item.session_id || null,
+      })
+      setCalendar(previous => previous.map(day => ({
+        ...day,
+        items: (day.items || []).map(row => {
+          const sameSession = item.session_id && row.session_id === item.session_id
+          const sameOccurrence = !item.session_id && day.date === item.date && row.slot_id === item.slot_id
+          return sameSession || sameOccurrence ? { ...row, status: 'dismissed' } : row
+        }),
+      })))
+    } catch (error) {
+      alert(`Could not dismiss session: ${error.message}`)
+    }
   }
 
   // Swimmers needing attention from pulse (approaching target in ≤2 weeks or very low attendance)
@@ -628,7 +591,14 @@ export default function Dashboard() {
         </h1>
       </div>
 
-      {!loading && <TodaySessionCard sessions={currentSessions} />}
+      {!loading && (
+        <SessionDesk
+          sessions={sessionQueue}
+          onRegister={openRegister}
+          onDismiss={dismissSession}
+          busyKey={busySessionKey}
+        />
+      )}
 
       {!loading && !activeSeason && <SeasonStartCard onStarted={handleSeasonStarted} />}
       {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} notice={seasonNotice} />}
@@ -686,41 +656,6 @@ export default function Dashboard() {
             </div>
           ))}
         </div>
-      )}
-
-      {/* Pending registers — highest priority */}
-      {pendingRegister.length > 0 && (
-        <section>
-          <div className="flex items-center gap-2 mb-2.5">
-            <div className="w-1.5 h-4 bg-accent-500 rounded-full" />
-            <h2 className="font-semibold text-sm">Needs attention</h2>
-          </div>
-          <div className="space-y-2">
-            {pendingRegister.map(s => (
-              <SessionCard key={s.session_id || s.date} s={s} type="pending"
-                onAction={(session) => setActiveSheet({ session, type: 'pending' })} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Upcoming sessions */}
-      {upcomingSessions.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between mb-2.5">
-            <div className="flex items-center gap-2">
-              <div className="w-1.5 h-4 bg-pool-600 rounded-full" />
-              <h2 className="font-semibold text-sm">Coming up</h2>
-            </div>
-            <Link to="/plan" className="text-xs text-pool-500 hover:text-pool-300">Plan →</Link>
-          </div>
-          <div className="space-y-2">
-            {upcomingSessions.map(s => (
-              <SessionCard key={s.session_id || s.date} s={s} type="upcoming"
-                onAction={(session) => setActiveSheet({ session, type: 'upcoming' })} />
-            ))}
-          </div>
-        </section>
       )}
 
       {/* Attention flags from pulse — imminent targets or very low attendance */}
@@ -792,14 +727,6 @@ export default function Dashboard() {
         </Link>
       </div>
 
-      {activeSheet && (
-        <SessionActionSheet
-          session={activeSheet.session}
-          type={activeSheet.type}
-          onClose={() => setActiveSheet(null)}
-          onDeleted={handleDeleted}
-        />
-      )}
     </div>
   )
 }

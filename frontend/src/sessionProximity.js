@@ -22,7 +22,7 @@ export function sessionDaypart(session) {
 }
 
 export function isSessionNear(session, now = new Date()) {
-  if (!session || session.status === 'cancelled') return false
+  if (!session || ['cancelled', 'completed', 'dismissed'].includes(session.status)) return false
   if (session.date !== localDateKey(now)) return false
 
   const currentMinutes = now.getHours() * 60 + now.getMinutes()
@@ -37,9 +37,36 @@ export function isSessionNear(session, now = new Date()) {
   return currentMinutes >= start - 180 && currentMinutes <= end + 120
 }
 
+export function calendarSessions(calendar) {
+  return (calendar || []).flatMap(day =>
+    (day.items || []).map(item => ({ ...item, date: day.date, day_name: day.day_name }))
+  )
+}
+
+export function weeklySessionQueue(calendar, now = new Date()) {
+  const monday = new Date(now)
+  const weekday = monday.getDay()
+  monday.setDate(monday.getDate() + (weekday === 0 ? -6 : 1 - weekday))
+  monday.setHours(0, 0, 0, 0)
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+
+  const from = localDateKey(monday)
+  const to = localDateKey(sunday)
+  return calendarSessions(calendar)
+    .filter(item => item.date >= from && item.date <= to)
+    .filter(item => !['cancelled', 'completed', 'dismissed'].includes(item.status))
+    .sort((a, b) => {
+      if (a.status === 'active' && b.status !== 'active') return -1
+      if (b.status === 'active' && a.status !== 'active') return 1
+      return `${a.date}T${a.time || a.start_time || '23:59'}`.localeCompare(
+        `${b.date}T${b.time || b.start_time || '23:59'}`
+      )
+    })
+}
+
 export function proximateSessions(calendar, now = new Date()) {
-  return (calendar || [])
-    .flatMap(day => (day.items || []).map(item => ({ ...item, date: day.date })))
+  return calendarSessions(calendar)
     .filter(item => isSessionNear(item, now))
     .sort((a, b) => {
       if (a.status === 'active' && b.status !== 'active') return -1

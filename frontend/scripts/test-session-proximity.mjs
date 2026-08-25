@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { isSessionNear, localDateKey, matchingWeeklySessions, proximateSessions } from '../src/sessionProximity.js'
+import { isSessionNear, localDateKey, matchingWeeklySessions, proximateSessions, weeklySessionQueue } from '../src/sessionProximity.js'
 
 const mondayMorning = new Date(2026, 7, 24, 9, 30)
 const mondayEvening = new Date(2026, 7, 24, 18, 0)
@@ -16,6 +16,22 @@ const calendar = [{ date: '2026-08-24', items: [
   { session_id: 3, time: '20:00', status: 'cancelled' },
 ] }]
 assert.deepEqual(proximateSessions(calendar, mondayEvening).map(item => item.session_id || item.slot_id), [2, 1])
+
+const weeklyCalendar = [
+  { date: '2026-08-24', items: [
+    { slot_id: 1, time: '06:00', status: 'unlogged' },
+    { session_id: 2, time: '20:30', status: 'completed' },
+  ] },
+  { date: '2026-08-25', items: [
+    { slot_id: 3, time: '20:00', status: 'planned' },
+    { slot_id: 4, time: '21:00', status: 'dismissed' },
+  ] },
+  { date: '2026-08-26', items: [{ slot_id: 5, time: '18:00', status: 'cancelled' }] },
+]
+assert.deepEqual(
+  weeklySessionQueue(weeklyCalendar, mondayEvening).map(item => item.session_id || item.slot_id),
+  [1, 3],
+)
 
 const microcycles = [{ sessions: [
   { day: 'Monday AM', session_type: 'aerobic' },

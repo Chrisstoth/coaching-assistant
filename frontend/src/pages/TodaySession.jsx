@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { localDateKey, matchingWeeklySessions, proximateSessions } from '../sessionProximity'
+import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, weeklySessionQueue } from '../sessionProximity'
 
 function timeLabel(item) {
   const start = item?.start_time || item?.time
@@ -84,18 +84,20 @@ export default function TodaySession() {
       const [cal, coachingNotes, weeks] = await Promise.all([
         api.getCalendar(),
         api.getCoachingNotes().catch(() => []),
-        api.getMicrocycles({ date_from: today, date_to: today }).catch(() => []),
+        api.getMicrocycles().catch(() => []),
       ])
       setCalendar(cal)
       setNotes(coachingNotes)
       setMicrocycles(weeks)
 
       const nearby = proximateSessions(cal)
+      const available = calendarSessions(cal).filter(item => !['cancelled', 'dismissed'].includes(item.status))
       const requestedSession = Number(searchParams.get('session'))
       const requestedSlot = Number(searchParams.get('slot'))
-      const chosen = nearby.find(item => requestedSession && item.session_id === requestedSession)
-        || nearby.find(item => requestedSlot && item.slot_id === requestedSlot)
+      const chosen = available.find(item => requestedSession && item.session_id === requestedSession)
+        || available.find(item => requestedSlot && item.slot_id === requestedSlot)
         || nearby[0]
+        || weeklySessionQueue(cal)[0]
 
       if (!chosen?.session_id) {
         setSession(chosen || null)
@@ -121,13 +123,14 @@ export default function TodaySession() {
 
   useEffect(() => { load() }, [load])
 
-  const nearby = useMemo(() => proximateSessions(calendar), [calendar])
+  const nearby = useMemo(() => weeklySessionQueue(calendar), [calendar])
   const weeklyPlans = useMemo(
     () => session ? matchingWeeklySessions(microcycles, session, session.date || today) : [],
     [microcycles, session, today]
   )
   const groups = planGroups(session)
-  const datedNotes = notes.filter(note => note.date_from <= today && note.date_to >= today)
+  const sessionDate = session?.date || today
+  const datedNotes = notes.filter(note => note.date_from <= sessionDate && note.date_to >= sessionDate)
   const individualMods = Object.entries(session?.individual_mods || {})
   const registerMap = new Map(register.map(row => [row.swimmer_id, row]))
   const expectedRoster = expected.filter(row => row.expected)
@@ -145,10 +148,24 @@ export default function TodaySession() {
     setError('')
     try {
       const created = await api.startCalendarSession({ pool_slot_id: session.slot_id, date: session.date || today })
-      setSearchParams({ session: created.id })
+      navigate(`/sessions/${created.id}/register`)
     } catch (err) {
       setError(err.message || 'Could not start the session')
       setStarting(false)
+    }
+  }
+
+  const dismissSession = async () => {
+    if (!window.confirm(`Remove ${session.title || session.label || 'this session'} from the home session desk?`)) return
+    try {
+      await api.dismissCalendarSession({
+        date: session.date || today,
+        pool_slot_id: session.slot_id || session.pool_slot_id || null,
+        session_id: session.session_id || null,
+      })
+      navigate('/')
+    } catch (err) {
+      setError(err.message || 'Could not dismiss the session')
     }
   }
 
@@ -159,12 +176,12 @@ export default function TodaySession() {
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-3 pt-2">
           <button onClick={() => navigate('/')} className="text-pool-400 text-2xl" aria-label="Back home">‹</button>
-          <h1 className="text-lg font-bold">Today</h1>
+          <h1 className="text-lg font-bold">Session desk</h1>
         </div>
         <div className="bg-pool-800 border border-pool-700 rounded-2xl p-5 text-center">
-          <p className="font-semibold text-pool-200">{error ? 'Could not load today' : 'No current session'}</p>
+          <p className="font-semibold text-pool-200">{error ? 'Could not load sessions' : 'No outstanding session'}</p>
           <p className={`text-sm mt-1 ${error ? 'text-red-300' : 'text-pool-500'}`}>
-            {error || 'There isn’t a non-cancelled session in this part of the day.'}
+            {error || 'There are no outstanding sessions left in this week.'}
           </p>
           <Link to="/calendar" className="inline-block mt-4 text-sm font-semibold text-accent-400">Open calendar →</Link>
         </div>
@@ -177,12 +194,22 @@ export default function TodaySession() {
       <div className="flex items-center gap-3 pt-2">
         <button onClick={() => navigate('/')} className="text-pool-400 text-2xl" aria-label="Back home">‹</button>
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] font-semibold text-accent-400 uppercase tracking-wider">On deck today</p>
+          <p className="text-[11px] font-semibold text-accent-400 uppercase tracking-wider">Session desk</p>
           <h1 className="text-lg font-bold truncate">{session.title || session.label || 'Session'}</h1>
           <p className="text-xs text-pool-400 mt-0.5">
-            {[timeLabel(session), session.squad, session.course].filter(Boolean).join(' · ')}
+            {[session.date, timeLabel(session), session.squad, session.course].filter(Boolean).join(' · ')}
           </p>
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        <Link to={`/import?tab=excel&date=${session.date || today}&slot=${session.slot_id || session.pool_slot_id || ''}&session=${session.session_id || ''}`}
+          className="bg-pool-800 border border-pool-700 rounded-xl py-2.5 text-center text-xs font-semibold text-pool-200">
+          Import session plan
+        </Link>
+        <button onClick={dismissSession} className="bg-pool-800 border border-pool-700 rounded-xl py-2.5 text-xs font-semibold text-pool-400">
+          Dismiss from home
+        </button>
       </div>
 
       {nearby.length > 1 && (
@@ -204,11 +231,11 @@ export default function TodaySession() {
 
       {!session.session_id ? (
         <section className="bg-accent-900/25 border border-accent-700/50 rounded-2xl p-4">
-          <p className="font-semibold text-pool-100">Scheduled and ready to set up</p>
-          <p className="text-xs text-pool-400 mt-1">Start the session to create its register and attach the full session detail.</p>
+          <p className="font-semibold text-pool-100">Register ready</p>
+          <p className="text-xs text-pool-400 mt-1">The session record will be created automatically when you open the register.</p>
           <button onClick={startScheduledSession} disabled={starting}
             className="w-full mt-3 bg-accent-600 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold">
-            {starting ? 'Setting up…' : 'Set up session & register'}
+            {starting ? 'Opening…' : 'Take register'}
           </button>
         </section>
       ) : (

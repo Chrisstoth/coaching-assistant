@@ -799,7 +799,13 @@ def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
     }
 
 
-def save_session_xlsx_draft(draft: dict, db: DBSession, target_session_id: Optional[int] = None) -> models.Session:
+def save_session_xlsx_draft(
+    draft: dict,
+    db: DBSession,
+    target_session_id: Optional[int] = None,
+    *,
+    mark_historical_complete: bool = False,
+) -> models.Session:
     """Create or update a session from a reviewed Excel draft."""
     session_date = date.fromisoformat(str(draft.get("date")))
     pool_slot_id = draft.get("pool_slot_id")
@@ -820,7 +826,11 @@ def save_session_xlsx_draft(draft: dict, db: DBSession, target_session_id: Optio
     if session and session.status == "cancelled":
         raise ValueError("This scheduled session is cancelled and cannot be overwritten by an import.")
     if session is None:
-        status = "completed" if session_date < date.today() else "active" if session_date == date.today() else "planned"
+        status = (
+            "completed" if mark_historical_complete and session_date < date.today()
+            else "active" if session_date <= date.today()
+            else "planned"
+        )
         session = models.Session(date=session_date, status=status, source="excel")
         db.add(session)
         db.flush()
@@ -859,7 +869,7 @@ def import_session_xlsx(
     db: DBSession,
 ) -> dict:
     extracted = extract_session_xlsx(file_content, filename)
-    session = save_session_xlsx_draft(extracted["draft"], db)
+    session = save_session_xlsx_draft(extracted["draft"], db, mark_historical_complete=True)
     return {"session_id": session.id, "warnings": extracted["warnings"]}
 
 

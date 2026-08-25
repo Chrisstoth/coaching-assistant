@@ -52,6 +52,12 @@ class CalendarCancel(BaseModel):
     session_id: Optional[int] = None
 
 
+class CalendarDismiss(BaseModel):
+    date: date
+    pool_slot_id: Optional[int] = None
+    session_id: Optional[int] = None
+
+
 class RegisterEntry(BaseModel):
     swimmer_id: int
     attended: bool
@@ -186,6 +192,10 @@ def start_calendar_session(body: CalendarStart, db: DBSession = Depends(get_db))
         models.Session.date == body.date,
     ).first()
     if existing:
+        if existing.status == "dismissed":
+            existing.status = "active"
+            db.commit()
+            db.refresh(existing)
         return _session_detail(existing, db)
 
     slot = db.query(models.PoolSlot).filter(models.PoolSlot.id == body.pool_slot_id).first()
@@ -237,6 +247,46 @@ def cancel_calendar_session(body: CalendarCancel, db: DBSession = Depends(get_db
     db.commit()
     db.refresh(session)
     return {"session_id": session.id, "status": "cancelled"}
+
+
+@router.post("/calendar/dismiss", status_code=201)
+def dismiss_calendar_session(body: CalendarDismiss, db: DBSession = Depends(get_db)):
+    """Hide one session occurrence from the home queue without cancelling the timetable slot."""
+    session = None
+    if body.session_id:
+        session = db.query(models.Session).filter(models.Session.id == body.session_id).first()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+    elif body.pool_slot_id:
+        session = db.query(models.Session).filter(
+            models.Session.pool_slot_id == body.pool_slot_id,
+            models.Session.date == body.date,
+        ).first()
+
+    if session:
+        if session.status == "cancelled":
+            raise HTTPException(status_code=409, detail="A cancelled session cannot be dismissed")
+        session.status = "dismissed"
+    else:
+        slot = db.query(models.PoolSlot).filter(models.PoolSlot.id == body.pool_slot_id).first()
+        if not slot:
+            raise HTTPException(status_code=404, detail="Slot not found")
+        session = models.Session(
+            date=body.date,
+            start_time=slot.time,
+            end_time=slot.end_time,
+            squad=slot.squad,
+            title=slot.label,
+            pool_slot_id=slot.id,
+            course=slot.course,
+            status="dismissed",
+            source="calendar",
+        )
+        db.add(session)
+
+    db.commit()
+    db.refresh(session)
+    return {"session_id": session.id, "status": session.status}
 
 
 @router.get("/{session_id}")
@@ -341,6 +391,9 @@ def _match_excel_import_target(draft: dict, db: DBSession) -> tuple[Optional[dic
 async def import_excel(
     file: UploadFile = File(...),
     ai_check: bool = Form(False),
+    expected_date: Optional[date] = Form(None),
+    expected_pool_slot_id: Optional[int] = Form(None),
+    expected_session_id: Optional[int] = Form(None),
     db: DBSession = Depends(get_db),
 ):
     content = await file.read()
@@ -351,6 +404,27 @@ async def import_excel(
     suggested_target, matching_warnings = _match_excel_import_target(result["draft"], db)
     result["suggested_target"] = suggested_target
     result["warnings"].extend(matching_warnings)
+    result["context_match"] = True
+    if expected_date and result["draft"].get("date") != expected_date.isoformat():
+        result["context_match"] = False
+        result["warnings"].append(
+            f"This upload was opened for {expected_date.isoformat()}, but the workbook is dated "
+            f"{result['draft'].get('date')}. Go back and choose the matching workbook."
+        )
+    if expected_pool_slot_id and (
+        not suggested_target or suggested_target.get("pool_slot_id") != expected_pool_slot_id
+    ):
+        result["context_match"] = False
+        result["warnings"].append(
+            "The workbook time does not match the timetable session selected from the home dashboard."
+        )
+    if expected_session_id and (
+        not suggested_target or suggested_target.get("session_id") != expected_session_id
+    ):
+        result["context_match"] = False
+        result["warnings"].append(
+            "The workbook does not match the existing session selected from the home dashboard."
+        )
     result["ai_review"] = None
     if ai_check:
         try:
@@ -639,6 +713,8 @@ def submit_register(
                 volume_breakdown=volume,
             ))
 
+    # Saving the register is the explicit signal that this session is finished.
+    session.status = "completed"
     db.commit()
     return results
 
@@ -834,11 +910,27 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
         status = "unlogged"
 
     entry_count = None
+    registered = False
+    groups = []
     if session and status in ("active", "completed"):
         entry_count = db.query(models.SessionEntry).filter(
             models.SessionEntry.session_id == session.id,
             models.SessionEntry.attended == True,
         ).count()
+        registered = db.query(models.SessionEntry).filter(
+            models.SessionEntry.session_id == session.id,
+            models.SessionEntry.attended.isnot(None),
+        ).count() > 0
+    if session:
+        groups = [
+            {
+                "group_number": group.group_number,
+                "description": group.description,
+                "sets": (group.sets or {}).get("raw") if isinstance(group.sets, dict) else None,
+                "volume_breakdown": group.volume_breakdown,
+            }
+            for group in sorted(session.groups or [], key=lambda row: row.group_number)
+        ]
 
     return {
         "slot_id": slot.id if slot else None,
@@ -851,6 +943,14 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
         "title": session.title if session else None,
         "cancel_reason": session.cancel_reason if session else None,
         "entry_count": entry_count,
+        "registered": registered,
+        "coach_intent": session.coach_intent if session else None,
+        "coach_notes": session.coach_notes if session else None,
+        "individual_mods": session.individual_mods if session else None,
+        "groups": groups,
+        "has_plan": bool(session and (
+            session.coach_intent or session.coach_notes or session.planned_content or groups
+        )),
         "course": (session.course if session else None) or (slot.course if slot else None),
         "lanes": slot.lanes if slot else None,
         "has_blocks": slot.has_blocks if slot else None,

@@ -1,18 +1,23 @@
 import { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
 
 export default function Import() {
-  const [tab, setTab] = useState('combined')
+  const [searchParams] = useSearchParams()
+  const requestedTab = searchParams.get('tab')
+  const [tab, setTab] = useState(['combined', 'excel', 'photo'].includes(requestedTab) ? requestedTab : 'combined')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [plannedSessions, setPlannedSessions] = useState([])
 
   useEffect(() => {
-    if (tab === 'photo' || tab === 'excel') {
+    if (tab === 'photo') {
       // Fetch upcoming planned sessions
-      api.getCalendar().then(sessions => {
-        setPlannedSessions(sessions.filter(s => s.status === 'planned' || !s.status))
+      api.getCalendar().then(days => {
+        setPlannedSessions(days.flatMap(day => (day.items || [])
+          .filter(item => item.session_id && !['cancelled', 'dismissed'].includes(item.status))
+          .map(item => ({ ...item, id: item.session_id, date: day.date }))))
       })
     }
   }, [tab])
@@ -41,7 +46,11 @@ export default function Import() {
       </div>
 
       {tab === 'combined' && <CombinedImport setResult={setResult} setLoading={setLoading} loading={loading} />}
-      {tab === 'excel' && <ExcelImport setResult={setResult} setLoading={setLoading} loading={loading} plannedSessions={plannedSessions} />}
+      {tab === 'excel' && <ExcelImport setResult={setResult} setLoading={setLoading} loading={loading} importContext={{
+        date: searchParams.get('date'),
+        slotId: searchParams.get('slot'),
+        sessionId: searchParams.get('session'),
+      }} />}
       {tab === 'photo' && <PhotoImport setResult={setResult} setLoading={setLoading} loading={loading} plannedSessions={plannedSessions} />}
 
       {result && (
@@ -356,7 +365,7 @@ function CSVImport({ setResult, setLoading, loading }) {
 }
 
 
-function ExcelImport({ setResult, setLoading, loading }) {
+function ExcelImport({ setResult, setLoading, loading, importContext }) {
   const [file, setFile] = useState(null)
   const [preview, setPreview] = useState(null)
   const [draft, setDraft] = useState(null)
@@ -368,7 +377,7 @@ function ExcelImport({ setResult, setLoading, loading }) {
     setLoading(true)
     setResult(null)
     try {
-      const res = await api.importExcel(file, aiCheck)
+      const res = await api.importExcel(file, aiCheck, importContext)
       setPreview(res)
       setDraft(JSON.parse(JSON.stringify(res.draft)))
     } catch (e) {
@@ -407,6 +416,12 @@ function ExcelImport({ setResult, setLoading, loading }) {
   if (!preview) {
     return (
       <div className="space-y-3">
+        {importContext?.date && (
+          <div className="bg-accent-900/20 border border-accent-700/40 rounded-xl p-3">
+            <p className="text-xs font-semibold text-accent-300">Adding a plan for {importContext.date}</p>
+            <p className="text-[11px] text-pool-500 mt-1">The workbook date and time will be checked against this session before it is linked.</p>
+          </div>
+        )}
         <p className="text-pool-400 text-sm">
           Upload your session-plan workbook. Nothing is saved until you review and confirm the extraction.
         </p>
@@ -446,7 +461,7 @@ function ExcelImport({ setResult, setLoading, loading }) {
   }
 
   const target = preview.suggested_target
-  const blocked = target?.can_import === false
+  const blocked = target?.can_import === false || preview.context_match === false
   return (
     <div className="space-y-3">
       <p className="text-pool-300 text-sm font-semibold">Review extracted session</p>

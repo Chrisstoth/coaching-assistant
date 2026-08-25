@@ -112,6 +112,46 @@ class CoreFlowTests(unittest.TestCase):
             db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
             db.commit()
 
+    def test_session_occurrence_can_be_dismissed_from_home_and_reopened(self):
+        target_date = date.today()
+        with SessionLocal() as db:
+            slot = models.PoolSlot(
+                day_of_week=target_date.weekday(), time="04:47", end_time="05:47",
+                squad="Dismiss Test", label="Dismiss test slot", active=True,
+            )
+            db.add(slot)
+            db.commit()
+            slot_id = slot.id
+
+        try:
+            dismissed = self.client.post(
+                "/sessions/calendar/dismiss", headers=self.headers,
+                json={"date": target_date.isoformat(), "pool_slot_id": slot_id},
+            )
+            self.assertEqual(dismissed.status_code, 201, dismissed.text)
+            session_id = dismissed.json()["session_id"]
+            self.assertEqual(dismissed.json()["status"], "dismissed")
+
+            calendar = self.client.get("/sessions/calendar", headers=self.headers)
+            item = next(
+                item for day in calendar.json() for item in day["items"]
+                if item.get("slot_id") == slot_id
+            )
+            self.assertEqual(item["status"], "dismissed")
+
+            reopened = self.client.post(
+                "/sessions/calendar/start", headers=self.headers,
+                json={"date": target_date.isoformat(), "pool_slot_id": slot_id},
+            )
+            self.assertEqual(reopened.status_code, 201, reopened.text)
+            self.assertEqual(reopened.json()["id"], session_id)
+            self.assertEqual(reopened.json()["status"], "active")
+        finally:
+            with SessionLocal() as db:
+                db.query(models.Session).filter(models.Session.pool_slot_id == slot_id).delete()
+                db.query(models.PoolSlot).filter(models.PoolSlot.id == slot_id).delete()
+                db.commit()
+
     def test_register_date_parser_accepts_compact_ordinal_month(self):
         parsed = _extract_register_date("Monday PM 24thaugust", today=date(2026, 8, 24))
         self.assertEqual(parsed, date(2026, 8, 24))
@@ -507,6 +547,7 @@ class CoreFlowTests(unittest.TestCase):
                 "date": "2026-09-07",
                 "title": "Aerobic development",
                 "squad": "Performance",
+                "status": "active",
                 "groups": {
                     "1": {
                         "description": "Main group",
@@ -538,6 +579,8 @@ class CoreFlowTests(unittest.TestCase):
         entry = next(row for row in saved.json() if row["swimmer_id"] == swimmer_id)
         self.assertTrue(entry["attended"])
         self.assertEqual(entry["coach_observation"], "Held form throughout.")
+        completed_session = self.client.get(f"/sessions/{session_id}", headers=self.headers)
+        self.assertEqual(completed_session.json()["status"], "completed")
 
         record_ai_usage(
             "anthropic", "claude-haiku-4-5-20251001", "test_call",
@@ -832,7 +875,10 @@ class CoreFlowTests(unittest.TestCase):
                 preview = self.client.post(
                     "/sessions/import/excel",
                     headers=self.headers,
-                    data={"ai_check": "true"},
+                    data={
+                        "ai_check": "true", "expected_date": "2026-08-24",
+                        "expected_pool_slot_id": str(slot_id),
+                    },
                     files={"file": (
                         "260824 Monday PM.xlsx", workbook_bytes.getvalue(),
                         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -847,6 +893,7 @@ class CoreFlowTests(unittest.TestCase):
             self.assertIn("2x:", payload["draft"]["groups"]["1"]["sets"])
             self.assertEqual(payload["suggested_target"]["pool_slot_id"], slot_id)
             self.assertIsNone(payload["suggested_target"]["session_id"])
+            self.assertTrue(payload["context_match"])
             self.assertEqual(payload["ai_review"]["status"], "ok")
             review.assert_called_once()
 
@@ -855,6 +902,18 @@ class CoreFlowTests(unittest.TestCase):
                     models.Session.pool_slot_id == slot_id,
                     models.Session.date == date(2026, 8, 24),
                 ).first())
+
+            mismatch = self.client.post(
+                "/sessions/import/excel", headers=self.headers,
+                data={"ai_check": "false", "expected_date": "2026-08-25"},
+                files={"file": (
+                    "260824 Monday PM.xlsx", workbook_bytes.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )},
+            )
+            self.assertEqual(mismatch.status_code, 200, mismatch.text)
+            self.assertFalse(mismatch.json()["context_match"])
+            self.assertTrue(any("opened for 2026-08-25" in warning for warning in mismatch.json()["warnings"]))
 
             confirmed = self.client.post(
                 "/sessions/import/excel/confirm", headers=self.headers,
@@ -867,6 +926,17 @@ class CoreFlowTests(unittest.TestCase):
             self.assertEqual(session["source"], "excel")
             self.assertEqual(session["groups"][0]["sets"]["items"][0]["description"], "Kick with board")
             self.assertEqual(session["groups"][0]["volume_breakdown"]["session_total"], 400)
+
+            calendar = self.client.get(
+                "/sessions/calendar?week_start=2026-08-24", headers=self.headers,
+            )
+            calendar_item = next(
+                item for day in calendar.json() for item in day["items"]
+                if item.get("slot_id") == slot_id
+            )
+            self.assertTrue(calendar_item["has_plan"])
+            self.assertEqual(calendar_item["groups"][0]["description"], "Basics")
+            self.assertIn("Kick with board", calendar_item["groups"][0]["sets"])
 
             repeated = self.client.post(
                 "/sessions/import/excel/confirm", headers=self.headers,

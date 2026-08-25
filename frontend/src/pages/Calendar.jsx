@@ -27,6 +27,7 @@ const STATUS_STYLES = {
   completed: 'bg-emerald-900/40 border-emerald-700',
   active:    'bg-blue-900/40 border-blue-700',
   cancelled: 'bg-pool-900/60 border-pool-700 opacity-60',
+  dismissed: 'bg-pool-900/40 border-pool-700 opacity-60',
   planned:   'bg-pool-800 border-pool-700',
   unlogged:  'bg-amber-900/30 border-amber-700',
 }
@@ -35,6 +36,7 @@ const STATUS_CHIP = {
   completed: { label: 'Done',        cls: 'bg-emerald-800 text-emerald-200' },
   active:    { label: 'In progress', cls: 'bg-blue-800 text-blue-200' },
   cancelled: { label: 'Cancelled',   cls: 'bg-pool-700 text-pool-400' },
+  dismissed: { label: 'Hidden',      cls: 'bg-pool-700 text-pool-500' },
   planned:   { label: 'Planned',     cls: 'bg-pool-700 text-pool-300' },
   unlogged:  { label: 'Not logged',  cls: 'bg-amber-800 text-amber-200' },
 }
