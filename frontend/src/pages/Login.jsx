@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { setToken } from '../api'
+import { LaneWatchLockup } from '../components/LaneWatchBrand'
 
 export default function Login() {
   const [password, setPassword] = useState('')
@@ -31,12 +32,9 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-pool-950 flex items-center justify-center px-4">
+    <div className="min-h-screen brand-canvas flex items-center justify-center px-4">
       <div className="w-full max-w-sm space-y-8">
-        <div className="flex flex-col items-center gap-3">
-          <img src="/logo.png" alt="Club logo" className="h-16 w-auto object-contain" />
-          <h1 className="text-xl font-bold text-pool-100 tracking-tight">Deckxtra</h1>
-        </div>
+        <LaneWatchLockup />
 
         <form onSubmit={submit} className="space-y-4">
           <input

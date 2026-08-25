@@ -1,5 +1,5 @@
 @echo off
-echo Setting up Coaching Assistant...
+echo Setting up LaneWatch AI...
 echo.
 
 REM Check Python

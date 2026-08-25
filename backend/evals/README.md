@@ -1,4 +1,4 @@
-# Coaching assistant evaluation set
+# LaneWatch AI evaluation set
 
 This set protects the parts of the product that matter more than a generic chat
 benchmark: correct use of stored evidence, sound coaching judgement, pathway-aware

@@ -1,10 +1,10 @@
 @echo off
-title Coaching Assistant
+title LaneWatch AI
 color 0A
 
 echo.
 echo  ==========================================
-echo   COACHING ASSISTANT
+echo   LANEWATCH AI
 echo  ==========================================
 echo.
 

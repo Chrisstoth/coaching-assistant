@@ -1,9 +1,9 @@
 @echo off
-title Stopping Coaching Assistant
+title Stopping LaneWatch AI
 color 04
 
 echo.
-echo  Stopping Coaching Assistant...
+echo  Stopping LaneWatch AI...
 echo.
 
 REM Kill by port 8001 (backend)

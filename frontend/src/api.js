@@ -1,10 +1,25 @@
 import { flushOfflineSaves, queueRegisterSave } from './offlineQueue'
 
 const BASE = '/api'
+const TOKEN_KEY = 'lanewatch_ai_token'
+const LEGACY_TOKEN_KEY = 'dx_token'
 
-export function getToken() { return localStorage.getItem('dx_token') }
-export function setToken(t) { localStorage.setItem('dx_token', t) }
-export function clearToken() { localStorage.removeItem('dx_token') }
+export function getToken() {
+  const token = localStorage.getItem(TOKEN_KEY) || localStorage.getItem(LEGACY_TOKEN_KEY)
+  if (token && !localStorage.getItem(TOKEN_KEY)) {
+    localStorage.setItem(TOKEN_KEY, token)
+    localStorage.removeItem(LEGACY_TOKEN_KEY)
+  }
+  return token
+}
+export function setToken(t) {
+  localStorage.setItem(TOKEN_KEY, t)
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
+}
+export function clearToken() {
+  localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(LEGACY_TOKEN_KEY)
+}
 
 async function request(method, path, body = null, isFormData = false) {
   const token = getToken()

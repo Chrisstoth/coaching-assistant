@@ -1,4 +1,42 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@font-face {
+  font-family: 'Oxanium';
+  src: url('/fonts/Oxanium-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Oxanium';
+  src: url('/fonts/Oxanium-SemiBold.ttf') format('truetype');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Oxanium';
+  src: url('/fonts/Oxanium-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/fonts/Orbitron-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Orbitron';
+  src: url('/fonts/Orbitron-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
 
 @tailwind base;
 @tailwind components;
@@ -7,6 +45,10 @@
 @layer base {
   body {
     @apply bg-pool-900 text-pool-200 font-sans;
+    background-image:
+      radial-gradient(circle at 50% -20%, rgba(33, 150, 243, 0.09), transparent 38rem),
+      linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px);
+    background-size: auto, 100% 4rem;
     -webkit-tap-highlight-color: transparent;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -15,6 +57,165 @@
   button, a, [role="button"] {
     min-height: 44px;
     min-width: 44px;
+  }
+}
+
+@layer components {
+  .brand-canvas {
+    background-color: #101010;
+    background-image:
+      radial-gradient(circle at 50% 38%, rgba(33, 150, 243, 0.18), transparent 19rem),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.025) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.025) 75%);
+    background-size: auto, 34px 34px;
+  }
+
+  .lanewatch-mark {
+    display: block;
+    width: auto;
+    object-fit: contain;
+    user-select: none;
+  }
+
+  .lanewatch-wordmark {
+    display: inline-flex;
+    align-items: center;
+    color: #fff;
+    white-space: nowrap;
+  }
+
+  .lanewatch-wordmark--ink {
+    color: #15171a;
+  }
+
+  .lanewatch-wordmark > .lanewatch-mark {
+    height: 1.75rem;
+    margin-right: 0.48rem;
+  }
+
+  .lanewatch-name {
+    font-family: 'Orbitron', 'Oxanium', sans-serif;
+    font-size: 0.72rem;
+    font-weight: 700;
+    font-style: italic;
+    letter-spacing: 0.13em;
+    line-height: 1;
+  }
+
+  .lanewatch-ai-badge {
+    align-self: flex-start;
+    margin-left: 0.28rem;
+    margin-top: -0.18rem;
+    padding: 0.16rem 0.35rem 0.13rem;
+    border-radius: 999px;
+    background: #fff;
+    color: #121212;
+    font-family: 'Orbitron', 'Oxanium', sans-serif;
+    font-size: 0.42rem;
+    font-weight: 700;
+    font-style: normal;
+    letter-spacing: 0.1em;
+    line-height: 1;
+    transform: skewX(-12.5deg);
+  }
+
+  .lanewatch-wordmark--ink .lanewatch-ai-badge {
+    background: #15171a;
+    color: #fff;
+  }
+
+  .lanewatch-lockup {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    color: #fff;
+  }
+
+  .lanewatch-lockup-mark {
+    width: 9rem;
+    height: auto;
+  }
+
+  .lanewatch-lockup-name {
+    display: inline-flex;
+    align-items: flex-start;
+    margin-top: 0.6rem;
+  }
+
+  .lanewatch-lockup .lanewatch-name {
+    font-size: 1.05rem;
+    letter-spacing: 0.18em;
+  }
+
+  .lanewatch-lockup .lanewatch-ai-badge {
+    margin-left: 0.38rem;
+    font-size: 0.55rem;
+  }
+
+  .lanewatch-descriptor {
+    margin-top: 0.78rem;
+    color: #90caf9;
+    font-size: 0.58rem;
+    font-weight: 600;
+    letter-spacing: 0.24em;
+  }
+
+  .lanewatch-lockup--compact .lanewatch-lockup-mark {
+    width: 6.5rem;
+  }
+
+  .lanewatch-lockup--compact .lanewatch-name {
+    font-size: 0.86rem;
+  }
+
+  .lanewatch-ai-button {
+    position: relative;
+    display: flex;
+    width: 4rem;
+    height: 4rem;
+    align-items: center;
+    justify-content: center;
+    overflow: visible;
+    border: 1px solid rgba(144, 202, 249, 0.58);
+    border-radius: 1.25rem;
+    background: linear-gradient(145deg, #2196f3 0%, #1565c0 78%);
+    box-shadow: 0 9px 24px rgba(0, 0, 0, 0.55), 0 0 0 5px #121212;
+    transform: rotate(-2deg);
+    transition: transform 180ms ease, box-shadow 180ms ease;
+  }
+
+  .lanewatch-ai-button-glow {
+    position: absolute;
+    inset: 0.32rem;
+    border-radius: 0.95rem;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+  }
+
+  .lanewatch-ai-button-mark {
+    width: 2.85rem;
+    transform: rotate(2deg);
+  }
+
+  .lanewatch-ai-button-badge {
+    position: absolute;
+    right: -0.2rem;
+    bottom: -0.15rem;
+    min-width: 1.45rem;
+    padding: 0.26rem 0.3rem 0.21rem;
+    border: 3px solid #121212;
+    border-radius: 999px;
+    background: #fff;
+    color: #101010;
+    font-family: 'Orbitron', 'Oxanium', sans-serif;
+    font-size: 0.52rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    line-height: 1;
+    transform: skewX(-12.5deg) rotate(2deg);
+  }
+
+  .lanewatch-ai-button.is-active {
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5), 0 0 0 5px #121212, 0 0 25px rgba(33, 150, 243, 0.48);
+    transform: rotate(-2deg) scale(1.06);
   }
 }
 

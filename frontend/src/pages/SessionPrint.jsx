@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { api } from '../api'
+import { LaneWatchWordmark } from '../components/LaneWatchBrand'
 
 export default function SessionPrint() {
   const { id } = useParams()
@@ -34,7 +35,7 @@ export default function SessionPrint() {
             <p className="text-sm text-gray-600 mt-0.5">Energy focus: {session.energy_system_focus}</p>
           )}
         </div>
-        <img src="/logo.png" alt="BPSC" className="h-16 w-auto object-contain" />
+        <LaneWatchWordmark tone="ink" className="scale-125 origin-right" />
       </div>
 
       {/* Coach intent */}

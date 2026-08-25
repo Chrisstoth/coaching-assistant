@@ -1,24 +1,36 @@
 {
-  "name": "Deckxtra",
-  "short_name": "Deckxtra",
-  "description": "Swimming coaching assistant",
+  "name": "LaneWatch AI",
+  "short_name": "LaneWatch AI",
+  "description": "Poolside intelligence for swimming coaches",
+  "id": "/",
   "start_url": "/",
+  "scope": "/",
+  "lang": "en-GB",
+  "dir": "ltr",
   "display": "standalone",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#121212",
+  "theme_color": "#101010",
   "orientation": "portrait",
+  "categories": ["sports", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
-      "src": "/logo-192.png",
+      "src": "/lanewatch-icon-192.png",
       "sizes": "192x192",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
     },
     {
-      "src": "/logo.png",
+      "src": "/lanewatch-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "any maskable"
+      "purpose": "any"
+    },
+    {
+      "src": "/lanewatch-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
     }
   ]
 }

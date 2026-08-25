@@ -599,7 +599,7 @@ export default function CoachAI() {
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <div className="w-1.5 h-5 bg-accent-500 rounded-full" />
-            <h1 className="text-lg font-bold tracking-tight">Coach's AI</h1>
+            <h1 className="text-lg font-bold tracking-tight">LaneWatch AI</h1>
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -717,7 +717,7 @@ export default function CoachAI() {
               </button>
             )}
             <p className="text-pool-400 text-sm leading-relaxed">
-              Ask Deckxtra anything — swimmer profiles, session planning, competition prep, training science.
+              Ask LaneWatch AI anything — swimmer profiles, session planning, competition prep, training science.
               I know your squad and I'll pull in the right context as the conversation develops.
             </p>
             <div className="space-y-2">
@@ -1019,7 +1019,7 @@ export default function CoachAI() {
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send() } }}
-            placeholder={recording ? 'Recording…' : transcribing ? 'Transcribing…' : 'Ask Deckxtra…'}
+            placeholder={recording ? 'Recording…' : transcribing ? 'Transcribing…' : 'Ask LaneWatch AI…'}
             rows={3}
             className="bg-transparent px-4 pt-3 pb-1 text-sm focus:outline-none resize-none w-full"
           />

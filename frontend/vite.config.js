@@ -18,13 +18,13 @@ export default defineConfig({
       registerType: 'autoUpdate',
       manifest: false,
       workbox: {
-        globPatterns: ['**/*.{js,css,html,png,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,json,png,svg,ttf,webmanifest,woff2}'],
         runtimeCaching: [
           {
             urlPattern: ({ request, url }) => request.method === 'GET' && url.pathname.startsWith('/api/'),
             handler: 'NetworkFirst',
             options: {
-              cacheName: 'deckxtra-api-reads',
+              cacheName: 'lanewatch-ai-api-reads',
               networkTimeoutSeconds: 4,
               expiration: { maxEntries: 100, maxAgeSeconds: 7 * 24 * 60 * 60 },
             },

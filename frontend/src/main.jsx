@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { getToken, setToken } from './api'
+import { LaneWatchLockup } from './components/LaneWatchBrand'
 import './index.css'
 
 function LoginScreen({ onLogin }) {
@@ -35,10 +36,8 @@ function LoginScreen({ onLogin }) {
   }
 
   return (
-    <div className="fixed inset-0 bg-black flex flex-col items-center justify-center px-8 gap-8">
-      <div className="w-36 h-36 rounded-[28px] overflow-hidden">
-        <img src="/Loadimage.png" alt="Deckxtra" className="w-full h-full object-cover" />
-      </div>
+    <div className="fixed inset-0 brand-canvas flex flex-col items-center justify-center px-8 gap-10">
+      <LaneWatchLockup />
       <form onSubmit={submit} className="w-full max-w-xs space-y-3">
         <input
           type="password"
@@ -73,10 +72,8 @@ function Root() {
 
   if (splash) {
     return (
-      <div className="fixed inset-0 bg-black flex items-center justify-center">
-        <div className="w-72 h-72 rounded-[32px] overflow-hidden">
-          <img src="/Loadimage.png" alt="Deckxtra" className="w-full h-full object-cover" />
-        </div>
+      <div className="fixed inset-0 brand-canvas flex items-center justify-center">
+        <LaneWatchLockup />
       </div>
     )
   }

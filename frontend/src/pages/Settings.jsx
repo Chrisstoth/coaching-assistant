@@ -48,7 +48,7 @@ const SECTIONS = [
     items: [
       {
         to: '/ai',
-        label: "Coach's AI",
+        label: 'LaneWatch AI',
         description: 'Open the persistent AI chat — ask anything about training science, your squad, or articles you\'ve read.',
         icon: (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -88,7 +88,7 @@ export default function Settings() {
     <div className="p-4 space-y-6 pb-8">
       <header className="pt-2">
         <h1 className="text-xl font-bold tracking-tight">Settings</h1>
-        <p className="text-pool-400 text-sm mt-0.5">Configure Deckxtra</p>
+        <p className="text-pool-400 text-sm mt-0.5">Configure LaneWatch AI</p>
       </header>
 
       {SECTIONS.map(({ heading, items }) => (
@@ -171,7 +171,7 @@ export default function Settings() {
       </section>
 
       <section className="pt-2 border-t border-pool-700">
-        <p className="text-xs text-pool-600 text-center">Deckxtra · built for poolside use</p>
+        <p className="text-xs text-pool-500 text-center">LANEWATCH AI · built for poolside use</p>
       </section>
     </div>
   )

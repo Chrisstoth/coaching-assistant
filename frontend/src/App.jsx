@@ -25,6 +25,7 @@ import Login from './pages/Login'
 import ProfileWizard from './pages/ProfileWizard'
 import AssistantInbox from './pages/AssistantInbox'
 import TodaySession from './pages/TodaySession'
+import { LaneWatchAIButton, LaneWatchWordmark } from './components/LaneWatchBrand'
 
 function RequireAuth({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />
@@ -142,11 +143,10 @@ function AppHeader() {
   const isSettings = location.pathname === '/settings'
   const isInbox = location.pathname === '/assistant'
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 bg-pool-900/95 backdrop-blur border-b border-pool-700/60">
+    <header className="fixed top-0 left-0 right-0 z-50 bg-pool-900/95 backdrop-blur border-b border-white/10">
       <div className="flex items-center justify-between max-w-lg mx-auto px-4 h-12">
-        <Link to="/" className="flex items-center gap-2.5">
-          <img src="/logo.png" alt="Club logo" className="h-8 w-auto object-contain" />
-          <span className="font-bold text-sm tracking-tight text-pool-100">Deckxtra</span>
+        <Link to="/" className="flex items-center" aria-label="LaneWatch AI home">
+          <LaneWatchWordmark />
         </Link>
         <div className="flex items-center gap-1">
           <Link to="/assistant" className={`p-1.5 rounded-lg transition-colors ${isInbox ? 'text-accent-400' : 'text-pool-400 hover:text-pool-200'}`} aria-label="Assistant inbox">
@@ -190,14 +190,10 @@ function BottomNav() {
           {({ isActive }) => (<><SquadIcon active={isActive} /><span>Squad</span></>)}
         </NavLink>
 
-        {/* Centre AI button — raised, no label */}
-        <NavLink to="/ai" className="flex flex-col items-center -mt-6">
+        {/* LaneWatch family mark, adapted as the raised AI entry point. */}
+        <NavLink to="/ai" className="flex flex-col items-center -mt-6" aria-label="Open LaneWatch AI">
           {({ isActive }) => (
-            <span className={`flex items-center justify-center w-16 h-16 transition-all drop-shadow-lg ${
-              isActive ? 'scale-105' : ''
-            }`}>
-              <AIIcon />
-            </span>
+            <LaneWatchAIButton active={isActive} />
           )}
         </NavLink>
 
@@ -280,10 +276,6 @@ function SquadIcon({ active }) {
       <path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 0 0 2.625.372 9.337 9.337 0 0 0 4.121-.952 4.125 4.125 0 0 0-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 0 1 8.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0 1 11.964-3.07M12 6.375a3.375 3.375 0 1 1-6.75 0 3.375 3.375 0 0 1 6.75 0Zm8.25 2.25a2.625 2.625 0 1 1-5.25 0 2.625 2.625 0 0 1 5.25 0Z" />
     </svg>
   )
-}
-
-function AIIcon() {
-  return <img src="/buttonimage.png" alt="AI" className="w-16 h-16 object-contain" />
 }
 
 function SessionsIcon({ active }) {

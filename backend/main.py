@@ -158,8 +158,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Swimming Coaching Assistant",
-    description="AI-powered coaching assistant for swim squads",
+    title="LaneWatch AI",
+    description="Poolside intelligence for swimming coaches and squads",
     version="0.1.0",
     lifespan=lifespan,
 )
