@@ -30,7 +30,7 @@ from backend.routers.ai_chat import (
 )
 from backend.services.claude_service import (
     COACHING_CONTEXT_CHAR_LIMIT, FAST_MODEL,
-    _coaching_context_for_prompt, execute_tool, record_ai_usage,
+    _coaching_context_for_prompt, detect_topics, execute_tool, record_ai_usage,
 )
 
 
@@ -189,6 +189,16 @@ class CoreFlowTests(unittest.TestCase):
             )
             self.assertEqual(confirmed.status_code, 201, confirmed.text)
             self.assertEqual(confirmed.json()["cancel_reason"], "Public holiday")
+
+            session_log = self.client.get("/sessions?limit=30", headers=self.headers)
+            self.assertEqual(session_log.status_code, 200, session_log.text)
+            cancelled_row = next(
+                row for row in session_log.json()
+                if row["pool_slot_id"] == slot_id and row["date"] == target_date.isoformat()
+            )
+            self.assertEqual(cancelled_row["status"], "cancelled")
+            self.assertEqual(cancelled_row["title"], f"{day_name} AM cancellation test")
+            self.assertEqual(cancelled_row["cancel_reason"], "Public holiday")
 
             with SessionLocal() as db:
                 occurrence = db.query(models.Session).filter(
@@ -486,6 +496,221 @@ class CoreFlowTests(unittest.TestCase):
         )
         self.assertEqual(action["intent"], "athlete_profile_update")
         self.assertEqual(action["swimmer_id"], 42)
+
+    def test_conversation_action_routes_explicit_targets_to_formal_review(self):
+        swimmer = SimpleNamespace(id=42, name="Test Swimmer")
+        topics = detect_topics(
+            "Set Test Swimmer a target of 56.75 for 100 back by 7 November.",
+            [],
+        )
+        self.assertIn("benchmark", topics)
+        action = _conversation_action(
+            "Set Test Swimmer a target of 56.75 for 100 back by 7 November.",
+            topics,
+            [{"role": "user", "content": "Let's set Test Swimmer a race target."}],
+            [swimmer],
+        )
+        self.assertEqual(action["intent"], "formal_target_capture")
+        self.assertEqual(action["swimmer_id"], 42)
+        self.assertIn("Review formal target", action["suggested_action"])
+
+    def test_chat_target_preview_requires_confirmation_before_saving(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Target Chat Swimmer", squad="Agent Test")
+            db.add(swimmer)
+            db.commit()
+            swimmer_id = swimmer.id
+
+        extracted = [{
+            "type": "target",
+            "swimmer_id": swimmer_id,
+            "label": "100m backstroke race target",
+            "description": "Winter regional target",
+            "distance": 100,
+            "stroke": "back",
+            "effort": "race",
+            "target_time_seconds": 56.75,
+            "deadline": "2026-11-07",
+        }]
+        with patch(
+            "backend.routers.ai_chat.extract_benchmark_items_from_conversation",
+            return_value=extracted,
+        ):
+            preview = self.client.post(
+                "/ai-chat/actions/preview-target",
+                headers=self.headers,
+                json={
+                    "swimmer_id": swimmer_id,
+                    "conversation": "Set a 56.75 target for 100 back by 7 November.",
+                },
+            )
+        with patch(
+            "backend.services.claude_service.extract_benchmark_items_from_conversation",
+            return_value=extracted,
+        ):
+            wrong_action = self.client.post(
+                "/ai-chat/actions/save-benchmark",
+                headers=self.headers,
+                json={"swimmer_id": swimmer_id, "conversation": "This is a target, not an observed time."},
+            )
+
+        self.assertEqual(preview.status_code, 200, preview.text)
+        self.assertEqual(wrong_action.status_code, 200, wrong_action.text)
+        self.assertEqual(wrong_action.json()["saved"], [])
+        draft = preview.json()["target"]
+        self.assertEqual(draft["swimmer_id"], swimmer_id)
+        self.assertEqual(draft["target_time_seconds"], 56.75)
+        self.assertEqual(draft["deadline"], "2026-11-07")
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.query(models.SwimmerTarget).filter(
+                    models.SwimmerTarget.swimmer_id == swimmer_id,
+                ).count(),
+                0,
+            )
+
+        saved = self.client.post(
+            "/benchmarks/targets",
+            headers=self.headers,
+            json={key: value for key, value in draft.items() if key != "swimmer_name"},
+        )
+        self.assertEqual(saved.status_code, 201, saved.text)
+        target_id = saved.json()["id"]
+
+        with patch(
+            "backend.routers.ai_chat.extract_benchmark_items_from_conversation",
+            return_value=extracted,
+        ):
+            duplicate_preview = self.client.post(
+                "/ai-chat/actions/preview-target",
+                headers=self.headers,
+                json={"swimmer_id": swimmer_id, "conversation": "Repeat the same target."},
+            )
+        self.assertEqual(duplicate_preview.json()["possible_duplicate_id"], target_id)
+
+        with SessionLocal() as db:
+            db.query(models.SwimmerTarget).filter(models.SwimmerTarget.id == target_id).delete()
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
+
+    def test_existing_profile_evidence_is_previewed_before_confirmed_foundation_save(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(
+                name="Foundation Carryover Swimmer",
+                squad="Agent Test",
+                physical_profile={"aerobic_base": "Coach-confirmed aerobic foundation"},
+            )
+            db.add(swimmer)
+            db.flush()
+            swimmer_id = swimmer.id
+            db.add(models.SwimmerProfileVersion(
+                swimmer_id=swimmer_id,
+                profile_type="technical",
+                data={"technical_strengths": "Strong kick and raw speed"},
+                change_summary="Existing technical evidence",
+                obs_count=1,
+            ))
+            db.add(models.SwimmerObservation(
+                swimmer_id=swimmer_id,
+                obs_type="general",
+                date=date.today(),
+                content="Responds quickly to concise technical cues.",
+            ))
+            db.add(models.CoachingNote(
+                title="Carryover test note",
+                body="Keep speed work technically clean.",
+                swimmer_ids=[swimmer_id],
+                swimmer_names=[swimmer.name],
+                date_from=date.today(),
+                date_to=date.today() + timedelta(days=7),
+                active=True,
+            ))
+            db.commit()
+
+        proposed = {
+            "physical": {
+                "aerobic_base": {
+                    "value": "AI must not replace this",
+                    "evidence": "Living profile",
+                    "confidence": "supported",
+                },
+                "sprint_tendency": {
+                    "value": "Strong kick and raw speed",
+                    "evidence": "Technical profile",
+                    "confidence": "supported",
+                },
+            },
+            "psychological": {
+                "coachability": {
+                    "value": "Responds quickly to concise technical cues",
+                    "evidence": "Coach observation",
+                    "confidence": "supported",
+                },
+            },
+        }
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
+            content=[SimpleNamespace(text=json.dumps(proposed))],
+        )))
+        with patch("backend.services.claude_service.get_client", return_value=fake_client):
+            preview = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/draft-existing",
+                headers=self.headers,
+            )
+
+        self.assertEqual(preview.status_code, 200, preview.text)
+        draft = preview.json()
+        self.assertEqual(
+            draft["physical"]["aerobic_base"]["value"],
+            "Coach-confirmed aerobic foundation",
+        )
+        self.assertEqual(draft["physical"]["aerobic_base"]["confidence"], "confirmed")
+        self.assertEqual(draft["physical"]["sprint_tendency"]["confidence"], "supported")
+        self.assertEqual(draft["psychological"]["motivation_style"]["confidence"], "missing")
+        self.assertEqual(draft["source_counts"]["living_profiles"], 1)
+        self.assertEqual(draft["source_counts"]["observations"], 1)
+        self.assertEqual(draft["source_counts"]["coaching_notes"], 1)
+
+        with SessionLocal() as db:
+            swimmer = db.get(models.Swimmer, swimmer_id)
+            self.assertEqual(
+                swimmer.physical_profile,
+                {"aerobic_base": "Coach-confirmed aerobic foundation"},
+            )
+
+        saved = self.client.post(
+            f"/swimmers/{swimmer_id}/profile-wizard/save-draft",
+            headers=self.headers,
+            json={
+                "physical": {
+                    "aerobic_base": "Coach-confirmed aerobic foundation",
+                    "sprint_tendency": "Strong kick and raw speed",
+                },
+                "psychological": {
+                    "coachability": "Responds quickly to concise technical cues",
+                },
+            },
+        )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["profile_status"]["completed_areas"], 3)
+
+        with SessionLocal() as db:
+            swimmer = db.get(models.Swimmer, swimmer_id)
+            self.assertEqual(swimmer.physical_profile["sprint_tendency"], "Strong kick and raw speed")
+            self.assertEqual(
+                swimmer.psychological_profile["coachability"],
+                "Responds quickly to concise technical cues",
+            )
+            db.query(models.CoachingNote).filter(
+                models.CoachingNote.title == "Carryover test note",
+            ).delete()
+            db.query(models.SwimmerObservation).filter(
+                models.SwimmerObservation.swimmer_id == swimmer_id,
+            ).delete()
+            db.query(models.SwimmerProfileVersion).filter(
+                models.SwimmerProfileVersion.swimmer_id == swimmer_id,
+            ).delete()
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
 
     def test_confirmed_chat_profile_update_uses_one_incremental_synthesis(self):
         with SessionLocal() as db:

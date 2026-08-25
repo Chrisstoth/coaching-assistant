@@ -203,6 +203,8 @@ function ProfileProgressCard({ status, onOpenWizard }) {
           <p className="text-xs text-pool-400 mt-1 leading-relaxed">
             {complete
               ? 'Ready to use for planning. New coaching notes can refine this foundation without replacing what is already known.'
+              : status.living_built > 0
+              ? 'Existing profile evidence can be carried into these areas for your review. Nothing is treated as confirmed until you approve it.'
               : 'Finish these core coaching areas once. The profile can then keep developing through notes and observations.'}
           </p>
         </div>

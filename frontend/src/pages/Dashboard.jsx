@@ -115,10 +115,13 @@ function AttendanceStatus({ swimmer }) {
     return <AttendanceBar attended={swimmer.sessions_attended} expected={swimmer.sessions_expected} />
   }
   const label = swimmer.attendance_state === 'building_baseline'
-    ? `${swimmer.sessions_recorded || 0}/4 baseline`
+    ? `${swimmer.sessions_recorded || 0} logged · % after 4`
     : 'Not baselined'
   return (
-    <span className="text-[10px] text-teal-300 bg-teal-900/25 border border-teal-800/40 px-1.5 py-0.5 rounded-md whitespace-nowrap">
+    <span
+      title="Attendance percentage is calculated after 4 recorded sessions"
+      className="text-[10px] text-teal-300 bg-teal-900/25 border border-teal-800/40 px-1.5 py-0.5 rounded-md whitespace-nowrap"
+    >
       {label}
     </span>
   )
@@ -208,7 +211,7 @@ function SquadPulse({ pulse }) {
 
       {/* Legend */}
       <div className="flex items-center gap-3 mb-2 px-0.5">
-        <span className="text-[10px] text-pool-600">Recorded attendance</span>
+        <span className="text-[10px] text-pool-600">Attendance % shown after 4 recorded sessions</span>
         <div className="flex gap-1 items-center">
           <div className="w-1.5 h-2.5 rounded-sm bg-emerald-500" />
           <span className="text-[10px] text-pool-600">≥80%</span>
@@ -485,6 +488,73 @@ function AssistantInboxPreview({ inbox }) {
   )
 }
 
+function CoachingWatchpoints({ notes, onDismiss }) {
+  const [open, setOpen] = useState(false)
+  const [openNoteId, setOpenNoteId] = useState(null)
+  if (notes.length === 0) return null
+
+  const swimmerNames = [...new Set(notes.flatMap(note => note.swimmer_names || []))]
+  const scope = swimmerNames.length > 0
+    ? `${swimmerNames.length} swimmer${swimmerNames.length === 1 ? '' : 's'}`
+    : 'squad-wide'
+
+  return (
+    <section className="bg-amber-900/15 border border-amber-800/35 rounded-2xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(value => !value)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+        aria-expanded={open}
+      >
+        <div className="flex items-start gap-2.5 min-w-0">
+          <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 mt-1.5" />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-amber-200">Coaching watchpoints</p>
+            <p className="text-[11px] text-pool-500 mt-0.5">
+              {notes.length} active · {scope} · used in planning and on deck
+            </p>
+          </div>
+        </div>
+        <span className={`text-pool-500 text-sm transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+
+      {open && (
+        <div className="border-t border-amber-800/30 divide-y divide-amber-800/25">
+          {notes.map(note => {
+            const noteOpen = openNoteId === note.id
+            return (
+              <article key={note.id} className="px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <button type="button" onClick={() => setOpenNoteId(noteOpen ? null : note.id)} className="min-w-0 flex-1 text-left">
+                    <p className="text-sm font-medium text-pool-200">{note.title}</p>
+                    <p className="text-[11px] text-pool-500 mt-0.5">
+                      {note.swimmer_names?.join(', ') || 'Squad'} · until {note.date_to}
+                    </p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onDismiss(note.id)}
+                    className="text-[11px] text-pool-500 hover:text-red-300 shrink-0 py-1"
+                    title="Stop using this watchpoint"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+                {noteOpen && (
+                  <div className="mt-2">
+                    <p className="text-xs text-pool-300 whitespace-pre-line leading-relaxed">{note.body}</p>
+                    <p className="text-[10px] text-pool-600 mt-2">Active {note.date_from} → {note.date_to}</p>
+                  </div>
+                )}
+              </article>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function Dashboard() {
   const navigate = useNavigate()
   const [calendar, setCalendar] = useState([])
@@ -664,27 +734,7 @@ export default function Dashboard() {
         </section>
       )}
 
-      {/* Active coaching notes */}
-      {coachingNotes.length > 0 && (
-        <div className="space-y-2">
-          {coachingNotes.map(note => (
-            <div key={note.id} className="bg-amber-900/20 border border-amber-700/40 rounded-2xl px-4 py-3 space-y-1.5">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0 mt-0.5" />
-                  <p className="text-sm font-semibold text-amber-200">{note.title}</p>
-                </div>
-                <button onClick={() => dismissNote(note.id)} className="text-pool-500 hover:text-pool-300 text-lg leading-none shrink-0">×</button>
-              </div>
-              <p className="text-xs text-pool-400 pl-3.5">
-                {note.date_from} → {note.date_to}
-                {note.swimmer_names?.length > 0 && ` · ${note.swimmer_names.join(', ')}`}
-              </p>
-              <p className="text-xs text-pool-300 pl-3.5 whitespace-pre-line leading-relaxed">{note.body}</p>
-            </div>
-          ))}
-        </div>
-      )}
+      <CoachingWatchpoints notes={coachingNotes} onDismiss={dismissNote} />
 
       {/* Attention flags from pulse — imminent targets or very low attendance */}
       {flaggedSwimmers.length > 0 && (

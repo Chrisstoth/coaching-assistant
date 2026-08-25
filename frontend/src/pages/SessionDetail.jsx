@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 
 const VOL_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
@@ -58,6 +58,7 @@ function VolumeDisplay({ breakdown }) {
 export default function SessionDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const [session, setSession] = useState(null)
   const [recommending, setRecommending] = useState(false)
   const [recommendations, setRecommendations] = useState(null)
@@ -237,7 +238,7 @@ export default function SessionDetail() {
     setDeleting(true)
     try {
       await api.deleteSession(id)
-      window.location.href = '/calendar'
+      navigate(location.state?.backTo || '/sessions', { replace: true })
     } catch (e) {
       alert(`Error: ${e.message}`)
       setDeleting(false)
@@ -247,10 +248,15 @@ export default function SessionDetail() {
   if (id === 'new') return <NewSession />
   if (!session) return <div className="p-4 text-pool-400">Loading...</div>
 
+  const goBack = () => {
+    if (location.key && location.key !== 'default') navigate(-1)
+    else navigate(location.state?.backTo || '/sessions', { replace: true })
+  }
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex items-center gap-3 pt-2">
-        <Link to="/calendar" className="text-pool-400 text-2xl">‹</Link>
+        <button type="button" onClick={goBack} aria-label="Go back" className="text-pool-400 text-2xl">‹</button>
         <div className="flex-1">
           <h1 className="text-lg font-bold">{session.title || 'Session'}</h1>
           <p className="text-pool-400 text-xs">

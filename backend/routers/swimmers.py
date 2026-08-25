@@ -2,7 +2,7 @@ import io
 from datetime import date, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import pandas as pd
 from sqlalchemy.orm import Session as DBSession
 
@@ -513,6 +513,81 @@ class WizardChatRequest(BaseModel):
 
 class WizardSaveRequest(BaseModel):
     messages: list[WizardMessage]
+
+
+class FoundationDraftSaveRequest(BaseModel):
+    physical: dict[str, Optional[str]] = Field(default_factory=dict)
+    psychological: dict[str, Optional[str]] = Field(default_factory=dict)
+
+
+@router.post("/{swimmer_id}/profile-wizard/draft-existing")
+def wizard_draft_existing(swimmer_id: int, db: DBSession = Depends(get_db)):
+    """Draft foundation fields from stored evidence without changing the swimmer."""
+    swimmer = _get_or_404(swimmer_id, db)
+    try:
+        return claude_service.draft_foundation_from_existing_evidence(swimmer, db)
+    except ValueError as exc:
+        if str(exc) == "No existing profile evidence is available to carry over":
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail="The evidence draft could not be read. Please try again.") from exc
+
+
+@router.post("/{swimmer_id}/profile-wizard/save-draft")
+def wizard_save_draft(
+    swimmer_id: int,
+    body: FoundationDraftSaveRequest,
+    db: DBSession = Depends(get_db),
+):
+    """Save only coach-reviewed foundation fields from an evidence draft."""
+    swimmer = _get_or_404(swimmer_id, db)
+    existing = {
+        "physical": dict(swimmer.physical_profile) if isinstance(swimmer.physical_profile, dict) else {},
+        "psychological": (
+            dict(swimmer.psychological_profile)
+            if isinstance(swimmer.psychological_profile, dict) else {}
+        ),
+    }
+    submitted = {
+        "physical": body.physical,
+        "psychological": body.psychological,
+    }
+    reviewed_fields = 0
+    for section, fields in claude_service.FOUNDATION_DRAFT_FIELDS.items():
+        for field in fields:
+            value = submitted[section].get(field)
+            if value is None:
+                continue
+            value = str(value).strip()
+            if not value:
+                continue
+            existing[section][field] = value[:2500]
+            reviewed_fields += 1
+    if reviewed_fields == 0:
+        raise HTTPException(status_code=422, detail="Review at least one foundation field before saving.")
+
+    swimmer.physical_profile = existing["physical"]
+    swimmer.psychological_profile = existing["psychological"]
+    version = models.SwimmerProfileVersion(
+        swimmer_id=swimmer.id,
+        profile_type="wizard",
+        data=existing,
+        change_summary="Foundation updated from existing evidence after coach review.",
+        obs_count=None,
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+
+    profile_types = {
+        row[0]
+        for row in db.query(models.SwimmerProfileVersion.profile_type).filter(
+            models.SwimmerProfileVersion.swimmer_id == swimmer.id,
+        ).distinct().all()
+    }
+    return {
+        "profile": _profile_version_out(version),
+        "profile_status": build_profile_status(swimmer, profile_types),
+    }
 
 
 @router.post("/{swimmer_id}/profile-wizard/chat")

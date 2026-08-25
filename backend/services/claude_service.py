@@ -5,6 +5,7 @@ import os
 import json
 import inspect
 import re
+from datetime import date
 from typing import Optional
 import anthropic
 from sqlalchemy.orm import Session as DBSession
@@ -2440,8 +2441,8 @@ def detect_topics(message: str, history: list) -> set:
         'threshold 100', 'threshold 200', 'holding', 'was hitting', 'was doing',
         'came in on', 'going on', 'hit a', 'log a time', 'log that', 'note that time',
         'training time', 'set target', 'new target', 'target for', 'wants to hit',
-        'goal time', 'aim for',
-    ]):
+        'goal time', 'aim for', 'target is', 'target time', 'needs to hit',
+    ]) or re.search(r'\b(?:set|add|create|give)\b.{0,60}\btarget\b', full):
         topics.add('benchmark')
 
     if any(k in full for k in [
@@ -3219,10 +3220,9 @@ def _format_time(seconds: float) -> str:
 # Benchmark extraction from conversation
 # ---------------------------------------------------------------------------
 
-def extract_benchmarks_from_conversation(conversation: str, swimmers: list, db: DBSession) -> list:
+def extract_benchmark_items_from_conversation(conversation: str, swimmers: list) -> list:
     """
-    Parse a coaching conversation for training benchmark times and targets,
-    then save them to the database. Returns list of saved items for confirmation.
+    Parse a coaching conversation into benchmark/target drafts without saving.
     """
     swimmer_list = "\n".join(f"  - {s.name} (id={s.id})" for s in swimmers)
     today = date.today().isoformat()
@@ -3278,6 +3278,14 @@ Return only the JSON array."""
     except Exception:
         return []
 
+    return items if isinstance(items, list) else []
+
+
+def extract_benchmarks_from_conversation(conversation: str, swimmers: list, db: DBSession) -> list:
+    """Extract and save confirmed observed benchmarks; formal targets use review first."""
+    items = extract_benchmark_items_from_conversation(conversation, swimmers)
+    today = date.today().isoformat()
+
     saved = []
     for item in items:
         try:
@@ -3306,20 +3314,6 @@ Return only the JSON array."""
                 db.add(entry)
                 saved.append({"type": "benchmark", "swimmer_id": item["swimmer_id"],
                                "label": f"{item['distance']}m {item['stroke']} {item['effort']}: {_format_time(item['time_seconds'])}"})
-            elif item.get("type") == "target":
-                target = models.SwimmerTarget(
-                    swimmer_id=item["swimmer_id"],
-                    label=item["label"],
-                    description=item.get("description"),
-                    distance=item.get("distance"),
-                    stroke=item.get("stroke"),
-                    effort=item.get("effort"),
-                    target_time_seconds=item.get("target_time_seconds"),
-                    deadline=item.get("deadline"),
-                )
-                db.add(target)
-                saved.append({"type": "target", "swimmer_id": item["swimmer_id"],
-                               "label": item["label"]})
         except Exception:
             continue
 
@@ -4994,6 +4988,199 @@ Existing profile notes: {swimmer.profile_notes or 'None'}"""
         messages=api_messages,
     )
     return response.content[0].text.strip()
+
+
+FOUNDATION_DRAFT_FIELDS = {
+    "physical": (
+        "aerobic_base",
+        "sprint_tendency",
+        "race_pattern",
+        "fatigue_profile",
+        "training_response",
+    ),
+    "psychological": (
+        "motivation_style",
+        "competition_response",
+        "response_to_hard_training",
+        "coachability",
+    ),
+}
+
+
+def draft_foundation_from_existing_evidence(
+    swimmer: models.Swimmer,
+    db: DBSession,
+) -> dict:
+    """Draft the nine foundation fields from stored evidence without saving anything."""
+    versions = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(models.SwimmerProfileVersion.swimmer_id == swimmer.id)
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .all()
+    )
+    latest_profiles = {}
+    for version in versions:
+        if version.profile_type not in latest_profiles:
+            latest_profiles[version.profile_type] = version
+
+    observations = (
+        db.query(models.SwimmerObservation)
+        .filter(models.SwimmerObservation.swimmer_id == swimmer.id)
+        .order_by(models.SwimmerObservation.date.desc(), models.SwimmerObservation.created_at.desc())
+        .limit(40)
+        .all()
+    )
+    coaching_notes = [
+        note for note in db.query(models.CoachingNote).filter(models.CoachingNote.active.is_(True)).all()
+        if swimmer.id in (note.swimmer_ids or [])
+    ]
+    histories = (
+        db.query(models.TrainingHistoryNarrative)
+        .filter(models.TrainingHistoryNarrative.swimmer_id == swimmer.id)
+        .order_by(models.TrainingHistoryNarrative.created_at.desc())
+        .limit(5)
+        .all()
+    )
+
+    existing_physical = swimmer.physical_profile if isinstance(swimmer.physical_profile, dict) else {}
+    existing_psychological = (
+        swimmer.psychological_profile if isinstance(swimmer.psychological_profile, dict) else {}
+    )
+    profile_evidence = "\n\n".join(
+        f"{profile_type.upper()} PROFILE ({version.created_at}):\n"
+        f"{json.dumps(version.data or {}, ensure_ascii=False)[:5000]}"
+        for profile_type, version in latest_profiles.items()
+        if profile_type != "wizard"
+    ) or "None"
+    observation_evidence = "\n".join(
+        f"- [{obs.date or 'undated'} | {obs.obs_type}] {obs.content[:1400]}"
+        for obs in observations
+    )[:10000] or "None"
+    note_evidence = "\n".join(
+        f"- {note.title}: {note.body[:1800]}"
+        for note in coaching_notes
+    )[:5000] or "None"
+    history_evidence = "\n".join(
+        f"- [{history.source}] {history.narrative[:1600]}"
+        for history in histories
+    )[:5000] or "None"
+
+    if not any((
+        existing_physical,
+        existing_psychological,
+        latest_profiles,
+        observations,
+        coaching_notes,
+        histories,
+        swimmer.profile_notes,
+        swimmer.strengths,
+        swimmer.weaknesses,
+    )):
+        raise ValueError("No existing profile evidence is available to carry over")
+
+    prompt = f"""Prepare a review-only draft of a swimmer's nine-area coaching foundation.
+
+SWIMMER: {swimmer.name}
+Target events: {json.dumps(swimmer.target_events or [], ensure_ascii=False)}
+General profile notes: {swimmer.profile_notes or 'None'}
+Stored strengths: {swimmer.strengths or 'None'}
+Stored weaknesses: {swimmer.weaknesses or 'None'}
+
+ALREADY CONFIRMED FOUNDATION VALUES:
+Physical: {json.dumps(existing_physical, ensure_ascii=False)}
+Psychological: {json.dumps(existing_psychological, ensure_ascii=False)}
+
+LATEST LIVING PROFILES:
+{profile_evidence}
+
+COACH OBSERVATIONS:
+{observation_evidence}
+
+ACTIVE COACHING NOTES:
+{note_evidence}
+
+TRAINING/RACING HISTORY:
+{history_evidence}
+
+Return JSON only, using exactly this shape:
+{{
+  "physical": {{
+    "aerobic_base": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "sprint_tendency": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "race_pattern": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "fatigue_profile": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "training_response": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}}
+  }},
+  "psychological": {{
+    "motivation_style": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "competition_response": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "response_to_hard_training": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
+    "coachability": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}}
+  }}
+}}
+
+Rules:
+- This is a draft for coach confirmation, not a database update.
+- Copy already-confirmed foundation values verbatim and mark them "confirmed".
+- Mark "supported" only when the stored evidence explicitly supports the statement.
+- Do not turn age-stage generalisations, race times alone, or absence of data into athlete facts.
+- Do not fill psychological fields from stereotypes or physiological inference.
+- If evidence is inadequate, use value null, confidence "missing", and say what the coach should clarify.
+- Keep each proposed value concise, specific, and useful for planning.
+"""
+
+    response = get_client().messages.create(
+        model=FAST_MODEL,
+        max_tokens=1800,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = json.loads(_strip_json(response.content[0].text))
+
+    result = {"physical": {}, "psychological": {}}
+    existing_by_section = {
+        "physical": existing_physical,
+        "psychological": existing_psychological,
+    }
+    allowed_confidence = {"confirmed", "supported", "missing"}
+    for section, fields in FOUNDATION_DRAFT_FIELDS.items():
+        proposed_section = raw.get(section) if isinstance(raw, dict) else {}
+        if not isinstance(proposed_section, dict):
+            proposed_section = {}
+        for field in fields:
+            existing_value = existing_by_section[section].get(field)
+            proposed = proposed_section.get(field)
+            if not isinstance(proposed, dict):
+                proposed = {"value": proposed, "evidence": "", "confidence": "supported"}
+            value = proposed.get("value")
+            value = str(value).strip()[:2500] if value is not None else None
+            if not value:
+                value = None
+            confidence = str(proposed.get("confidence") or "missing").lower()
+            if confidence not in allowed_confidence:
+                confidence = "supported" if value else "missing"
+            evidence = str(proposed.get("evidence") or "").strip()[:500]
+            if existing_value is not None and str(existing_value).strip():
+                value = str(existing_value).strip()[:2500]
+                confidence = "confirmed"
+                evidence = "Already saved in the confirmed foundation profile."
+            if value is None:
+                confidence = "missing"
+            result[section][field] = {
+                "value": value,
+                "evidence": evidence or (
+                    "Existing evidence supports this draft."
+                    if value else "No clear stored evidence; coach input is needed."
+                ),
+                "confidence": confidence,
+            }
+
+    result["source_counts"] = {
+        "living_profiles": len([key for key in latest_profiles if key != "wizard"]),
+        "observations": len(observations),
+        "coaching_notes": len(coaching_notes),
+        "history_narratives": len(histories),
+    }
+    return result
 
 
 def save_wizard_profile(

@@ -14,7 +14,7 @@ from backend.services.claude_service import (
     COACHING_CONTEXT_CHAR_LIMIT,
     record_ai_usage, get_system_prompt, build_session_writing_context,
     detect_topics, extract_slot_hint, _strip_json,
-    extract_benchmarks_from_conversation, extract_coaching_intent,
+    extract_benchmark_items_from_conversation, extract_benchmarks_from_conversation, extract_coaching_intent,
     get_tools, execute_tool, save_wizard_profile,
 )
 from backend.services.agent_policy import choose_agent_route
@@ -53,6 +53,18 @@ def _conversation_action(text: str, topics: set[str], messages: list, swimmers: 
             "swimmer_name": swimmer.name,
             "new_status": new_status,
             "suggested_action": f"Mark {swimmer.name} as {new_status}",
+        }
+
+    target_requested = any(signal in lower for signal in (
+        "set target", "new target", "target for", "target is", "goal time",
+        "aim for", "wants to hit", "needs to hit", "target time",
+    )) or bool(re.search(r"\b(?:set|add|create|give)\b.{0,60}\btarget\b", lower))
+    if swimmer and "benchmark" in topics and target_requested:
+        return {
+            "intent": "formal_target_capture",
+            "swimmer_id": swimmer.id,
+            "swimmer_name": swimmer.name,
+            "suggested_action": f"Review formal target for {swimmer.name}",
         }
 
     if swimmer and "benchmark" in topics:
@@ -1485,6 +1497,79 @@ def save_benchmark_action(body: dict = Body(...), db: DBSession = Depends(get_db
         raise HTTPException(status_code=400, detail="Conversation required")
     saved = extract_benchmarks_from_conversation(conversation, [swimmer], db)
     return {"saved": saved}
+
+
+@router.post("/actions/preview-target")
+def preview_target_action(body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Extract one formal target for review without changing the database."""
+    swimmer_id = body.get("swimmer_id")
+    conversation = str(body.get("conversation") or "").strip()
+    swimmer = db.query(models.Swimmer).filter(
+        models.Swimmer.id == swimmer_id,
+        models.Swimmer.status == "active",
+    ).first()
+    if not swimmer:
+        raise HTTPException(status_code=404, detail="Active swimmer not found")
+    if not conversation:
+        raise HTTPException(status_code=400, detail="Conversation required")
+
+    extracted = extract_benchmark_items_from_conversation(conversation, [swimmer])
+    targets = []
+    for item in extracted:
+        if item.get("type") != "target":
+            continue
+        try:
+            extracted_swimmer_id = int(item.get("swimmer_id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if extracted_swimmer_id == swimmer.id:
+            targets.append(item)
+    if not targets:
+        raise HTTPException(
+            status_code=422,
+            detail="I could not extract one clear target. Include the swimmer, target and—where relevant—the event, time or deadline.",
+        )
+    if len(targets) > 1:
+        raise HTTPException(status_code=409, detail="More than one target was found. Please set them one at a time.")
+
+    item = targets[0]
+    label = str(item.get("label") or "").strip()
+    if not label:
+        raise HTTPException(status_code=422, detail="The target needs a short label")
+
+    target_time = item.get("target_time_seconds")
+    try:
+        target_time = float(target_time) if target_time is not None else None
+    except (TypeError, ValueError):
+        target_time = None
+    distance = item.get("distance")
+    try:
+        distance = int(distance) if distance is not None else None
+    except (TypeError, ValueError):
+        distance = None
+    deadline = item.get("deadline")
+    try:
+        deadline = date.fromisoformat(str(deadline)).isoformat() if deadline else None
+    except ValueError:
+        deadline = None
+
+    draft = {
+        "swimmer_id": swimmer.id,
+        "swimmer_name": swimmer.name,
+        "label": label[:160],
+        "description": str(item.get("description") or "").strip()[:1200] or None,
+        "distance": distance if distance and distance > 0 else None,
+        "stroke": str(item.get("stroke") or "").strip().lower()[:30] or None,
+        "effort": str(item.get("effort") or "").strip().lower()[:30] or None,
+        "target_time_seconds": target_time if target_time and target_time > 0 else None,
+        "deadline": deadline,
+    }
+    duplicate = db.query(models.SwimmerTarget).filter(
+        models.SwimmerTarget.swimmer_id == swimmer.id,
+        models.SwimmerTarget.label == draft["label"],
+        models.SwimmerTarget.achieved == False,
+    ).first()
+    return {"target": draft, "possible_duplicate_id": duplicate.id if duplicate else None}
 
 
 @router.post("/actions/save-coaching-intent")

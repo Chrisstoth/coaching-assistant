@@ -63,6 +63,22 @@ function GroupCard({ group }) {
   )
 }
 
+function SessionWatchpoint({ note, names }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="py-2.5">
+      <button type="button" onClick={() => setOpen(value => !value)} className="w-full flex items-start justify-between gap-3 text-left" aria-expanded={open}>
+        <div>
+          <p className="text-xs font-semibold text-amber-200">{names || 'Squad'} · {note.title}</p>
+          <p className="text-[10px] text-pool-500 mt-0.5">Coaching watchpoint · tap to {open ? 'hide' : 'review'}</p>
+        </div>
+        <span className={`text-pool-500 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+      {open && <p className="text-xs text-pool-300 mt-2 whitespace-pre-line leading-relaxed">{note.body}</p>}
+    </div>
+  )
+}
+
 export default function TodaySession() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -297,7 +313,7 @@ export default function TodaySession() {
 
       {(individualMods.length > 0 || datedNotes.length > 0 || unavailable.length > 0) && (
         <section className="space-y-2.5">
-          <h2 className="text-sm font-semibold">Individual notes</h2>
+          <h2 className="text-sm font-semibold">Session watchpoints & individual notes</h2>
           <div className="bg-amber-900/20 border border-amber-700/40 rounded-2xl divide-y divide-amber-800/30 px-4">
             {individualMods.map(([name, body]) => (
               <div key={`mod-${name}`} className="py-3">
@@ -305,17 +321,13 @@ export default function TodaySession() {
                 <p className="text-xs text-pool-300 mt-1 whitespace-pre-line">{body}</p>
               </div>
             ))}
-            {datedNotes.map(note => (
-              <div key={`note-${note.id}`} className="py-3">
-                <p className="text-xs font-semibold text-amber-200">
-                  {(note.swimmer_names?.length
+            {datedNotes.map(note => {
+              const names = (note.swimmer_names?.length
                     ? note.swimmer_names
                     : (note.swimmer_ids || []).map(swimmerName).filter(Boolean)
-                  ).join(', ') || 'Squad'} · {note.title}
-                </p>
-                <p className="text-xs text-pool-300 mt-1 whitespace-pre-line">{note.body}</p>
-              </div>
-            ))}
+                  ).join(', ')
+              return <SessionWatchpoint key={`note-${note.id}`} note={note} names={names} />
+            })}
             {unavailable.map(row => (
               <div key={`away-${row.swimmer_id}`} className="py-3">
                 <p className="text-xs font-semibold text-amber-200">{row.swimmer_name} · {row.availability?.label || row.exception_reason.replaceAll('_', ' ')}</p>

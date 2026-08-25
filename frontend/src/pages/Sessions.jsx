@@ -55,6 +55,26 @@ function SessionCard({ s, onLongPress }) {
   )
 }
 
+function CancelledSessionCard({ session }) {
+  return (
+    <div className="bg-pool-900/50 border border-pool-700 rounded-xl px-4 py-3 opacity-80">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-pool-300">{session.title || 'Cancelled session'}</p>
+          <p className="text-xs text-pool-500 mt-0.5">
+            {session.date}
+            {(session.start_time || session.end_time) && (
+              <span> · {session.start_time}{session.end_time ? `–${session.end_time}` : ''}</span>
+            )}
+          </p>
+          {session.cancel_reason && <p className="text-xs text-pool-400 mt-1">Reason: {session.cancel_reason}</p>}
+        </div>
+        <span className="text-[10px] bg-red-900/30 border border-red-800/40 text-red-300 rounded-full px-2 py-1">Cancelled</span>
+      </div>
+    </div>
+  )
+}
+
 export default function Sessions() {
   const [sessions, setSessions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -74,10 +94,13 @@ export default function Sessions() {
     setConfirmDelete(null)
   }
 
+  const sessionLog = sessions.filter(session => !['cancelled', 'dismissed'].includes(session.status))
+  const cancelledSessions = sessions.filter(session => session.status === 'cancelled')
+
   return (
     <div className="p-4 space-y-4">
       <div className="flex justify-between items-center pt-2">
-        <h1 className="text-xl font-bold">Sessions</h1>
+        <h1 className="text-xl font-bold">Session Log</h1>
         <Link
           to="/sessions/new"
           className="bg-accent-600 text-white rounded-full px-4 py-1.5 text-sm font-semibold"
@@ -88,18 +111,32 @@ export default function Sessions() {
 
       {loading ? (
         <p className="text-pool-400 text-sm">Loading...</p>
-      ) : sessions.length === 0 ? (
+      ) : sessionLog.length === 0 ? (
         <div className="text-center py-12 space-y-3">
-          <p className="text-pool-400">No sessions yet.</p>
+          <p className="text-pool-400">No saved or completed sessions yet.</p>
           <Link to="/import" className="text-accent-400 text-sm">Import session files →</Link>
         </div>
       ) : (
         <div className="space-y-2">
           <p className="text-xs text-pool-500 text-center">Hold to delete a session</p>
-          {sessions.map((s) => (
+          {sessionLog.map((s) => (
             <SessionCard key={s.id} s={s} onLongPress={setConfirmDelete} />
           ))}
         </div>
+      )}
+
+      {!loading && cancelledSessions.length > 0 && (
+        <details className="border border-pool-700 rounded-xl bg-pool-800/40">
+          <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-pool-400">
+            Cancelled sessions ({cancelledSessions.length})
+          </summary>
+          <div className="px-3 pb-3 space-y-2">
+            <p className="text-[10px] text-pool-600 px-1">Kept as cancellation history; these were not completed sessions.</p>
+            {cancelledSessions.map(session => (
+              <CancelledSessionCard key={session.id} session={session} />
+            ))}
+          </div>
+        </details>
       )}
 
       {confirmDelete && (

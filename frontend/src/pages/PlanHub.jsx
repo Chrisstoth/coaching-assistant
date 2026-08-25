@@ -36,6 +36,14 @@ function ListIcon() {
   )
 }
 
+function WriteIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931ZM19.5 7.125 16.875 4.5M18 13.5V19.125A1.875 1.875 0 0 1 16.125 21H4.875A1.875 1.875 0 0 1 3 19.125V7.875A1.875 1.875 0 0 1 4.875 6H10.5" />
+    </svg>
+  )
+}
+
 function SeasonIcon() {
   return (
     <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
@@ -189,24 +197,38 @@ export default function PlanHub() {
             <CalendarIcon />
           </span>
           <div>
-            <p className="font-medium text-sm text-pool-100">Write Sessions</p>
-            <p className="text-xs text-pool-400 mt-0.5">Schedule & build sessions</p>
+            <p className="font-medium text-sm text-pool-100">Calendar</p>
+            <p className="text-xs text-pool-400 mt-0.5">View the weekly timetable</p>
           </div>
         </Link>
 
         <Link
-          to="/sessions"
+          to="/session-planner"
           className="bg-pool-800 rounded-2xl p-4 flex flex-col gap-2 active:bg-pool-700 transition-colors"
         >
-          <span className="p-2 bg-pool-700 rounded-xl text-pool-300 self-start">
-            <ListIcon />
+          <span className="p-2 bg-pool-700 rounded-xl text-accent-400 self-start">
+            <WriteIcon />
           </span>
           <div>
-            <p className="font-medium text-sm text-pool-100">Session Log</p>
-            <p className="text-xs text-pool-400 mt-0.5">Browse all sessions</p>
+            <p className="font-medium text-sm text-pool-100">Write Session</p>
+            <p className="text-xs text-pool-400 mt-0.5">Write, preview and save</p>
           </div>
         </Link>
       </div>
+
+      <Link
+        to="/sessions"
+        className="flex items-center gap-3 bg-pool-800 rounded-xl px-4 py-3 active:bg-pool-700 transition-colors"
+      >
+        <span className="p-2 bg-pool-700 rounded-lg text-pool-300"><ListIcon /></span>
+        <div className="flex-1">
+          <p className="text-sm font-medium text-pool-200">Session Log</p>
+          <p className="text-xs text-pool-500">Browse previous and saved sessions</p>
+        </div>
+        <svg className="w-4 h-4 text-pool-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+        </svg>
+      </Link>
 
       {/* Season overview link */}
       <Link
@@ -390,7 +412,7 @@ export default function PlanHub() {
           ) : sessions.length === 0 ? (
             <div className="py-8 text-center">
               <p className="text-pool-400 text-sm">No sessions yet</p>
-              <Link to="/calendar" className="text-accent-400 text-sm mt-1 inline-block">Write your first session</Link>
+              <Link to="/session-planner" className="text-accent-400 text-sm mt-1 inline-block">Write your first session</Link>
             </div>
           ) : (
             sessions.map(s => <SessionRow key={s.id} session={s} />)

@@ -2,19 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import useLongPress from '../hooks/useLongPress'
-
-function toIso(d) {
-  return d.toISOString().slice(0, 10)
-}
-
-function getMonday(d = new Date()) {
-  const day = d.getDay()
-  const diff = day === 0 ? -6 : 1 - day
-  const mon = new Date(d)
-  mon.setDate(d.getDate() + diff)
-  mon.setHours(0, 0, 0, 0)
-  return mon
-}
+import { calendarDayLabel, localDateIso as toIso, mondayFor as getMonday } from '../calendarDates'
 
 function fmtWeekRange(monday) {
   const sunday = new Date(monday)
@@ -376,7 +364,7 @@ export default function Calendar() {
         return (
           <div key={day.date}>
             <h2 className={`text-xs font-semibold uppercase tracking-wide mb-2 ${isToday ? 'text-accent-400' : 'text-pool-400'}`}>
-              {day.day_name}{isToday ? ' · Today' : ''}
+              {calendarDayLabel(day.date)}{isToday ? ' · Today' : ''}
             </h2>
             <div className="space-y-2">
               {day.items.map((item, idx) => (

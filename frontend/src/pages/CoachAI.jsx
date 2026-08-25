@@ -111,6 +111,8 @@ export default function CoachAI() {
   const [savingRegister, setSavingRegister] = useState(false)
   const [registerSaved, setRegisterSaved] = useState(false)
   const [cancellationData, setCancellationData] = useState(null)
+  const [targetDraft, setTargetDraft] = useState(null)
+  const [savedTarget, setSavedTarget] = useState(null)
 
   // Pin modal
   const [pinning, setPinning] = useState(false)
@@ -144,6 +146,8 @@ export default function CoachAI() {
     setSessionDraft(null)
     setRegisterData(null)
     setCancellationData(null)
+    setTargetDraft(null)
+    setSavedTarget(null)
     setRegisterSaved(false)
     setPinSaved(false)
     setFeedbackPrompt(null)
@@ -259,6 +263,8 @@ export default function CoachAI() {
     setSending(true)
     setSuggestedAction(null)
     setActionResult(null)
+    setTargetDraft(null)
+    setSavedTarget(null)
     setPinSaved(false)
 
     const displayMsg = hasImage ? `[Photo attached] ${msg || ''}`.trim() : msg
@@ -381,6 +387,25 @@ export default function CoachAI() {
         const regData = res.register_data || await api.startRegister(msg, threadId)
         if (regData.session_id) {
           setRegisterData({ ...regData, attendance: null })
+        }
+      } else if (res.intent?.type === 'formal_target_capture' && res.intent?.swimmer_id) {
+        const targetConversation = [
+          ...messages.map(message => `${message.role === 'user' ? 'Coach' : 'AI'}: ${message.message}`),
+          `Coach: ${displayMsg}`,
+          `AI: ${res.reply}`,
+        ].join('\n')
+        try {
+          const preview = await api.previewTargetFromChat(res.intent.swimmer_id, targetConversation)
+          setTargetDraft({
+            ...preview.target,
+            possible_duplicate_id: preview.possible_duplicate_id,
+          })
+        } catch (error) {
+          setMessages(previous => [...previous, {
+            role: 'assistant',
+            message: `I couldn't prepare a formal target yet: ${error.message}`,
+            id: Date.now() + 2,
+          }])
         }
       } else if (res.suggested_action) {
         setSuggestedAction({
@@ -547,6 +572,7 @@ export default function CoachAI() {
     setSuggestedAction(null)
     setActionResult(null)
     setCancellationData(null)
+    setTargetDraft(null)
     setPinSaved(false)
   }
 
@@ -867,6 +893,30 @@ export default function CoachAI() {
           />
         )}
 
+        {targetDraft && (
+          <TargetDraftCard
+            draft={targetDraft}
+            onDismiss={() => setTargetDraft(null)}
+            onSaved={(target) => {
+              setSavedTarget({
+                ...target,
+                swimmer_name: targetDraft.swimmer_name,
+              })
+              setTargetDraft(null)
+            }}
+          />
+        )}
+
+        {savedTarget && !targetDraft && (
+          <div className="border border-indigo-700/50 bg-indigo-900/20 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-indigo-200">Formal target saved</p>
+              <p className="text-xs text-indigo-300 mt-0.5">{savedTarget.swimmer_name} · {savedTarget.label}</p>
+            </div>
+            <Link to={`/swimmers/${savedTarget.swimmer_id}`} className="text-xs text-indigo-300 font-semibold shrink-0">View profile →</Link>
+          </div>
+        )}
+
         {registerData && !registerSaved && (
           <RegisterCard
             data={registerData}
@@ -1005,6 +1055,8 @@ export default function CoachAI() {
             setSessionDraft(null)
             setRegisterData(null)
             setCancellationData(null)
+            setTargetDraft(null)
+            setSavedTarget(null)
             setRegisterSaved(false)
             setPinSaved(false)
             setFeedbackPrompt(null)
@@ -1360,6 +1412,104 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
           className="flex-1 bg-teal-700 hover:bg-teal-600 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold transition-colors"
         >
           {saving ? 'Creating…' : 'Create session'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function TargetDraftCard({ draft, onDismiss, onSaved }) {
+  const [form, setForm] = useState({
+    label: draft.label || '',
+    description: draft.description || '',
+    distance: draft.distance || '',
+    stroke: draft.stroke || '',
+    effort: draft.effort || '',
+    target_time_seconds: draft.target_time_seconds ?? '',
+    deadline: draft.deadline || '',
+  })
+  const [saving, setSaving] = useState(false)
+
+  const update = (field, value) => setForm(previous => ({ ...previous, [field]: value }))
+  const save = async () => {
+    if (!form.label.trim()) return
+    setSaving(true)
+    try {
+      const target = await api.createTarget({
+        swimmer_id: draft.swimmer_id,
+        label: form.label.trim(),
+        description: form.description.trim() || null,
+        distance: form.distance ? Number(form.distance) : null,
+        stroke: form.stroke.trim() || null,
+        effort: form.effort.trim() || null,
+        target_time_seconds: form.target_time_seconds !== '' ? Number(form.target_time_seconds) : null,
+        deadline: form.deadline || null,
+      })
+      onSaved(target)
+    } catch (error) {
+      alert(`Could not save target: ${error.message}`)
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="border border-indigo-700/50 bg-indigo-900/15 rounded-2xl p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-indigo-300 uppercase tracking-wide">Review formal target</p>
+          <p className="text-sm font-semibold text-pool-100 mt-0.5">{draft.swimmer_name}</p>
+        </div>
+        <button type="button" onClick={onDismiss} className="text-pool-500 text-base">×</button>
+      </div>
+
+      <p className="text-xs text-pool-400">This is the measurable outcome. Coaching methods and session watchpoints remain separate.</p>
+
+      {draft.possible_duplicate_id && (
+        <p className="text-xs text-amber-300 bg-amber-900/20 border border-amber-800/40 rounded-lg px-3 py-2">
+          A similar active target may already exist. Check the details before saving another.
+        </p>
+      )}
+
+      <label className="block">
+        <span className="text-[11px] text-pool-400">Target label</span>
+        <input value={form.label} onChange={event => update('label', event.target.value)}
+          className="w-full mt-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+      </label>
+
+      <div className="grid grid-cols-2 gap-2">
+        <label>
+          <span className="text-[11px] text-pool-400">Distance (metres)</span>
+          <input type="number" min="1" value={form.distance} onChange={event => update('distance', event.target.value)}
+            className="w-full mt-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+        </label>
+        <label>
+          <span className="text-[11px] text-pool-400">Stroke/event</span>
+          <input value={form.stroke} onChange={event => update('stroke', event.target.value)} placeholder="e.g. back"
+            className="w-full mt-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+        </label>
+        <label>
+          <span className="text-[11px] text-pool-400">Target time (seconds)</span>
+          <input type="number" min="0" step="0.01" value={form.target_time_seconds} onChange={event => update('target_time_seconds', event.target.value)}
+            className="w-full mt-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+        </label>
+        <label>
+          <span className="text-[11px] text-pool-400">Deadline</span>
+          <input type="date" value={form.deadline} onChange={event => update('deadline', event.target.value)}
+            className="w-full mt-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-indigo-500" />
+        </label>
+      </div>
+
+      <label className="block">
+        <span className="text-[11px] text-pool-400">Context (optional)</span>
+        <textarea value={form.description} onChange={event => update('description', event.target.value)} rows={2}
+          className="w-full mt-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm resize-none focus:outline-none focus:border-indigo-500" />
+      </label>
+
+      <div className="flex gap-2">
+        <button type="button" onClick={onDismiss} disabled={saving} className="px-4 py-2.5 text-xs text-pool-400 border border-pool-700 rounded-xl disabled:opacity-50">Not yet</button>
+        <button type="button" onClick={save} disabled={saving || !form.label.trim()}
+          className="flex-1 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold">
+          {saving ? 'Saving…' : 'Save formal target'}
         </button>
       </div>
     </div>

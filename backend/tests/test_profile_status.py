@@ -20,9 +20,11 @@ class ProfileStatusTests(unittest.TestCase):
         self.assertFalse(status["has_profile"])
 
     def test_existing_living_profile_is_not_reported_as_no_profile(self):
-        status = build_profile_status(self.swimmer(), {"race", "training"})
+        status = build_profile_status(self.swimmer(), {"biological", "technical"})
 
         self.assertEqual(status["state"], "in_progress")
+        self.assertEqual(status["label"], "Foundation not confirmed")
+        self.assertEqual(status["next_action"], "Review existing evidence")
         self.assertTrue(status["has_profile"])
         self.assertEqual(status["living_built"], 2)
 

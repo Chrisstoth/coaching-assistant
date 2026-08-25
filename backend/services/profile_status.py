@@ -77,8 +77,8 @@ def build_profile_status(swimmer: Any, profile_types: Iterable[str] = ()) -> dic
         next_action = "Review foundation profile"
     elif has_any_stored_profile:
         state = "in_progress"
-        label = "Foundation in progress"
-        next_action = "Continue foundation profile"
+        label = "Foundation in progress" if completed else "Foundation not confirmed"
+        next_action = "Review existing evidence" if known_types else "Continue foundation profile"
     else:
         state = "not_started"
         label = "Foundation not started"

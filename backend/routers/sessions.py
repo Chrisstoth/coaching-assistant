@@ -940,7 +940,7 @@ def _session_summary(s: models.Session) -> dict:
         "start_time": s.start_time,
         "end_time": s.end_time,
         "squad": s.squad,
-        "title": s.title,
+        "title": s.title or (s.pool_slot.label if s.pool_slot else None),
         "source": s.source,
         "energy_system_focus": s.energy_system_focus,
         "coach_intent": s.coach_intent,

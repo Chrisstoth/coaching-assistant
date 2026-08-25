@@ -1,10 +1,38 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import VoiceInput from '../components/VoiceInput'
 
+function SessionWatchpoints({ notes }) {
+  const [open, setOpen] = useState(false)
+  if (notes.length === 0) return null
+  return (
+    <div className="bg-amber-900/15 border-b border-amber-800/35">
+      <button type="button" onClick={() => setOpen(value => !value)} className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left" aria-expanded={open}>
+        <div>
+          <p className="text-xs font-semibold text-amber-200">Session watchpoints</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">{notes.length} active coaching note{notes.length === 1 ? '' : 's'} for this date</p>
+        </div>
+        <span className={`text-pool-500 transition-transform ${open ? 'rotate-180' : ''}`}>⌄</span>
+      </button>
+      {open && (
+        <div className="border-t border-amber-800/25 divide-y divide-amber-800/20 px-3">
+          {notes.map(note => (
+            <div key={note.id} className="py-2.5">
+              <p className="text-xs font-semibold text-amber-200">{note.swimmer_names?.join(', ') || 'Squad'} · {note.title}</p>
+              <p className="text-xs text-pool-300 whitespace-pre-line leading-relaxed mt-1">{note.body}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Register() {
   const { id } = useParams()
+  const navigate = useNavigate()
+  const location = useLocation()
   const [session, setSession] = useState(null)
   const [entries, setEntries] = useState([])
   const [submitting, setSubmitting] = useState(false)
@@ -13,10 +41,16 @@ export default function Register() {
   const [groupCount, setGroupCount] = useState(null)
   const [editingGroupCount, setEditingGroupCount] = useState(false)
   const [savingGroupCount, setSavingGroupCount] = useState(false)
+  const [sessionNotes, setSessionNotes] = useState([])
 
   useEffect(() => {
-    Promise.all([api.getSession(id), api.getRegister(id)]).then(([sess, reg]) => {
+    Promise.all([
+      api.getSession(id),
+      api.getRegister(id),
+      api.getCoachingNotes().catch(() => []),
+    ]).then(([sess, reg, notes]) => {
       setSession(sess)
+      setSessionNotes(notes.filter(note => note.date_from <= sess.date && note.date_to >= sess.date))
       const inferredGroupCount = sess.register_group_count ?? (
         sess.groups?.length || Object.keys(sess.planned_content || {}).length || null
       )
@@ -120,6 +154,14 @@ export default function Register() {
 
   const presentCount = entries.filter((e) => e.attended).length
   const excusedCount = entries.filter((e) => !e.attended && e.exception_reason).length
+  const watchedSwimmerIds = new Set(sessionNotes.flatMap(note => note.swimmer_ids || []))
+  const watchpointsWithoutObservation = entries.filter(entry => (
+    entry.attended
+    && watchedSwimmerIds.has(entry.swimmer_id)
+    && !entry.coach_observation?.trim()
+  ))
+  const watchpointObservationNames = watchpointsWithoutObservation.slice(0, 3).map(entry => entry.swimmer_name).join(', ')
+  const additionalWatchpointCount = Math.max(0, watchpointsWithoutObservation.length - 3)
 
   // Build lookup: group_number -> sub_group labels available
   const subGroupsByGroup = {}
@@ -144,7 +186,15 @@ export default function Register() {
       {/* Header */}
       <div className="bg-pool-800 px-4 pt-4 pb-3 sticky top-0 z-10">
         <div className="flex items-center gap-3 mb-2">
-          <Link to={`/sessions/${id}`} className="text-pool-400 text-2xl">‹</Link>
+          <button
+            type="button"
+            onClick={() => {
+              if (location.key && location.key !== 'default') navigate(-1)
+              else navigate(`/sessions/${id}`, { replace: true })
+            }}
+            aria-label="Go back"
+            className="text-pool-400 text-2xl"
+          >‹</button>
           <div className="flex-1">
             <h1 className="text-base font-bold">{session.title || 'Register'}</h1>
             <p className="text-pool-400 text-xs">
@@ -196,6 +246,8 @@ export default function Register() {
         )}
       </div>
 
+      <SessionWatchpoints notes={sessionNotes} />
+
       {/* Entries */}
       <div className="flex-1 divide-y divide-pool-700">
         {entries.map((entry) => (
@@ -215,6 +267,9 @@ export default function Register() {
                     <span className="text-[10px] text-amber-300 bg-amber-900/30 rounded px-1.5 py-0.5 shrink-0">
                       {entry.availability?.label || entry.exception_reason.replace('_', ' ')}
                     </span>
+                  )}
+                  {watchedSwimmerIds.has(entry.swimmer_id) && (
+                    <span className="text-[10px] text-amber-200 bg-amber-900/30 rounded px-1.5 py-0.5 shrink-0">Watch</span>
                   )}
                 </div>
                 <p className="text-[11px] text-pool-500 truncate mt-0.5">
@@ -283,7 +338,9 @@ export default function Register() {
                 {/* Observation */}
                 <VoiceInput
                   onTranscript={(t) => update(entry.swimmer_id, 'coach_observation', t)}
-                  placeholder="Observation (optional)..."
+                  placeholder={watchedSwimmerIds.has(entry.swimmer_id)
+                    ? 'What did you observe against the watchpoint?'
+                    : 'Observation (optional)...'}
                 />
 
                 {/* AI characterisation */}
@@ -301,6 +358,11 @@ export default function Register() {
 
       {/* Submit */}
       <div className="p-4 bg-pool-800 border-t border-pool-700 space-y-2 safe-bottom">
+        {watchpointsWithoutObservation.length > 0 && (
+          <p className="text-amber-300 text-xs text-center">
+            Watchpoint check: {watchpointObservationNames}{additionalWatchpointCount ? ` and ${additionalWatchpointCount} more` : ''} {watchpointsWithoutObservation.length === 1 ? 'has' : 'have'} no session observation yet.
+          </p>
+        )}
         {submitted === 'synced' && (
           <p className="text-green-400 text-sm text-center">Register saved and synced.</p>
         )}

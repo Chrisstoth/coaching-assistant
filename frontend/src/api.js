@@ -300,6 +300,7 @@ export const api = {
   createMeetFromChat: (threadId) => request('POST', '/ai-chat/create-meet', threadId != null ? { thread_id: threadId } : {}),
   extractSessionDraft: (threadId) => request('POST', '/ai-chat/extract-session', threadId != null ? { thread_id: threadId } : {}),
   saveBenchmarkFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/save-benchmark', { swimmer_id: swimmerId, conversation }),
+  previewTargetFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/preview-target', { swimmer_id: swimmerId, conversation }),
   saveCoachingIntentFromChat: (swimmerId, conversation) => request('POST', '/ai-chat/actions/save-coaching-intent', { swimmer_id: swimmerId, conversation }),
   updateAthleteProfileFromChat: (swimmerId, messages) => request('POST', '/ai-chat/actions/update-athlete-profile', { swimmer_id: swimmerId, messages }),
   startRegister: (message, threadId) => request('POST', '/ai-chat/start-register', { message, thread_id: threadId }),
@@ -410,6 +411,8 @@ export const api = {
   // Profile Wizard
   profileWizardChat: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/chat`, { messages }),
   profileWizardSave: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/save`, { messages }),
+  previewFoundationFromEvidence: (swimmerId) => request('POST', `/swimmers/${swimmerId}/profile-wizard/draft-existing`, {}),
+  saveReviewedFoundation: (swimmerId, data) => request('POST', `/swimmers/${swimmerId}/profile-wizard/save-draft`, data),
 
   // Planning cohorts
   getCohorts: () => request('GET', '/cohorts'),
