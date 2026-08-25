@@ -54,6 +54,11 @@ class CoreFlowTests(unittest.TestCase):
         day_name = target_date.strftime("%A")
         with SessionLocal() as db:
             swimmer = models.Swimmer(name="Register Flow Swimmer", squad="Register Test")
+            unassigned = models.Swimmer(name="Full Squad Unassigned", squad="Register Test")
+            inactive = models.Swimmer(
+                name="Inactive Register Swimmer", squad="Register Test",
+                active=False, status="inactive",
+            )
             pm_slot = models.PoolSlot(
                 day_of_week=target_date.weekday(), time="20:30", end_time="21:30",
                 squad="Register Test", label=f"{day_name} PM", active=True,
@@ -62,10 +67,18 @@ class CoreFlowTests(unittest.TestCase):
                 day_of_week=target_date.weekday(), time="05:30", end_time="07:00",
                 squad="Register Test", label=f"{day_name} AM", active=True,
             )
-            db.add_all([swimmer, pm_slot, am_slot])
+            db.add_all([swimmer, unassigned, inactive, pm_slot, am_slot])
             db.flush()
-            swimmer_id, pm_slot_id, am_slot_id = swimmer.id, pm_slot.id, am_slot.id
+            swimmer_id = swimmer.id
+            unassigned_id = unassigned.id
+            inactive_id = inactive.id
+            pm_slot_id, am_slot_id = pm_slot.id, am_slot.id
             db.add(models.SwimmerSlot(swimmer_id=swimmer_id, pool_slot_id=pm_slot_id))
+            db.add(models.SwimmerException(
+                swimmer_id=unassigned_id, reason="holiday",
+                date_from=target_date, date_to=target_date,
+                notes="Still shown on the register",
+            ))
             db.commit()
 
         message = f"Can I do a register for {day_name} PM {target_date.strftime('%d %B %Y')}"
@@ -81,9 +94,27 @@ class CoreFlowTests(unittest.TestCase):
         self.assertIn(f"{day_name} PM", payload["reply"])
         self.assertNotIn("Tuesday PM", payload["reply"] if day_name != "Tuesday" else "")
         self.assertEqual(payload["register_data"]["session_time"], "20:30")
-        self.assertEqual(payload["register_data"]["attendees"][0]["id"], swimmer_id)
+        attendee_map = {row["id"]: row for row in payload["register_data"]["attendees"]}
+        self.assertIn(swimmer_id, attendee_map)
+        self.assertIn(unassigned_id, attendee_map)
+        self.assertNotIn(inactive_id, attendee_map)
+        self.assertTrue(attendee_map[swimmer_id]["usual_for_slot"])
+        self.assertFalse(attendee_map[unassigned_id]["usual_for_slot"])
+        self.assertEqual(attendee_map[unassigned_id]["exception_reason"], "holiday")
+        self.assertIsNone(attendee_map[unassigned_id]["attended"])
         self.assertTrue(payload["register_data"]["created_from_slot"])
         ai_client.assert_not_called()
+
+        register_response = self.client.get(
+            f"/sessions/{payload['register_data']['session_id']}/register",
+            headers=self.headers,
+        )
+        self.assertEqual(register_response.status_code, 200, register_response.text)
+        register_map = {row["swimmer_id"]: row for row in register_response.json()}
+        self.assertIn(unassigned_id, register_map)
+        self.assertNotIn(inactive_id, register_map)
+        self.assertFalse(register_map[unassigned_id]["usual_for_slot"])
+        self.assertEqual(register_map[unassigned_id]["exception_reason"], "holiday")
 
         second = self.client.post(
             "/ai-chat/start-register", headers=self.headers,
@@ -106,11 +137,75 @@ class CoreFlowTests(unittest.TestCase):
             db.query(models.SwimmerSlot).filter(
                 models.SwimmerSlot.pool_slot_id.in_([pm_slot_id, am_slot_id]),
             ).delete(synchronize_session=False)
+            db.query(models.SwimmerException).filter(
+                models.SwimmerException.swimmer_id == unassigned_id,
+            ).delete(synchronize_session=False)
             db.query(models.PoolSlot).filter(
                 models.PoolSlot.id.in_([pm_slot_id, am_slot_id]),
             ).delete(synchronize_session=False)
-            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.query(models.Swimmer).filter(
+                models.Swimmer.id.in_([swimmer_id, unassigned_id, inactive_id]),
+            ).delete(synchronize_session=False)
             db.commit()
+
+    def test_chat_cancellation_resolves_then_requires_calendar_confirmation(self):
+        target_date = date.today()
+        day_name = target_date.strftime("%A")
+        with SessionLocal() as db:
+            slot = models.PoolSlot(
+                day_of_week=target_date.weekday(), time="04:41", end_time="05:41",
+                squad="Cancellation Test", label=f"{day_name} AM cancellation test", active=True,
+            )
+            db.add(slot)
+            db.commit()
+            slot_id = slot.id
+
+        message = f"Cancel the {day_name} AM session {target_date.strftime('%d %B %Y')} because it is a bank holiday"
+        try:
+            with patch("backend.routers.ai_chat.get_client") as ai_client:
+                response = self.client.post(
+                    "/ai-chat/messages", headers=self.headers,
+                    json={"message": message, "thread_id": None},
+                )
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["topics_detected"], ["session_cancellation"])
+            self.assertEqual(payload["cancellation_data"]["slot_id"], slot_id)
+            self.assertEqual(payload["cancellation_data"]["suggested_reason"], "Public holiday")
+            ai_client.assert_not_called()
+
+            with SessionLocal() as db:
+                self.assertIsNone(db.query(models.Session).filter(
+                    models.Session.pool_slot_id == slot_id,
+                    models.Session.date == target_date,
+                ).first())
+
+            confirmed = self.client.post(
+                "/sessions/calendar/cancel", headers=self.headers,
+                json={
+                    "date": target_date.isoformat(), "pool_slot_id": slot_id,
+                    "reason": "Public holiday",
+                },
+            )
+            self.assertEqual(confirmed.status_code, 201, confirmed.text)
+            self.assertEqual(confirmed.json()["cancel_reason"], "Public holiday")
+
+            with SessionLocal() as db:
+                occurrence = db.query(models.Session).filter(
+                    models.Session.pool_slot_id == slot_id,
+                    models.Session.date == target_date,
+                ).one()
+                self.assertEqual(occurrence.status, "cancelled")
+                self.assertEqual(occurrence.cancel_reason, "Public holiday")
+                self.assertTrue(db.query(models.PoolSlot).filter(models.PoolSlot.id == slot_id).one().active)
+        finally:
+            with SessionLocal() as db:
+                db.query(models.CoachAIMessage).filter(
+                    models.CoachAIMessage.message == message,
+                ).delete(synchronize_session=False)
+                db.query(models.Session).filter(models.Session.pool_slot_id == slot_id).delete()
+                db.query(models.PoolSlot).filter(models.PoolSlot.id == slot_id).delete()
+                db.commit()
 
     def test_session_occurrence_can_be_dismissed_from_home_and_reopened(self):
         target_date = date.today()
@@ -166,19 +261,36 @@ class CoreFlowTests(unittest.TestCase):
                 day_of_week=1, time="20:00", end_time="21:00",
                 label="Named Tuesday PM", active=True,
             )
-            db.add_all([monday, tuesday])
+            swimmer = models.Swimmer(name="Context Assignment Swimmer", squad="Context Test")
+            unregistered_session = models.Session(
+                date=date.today(), start_time="20:30", end_time="21:30",
+                title="Unregistered context occurrence", status="active",
+            )
+            db.add_all([monday, tuesday, swimmer, unregistered_session])
+            db.flush()
+            db.add(models.SwimmerSlot(swimmer_id=swimmer.id, pool_slot_id=monday.id))
             db.commit()
             monday_id, tuesday_id = monday.id, tuesday.id
+            swimmer_id, session_id = swimmer.id, unregistered_session.id
 
             context = execute_tool(
                 "get_session_context", {"day": "Monday", "time_period": "PM"}, db,
             )
             self.assertIn("Named Monday PM", context)
             self.assertNotIn("Named Tuesday PM", context)
+            self.assertIn("planning hint only, not attendance", context)
+            occurrence_line = next(
+                line for line in context.splitlines()
+                if "Unregistered context occurrence" in line
+            )
+            self.assertIn("NO REGISTER SUBMITTED", occurrence_line)
 
+            db.query(models.SwimmerSlot).filter(models.SwimmerSlot.swimmer_id == swimmer_id).delete()
+            db.query(models.Session).filter(models.Session.id == session_id).delete()
             db.query(models.PoolSlot).filter(
                 models.PoolSlot.id.in_([monday_id, tuesday_id]),
             ).delete(synchronize_session=False)
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
             db.commit()
 
     def test_agent_read_tools_return_compact_stored_evidence(self):
@@ -559,6 +671,24 @@ class CoreFlowTests(unittest.TestCase):
         )
         self.assertEqual(session.status_code, 201, session.text)
         session_id = session.json()["id"]
+        self.assertEqual(session.json()["register_group_count"], 1)
+
+        changed_groups = self.client.put(
+            f"/sessions/{session_id}", headers=self.headers,
+            json={"register_group_count": 2},
+        )
+        self.assertEqual(changed_groups.status_code, 200, changed_groups.text)
+        self.assertEqual(changed_groups.json()["register_group_count"], 2)
+        invalid_groups = self.client.put(
+            f"/sessions/{session_id}", headers=self.headers,
+            json={"register_group_count": 4},
+        )
+        self.assertEqual(invalid_groups.status_code, 422, invalid_groups.text)
+        restored_groups = self.client.put(
+            f"/sessions/{session_id}", headers=self.headers,
+            json={"register_group_count": 1},
+        )
+        self.assertEqual(restored_groups.status_code, 200, restored_groups.text)
 
         register = self.client.put(
             f"/sessions/{session_id}/register",
@@ -924,6 +1054,7 @@ class CoreFlowTests(unittest.TestCase):
             self.assertEqual(session["pool_slot_id"], slot_id)
             self.assertEqual(session["squad"], "Template Test")
             self.assertEqual(session["source"], "excel")
+            self.assertEqual(session["register_group_count"], 1)
             self.assertEqual(session["groups"][0]["sets"]["items"][0]["description"], "Kick with board")
             self.assertEqual(session["groups"][0]["volume_breakdown"]["session_total"], 400)
 
@@ -935,6 +1066,7 @@ class CoreFlowTests(unittest.TestCase):
                 if item.get("slot_id") == slot_id
             )
             self.assertTrue(calendar_item["has_plan"])
+            self.assertEqual(calendar_item["register_group_count"], 1)
             self.assertEqual(calendar_item["groups"][0]["description"], "Basics")
             self.assertIn("Kick with board", calendar_item["groups"][0]["sets"])
 

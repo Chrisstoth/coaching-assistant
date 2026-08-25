@@ -187,6 +187,9 @@ class Session(Base):
     coach_intent = Column(Text, nullable=True)           # why this session was planned
     energy_system_focus = Column(String, nullable=True) # aerobic / threshold / speed / recovery
     individual_mods = Column(JSON, nullable=True)        # {"swimmer_name": "modification note"}
+    # How many distinct programmes were actually run. Null means the coach has
+    # not confirmed it yet; 1 means the whole squad completed the same work.
+    register_group_count = Column(Integer, nullable=True)
 
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, weeklySessionQueue } from '../sessionProximity'
+import SessionCancellationDialog from '../components/SessionCancellationDialog'
 
 function timeLabel(item) {
   const start = item?.start_time || item?.time
@@ -68,12 +69,12 @@ export default function TodaySession() {
   const [calendar, setCalendar] = useState([])
   const [session, setSession] = useState(null)
   const [register, setRegister] = useState([])
-  const [expected, setExpected] = useState([])
   const [notes, setNotes] = useState([])
   const [microcycles, setMicrocycles] = useState([])
   const [loading, setLoading] = useState(true)
   const [starting, setStarting] = useState(false)
   const [showRoster, setShowRoster] = useState(false)
+  const [showCancellation, setShowCancellation] = useState(false)
   const [error, setError] = useState('')
   const today = localDateKey()
 
@@ -102,18 +103,15 @@ export default function TodaySession() {
       if (!chosen?.session_id) {
         setSession(chosen || null)
         setRegister([])
-        setExpected([])
         return
       }
 
-      const [detail, registerRows, expectedRows] = await Promise.all([
+      const [detail, registerRows] = await Promise.all([
         api.getSession(chosen.session_id),
         api.getRegister(chosen.session_id),
-        api.getExpectedAttendance(chosen.date, chosen.squad).catch(() => []),
       ])
       setSession({ ...chosen, ...detail, session_id: detail.id })
       setRegister(registerRows)
-      setExpected(expectedRows)
     } catch (err) {
       setError(err.message || 'Could not load today’s session')
     } finally {
@@ -133,14 +131,11 @@ export default function TodaySession() {
   const datedNotes = notes.filter(note => note.date_from <= sessionDate && note.date_to >= sessionDate)
   const individualMods = Object.entries(session?.individual_mods || {})
   const registerMap = new Map(register.map(row => [row.swimmer_id, row]))
-  const expectedRoster = expected.filter(row => row.expected)
   const recordedRows = register.filter(row => row.attended !== null)
   const presentCount = recordedRows.filter(row => row.attended).length
-  const roster = expectedRoster.length > 0
-    ? expectedRoster.map(row => ({ ...row, ...registerMap.get(row.id) }))
-    : register.filter(row => !session?.squad || row.squad === session.squad)
-  const unavailable = expected.filter(row => !row.expected && row.exception_reason)
-  const swimmerName = id => registerMap.get(id)?.swimmer_name || expected.find(row => row.id === id)?.name
+  const roster = register
+  const unavailable = register.filter(row => row.exception_reason)
+  const swimmerName = id => registerMap.get(id)?.swimmer_name
 
   const startScheduledSession = async () => {
     if (!session?.slot_id) return
@@ -202,13 +197,16 @@ export default function TodaySession() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <Link to={`/import?tab=excel&date=${session.date || today}&slot=${session.slot_id || session.pool_slot_id || ''}&session=${session.session_id || ''}`}
           className="bg-pool-800 border border-pool-700 rounded-xl py-2.5 text-center text-xs font-semibold text-pool-200">
-          Import session plan
+          Import plan
         </Link>
+        <button onClick={() => setShowCancellation(true)} className="bg-red-900/25 border border-red-800/60 rounded-xl py-2.5 text-xs font-semibold text-red-300">
+          Cancel session
+        </button>
         <button onClick={dismissSession} className="bg-pool-800 border border-pool-700 rounded-xl py-2.5 text-xs font-semibold text-pool-400">
-          Dismiss from home
+          Dismiss
         </button>
       </div>
 
@@ -246,7 +244,7 @@ export default function TodaySession() {
               <p className="text-sm text-pool-200 mt-1">
                 {recordedRows.length > 0
                   ? `${presentCount} present · ${recordedRows.length} marked`
-                  : `${roster.length} expected · not started`}
+                  : `${roster.length} active swimmers · not started`}
               </p>
             </div>
             <Link to={`/sessions/${session.session_id}/register`} className="bg-accent-600 rounded-xl px-4 py-2.5 text-sm font-semibold">
@@ -259,6 +257,8 @@ export default function TodaySession() {
                 <div key={row.id || row.swimmer_id} className="flex items-center gap-2 py-1.5 text-xs">
                   <span className={`w-2 h-2 rounded-full shrink-0 ${row.attended === true ? 'bg-emerald-400' : row.attended === false ? 'bg-pool-600' : 'border border-pool-500'}`} />
                   <span className="text-pool-300 flex-1 truncate">{row.name || row.swimmer_name}</span>
+                  {row.exception_reason && <span className="text-amber-400">Away</span>}
+                  {row.usual_for_slot && <span className="text-pool-500">Usual</span>}
                   {row.group_planned && <span className="text-pool-500">G{row.group_planned}{row.sub_group_planned || ''}</span>}
                 </div>
               ))}
@@ -317,8 +317,8 @@ export default function TodaySession() {
               </div>
             ))}
             {unavailable.map(row => (
-              <div key={`away-${row.id}`} className="py-3">
-                <p className="text-xs font-semibold text-amber-200">{row.name} · {row.availability?.label || row.exception_reason.replaceAll('_', ' ')}</p>
+              <div key={`away-${row.swimmer_id}`} className="py-3">
+                <p className="text-xs font-semibold text-amber-200">{row.swimmer_name} · {row.availability?.label || row.exception_reason.replaceAll('_', ' ')}</p>
                 {row.availability?.detail && <p className="text-xs text-pool-300 mt-1">{row.availability.detail}</p>}
               </div>
             ))}
@@ -333,6 +333,12 @@ export default function TodaySession() {
           {session.session_id && <Link to={`/sessions/${session.session_id}`} className="inline-block text-xs text-accent-400 font-semibold mt-3">Add session detail →</Link>}
         </section>
       )}
+
+      <SessionCancellationDialog
+        session={showCancellation ? session : null}
+        onClose={() => setShowCancellation(false)}
+        onCancelled={() => navigate('/')}
+      />
     </div>
   )
 }

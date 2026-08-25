@@ -657,33 +657,39 @@ def _availability_json(item: Optional[dict]) -> Optional[dict]:
 
 
 def _register_attendees(session: models.Session, db: DBSession) -> list[dict]:
-    """Return the roster for this exact slot, rather than every slot that day."""
+    """Return every active swimmer; timetable links are display hints only."""
+    swimmers = db.query(models.Swimmer).filter(
+        models.Swimmer.status == "active",
+    ).order_by(models.Swimmer.name).all()
+    swimmer_ids = [swimmer.id for swimmer in swimmers]
+    usual_ids = set()
     if session.pool_slot_id:
-        swimmer_ids = [
-            row[0]
-            for row in db.query(models.SwimmerSlot.swimmer_id).filter(
+        usual_ids = {
+            row[0] for row in db.query(models.SwimmerSlot.swimmer_id).filter(
                 models.SwimmerSlot.pool_slot_id == session.pool_slot_id,
             ).all()
-        ]
-        swimmers = db.query(models.Swimmer).filter(
-            models.Swimmer.id.in_(swimmer_ids),
-            models.Swimmer.active == True,
-        ).order_by(models.Swimmer.name).all() if swimmer_ids else []
-        unavailable = availability_on_date(db, swimmer_ids, session.date)
-        return [
-            {
-                "id": swimmer.id,
-                "name": swimmer.name,
-                "squad": swimmer.squad,
-                "expected": swimmer.id not in unavailable,
-                "exception_reason": unavailable.get(swimmer.id, {}).get("reason"),
-                "availability": _availability_json(unavailable.get(swimmer.id)),
-            }
-            for swimmer in swimmers
-        ]
-
-    from backend.routers.schedule import expected_attendance
-    return expected_attendance(session.date, squad=session.squad, db=db)
+        }
+    unavailable = availability_on_date(db, swimmer_ids, session.date)
+    existing = {
+        row.swimmer_id: row for row in db.query(models.SessionEntry).filter(
+            models.SessionEntry.session_id == session.id,
+        ).all()
+    }
+    return [
+        {
+            "id": swimmer.id,
+            "name": swimmer.name,
+            "squad": swimmer.squad,
+            "attended": existing.get(swimmer.id).attended if existing.get(swimmer.id) else None,
+            "group_done": existing.get(swimmer.id).group_done if existing.get(swimmer.id) else None,
+            "usual_for_slot": swimmer.id in usual_ids,
+            # Retained for older clients, but it describes planning only.
+            "expected": swimmer.id in usual_ids and swimmer.id not in unavailable,
+            "exception_reason": unavailable.get(swimmer.id, {}).get("reason"),
+            "availability": _availability_json(unavailable.get(swimmer.id)),
+        }
+        for swimmer in swimmers
+    ]
 
 
 def _register_option(label: str, start_time: Optional[str], end_time: Optional[str]) -> str:
@@ -795,6 +801,14 @@ def _resolve_register_request(
         created_from_slot = True
 
     attendees = _register_attendees(session, db)
+    group_numbers = sorted(group.group_number for group in (session.groups or []))
+    if not group_numbers and isinstance(session.planned_content, dict):
+        for key in session.planned_content:
+            match = re.search(r"\d+", str(key))
+            if match:
+                group_numbers.append(int(match.group()))
+        group_numbers.sort()
+    register_group_count = session.register_group_count or (len(group_numbers) if group_numbers else None)
     existing_entries = db.query(models.SessionEntry).filter(
         models.SessionEntry.session_id == session.id,
     ).count()
@@ -806,6 +820,8 @@ def _resolve_register_request(
         "session_end_time": session.end_time,
         "register_taken": existing_entries > 0,
         "created_from_slot": created_from_slot,
+        "register_group_count": register_group_count,
+        "register_group_numbers": group_numbers,
         "attendees": attendees,
     }
 
@@ -826,12 +842,141 @@ def _register_reply(result: dict) -> str:
     time_label = _register_option(
         result["session_title"], result.get("session_time"), result.get("session_end_time")
     )
-    expected_count = sum(1 for attendee in result.get("attendees", []) if attendee.get("expected"))
-    if expected_count:
-        suffix = f"The register is ready below with {expected_count} expected swimmer{'s' if expected_count != 1 else ''}."
-    else:
-        suffix = "The register is ready below, but no swimmers are assigned to this slot yet."
+    squad_count = len(result.get("attendees", []))
+    usual_count = sum(1 for attendee in result.get("attendees", []) if attendee.get("usual_for_slot"))
+    suffix = f"The register is ready below with all {squad_count} active swimmers."
+    if usual_count:
+        suffix += f" {usual_count} are marked as usually attending this slot."
     return f"Found {time_label} on {date_label}. {suffix}"
+
+
+def _is_session_cancellation_request(text: str) -> bool:
+    """Recognise cancellation statements while leaving the final action to UI confirmation."""
+    lower = " ".join((text or "").lower().split())
+    cancellation_words = re.search(
+        r"\b(cancel|cancelled|cancellation|call(?:ed)? off|not on|isn't on|wasn't on|bank holiday|public holiday)\b",
+        lower,
+    )
+    session_words = re.search(
+        r"\b(session|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|afternoon|evening|am|pm)\b",
+        lower,
+    )
+    return bool(cancellation_words and session_words)
+
+
+def _cancellation_reason_from_text(text: str) -> Optional[str]:
+    lower = (text or "").lower()
+    if "bank holiday" in lower or "public holiday" in lower:
+        return "Public holiday"
+    if "holiday" in lower:
+        return "Holiday / scheduled break"
+    if "pool" in lower and any(word in lower for word in ("closed", "closure", "unavailable")):
+        return "Pool closure"
+    if "coach" in lower and any(word in lower for word in ("away", "unavailable", "ill")):
+        return "Coach unavailable"
+    return None
+
+
+def _resolve_cancellation_request(text: str, db: DBSession, today: Optional[date] = None) -> dict:
+    """Resolve one calendar occurrence without mutating it."""
+    today = today or date.today()
+    hint = extract_slot_hint(text)
+    explicit_date = _extract_register_date(text, today)
+
+    if explicit_date and hint.get("dow") is not None and explicit_date.weekday() != hint["dow"]:
+        return {
+            "error": f"That date is a {explicit_date.strftime('%A')}, not the day named in the request.",
+        }
+
+    if explicit_date:
+        target_date = explicit_date
+    elif hint.get("dow") is not None:
+        target_date = today - timedelta(days=(today.weekday() - hint["dow"]) % 7)
+    else:
+        target_date = today
+
+    period = hint.get("time_period")
+    occurrences = db.query(models.Session).filter(
+        models.Session.date == target_date,
+    ).order_by(models.Session.start_time).all()
+    matching = [
+        row for row in occurrences
+        if row.status != "cancelled" and _matches_period(row.start_time, period)
+    ]
+    if len(matching) > 1:
+        return {
+            "error": "More than one session matches. Please include the session time.",
+            "sessions": [
+                {"label": row.title or "Session", "time": row.start_time, "end_time": row.end_time}
+                for row in matching
+            ],
+        }
+
+    if matching:
+        row = matching[0]
+        return {
+            "session_id": row.id,
+            "slot_id": row.pool_slot_id,
+            "date": target_date.isoformat(),
+            "label": row.title or "Session",
+            "time": row.start_time,
+            "end_time": row.end_time,
+            "squad": row.squad,
+            "suggested_reason": _cancellation_reason_from_text(text),
+        }
+
+    cancelled = [
+        row for row in occurrences
+        if row.status == "cancelled" and _matches_period(row.start_time, period)
+    ]
+    if len(cancelled) == 1:
+        return {"error": f"{cancelled[0].title or 'That session'} is already recorded as cancelled."}
+
+    cancelled_slot_ids = {row.pool_slot_id for row in occurrences if row.status == "cancelled"}
+    slots = db.query(models.PoolSlot).filter(
+        models.PoolSlot.day_of_week == target_date.weekday(),
+        models.PoolSlot.active == True,
+    ).order_by(models.PoolSlot.time).all()
+    slots = [
+        slot for slot in slots
+        if slot.id not in cancelled_slot_ids and _matches_period(slot.time, period)
+    ]
+    if len(slots) != 1:
+        return {
+            "error": (
+                "More than one scheduled session matches. Please include the session time."
+                if len(slots) > 1
+                else "No non-cancelled scheduled session matches that date and time."
+            ),
+            "sessions": [
+                {"label": slot.label or "Session", "time": slot.time, "end_time": slot.end_time}
+                for slot in slots
+            ],
+        }
+
+    slot = slots[0]
+    return {
+        "session_id": None,
+        "slot_id": slot.id,
+        "date": target_date.isoformat(),
+        "label": slot.label or "Session",
+        "time": slot.time,
+        "end_time": slot.end_time,
+        "squad": slot.squad,
+        "suggested_reason": _cancellation_reason_from_text(text),
+    }
+
+
+def _cancellation_reply(result: dict) -> str:
+    if result.get("error"):
+        return result["error"]
+    target_date = date.fromisoformat(result["date"])
+    date_label = target_date.strftime("%A %-d %B") if os.name != "nt" else target_date.strftime("%A %#d %B")
+    session_label = _register_option(result["label"], result.get("time"), result.get("end_time"))
+    return (
+        f"I found {session_label} on {date_label}. Confirm the cancellation and its reason below. "
+        "This records only that occurrence; the recurring timetable stays unchanged."
+    )
 
 
 @router.post("/messages")
@@ -857,6 +1002,28 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     recent.reverse()
     messages = [{"role": m.role, "content": m.message} for m in recent]
     topics = detect_topics(text, messages[:-1])
+
+    # Cancellation is deterministic and confirmation-gated: chat resolves the
+    # occurrence, then the shared calendar dialog performs the actual change.
+    if _is_session_cancellation_request(text):
+        cancellation_data = _resolve_cancellation_request(text, db)
+        reply = _cancellation_reply(cancellation_data)
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["session_cancellation"],
+            "suggested_action": None,
+            "intent": {"type": "session_cancellation"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": None,
+            "register_data": None,
+            "cancellation_data": None if cancellation_data.get("error") else cancellation_data,
+            "model_route": {"tier": "deterministic", "reason": "session_cancellation", "model": None},
+            "tools_called": [],
+        }
 
     # Registers are deterministic application state, not a question for the
     # language model. Resolve the exact date/slot and return the register card.
@@ -1792,16 +1959,19 @@ def parse_register(body: dict = Body(...), db: DBSession = Depends(get_db)):
 
     session_id = body.get("session_id")
     message = body.get("message", "")
-    attendees = body.get("attendees", [])  # list of {id, name, expected}
+    attendees = body.get("attendees", [])  # full active squad list
 
     if not attendees:
         raise HTTPException(status_code=400, detail="Attendees list required")
 
-    attendee_list = "\n".join(f"- {a['name']} (expected: {'yes' if a.get('expected') else 'no'})" for a in attendees)
+    attendee_list = "\n".join(
+        f"- {a['name']} (usual for this slot: {'yes' if a.get('usual_for_slot') else 'no'})"
+        for a in attendees
+    )
 
     parse_prompt = f"""Parse this attendance message into a register for the following swimmers.
 
-EXPECTED SWIMMERS:
+ACTIVE SQUAD REGISTER (every swimmer must remain in the result):
 {attendee_list}
 
 COACH'S MESSAGE: "{message}"

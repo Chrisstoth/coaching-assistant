@@ -1,7 +1,7 @@
 from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
@@ -12,6 +12,7 @@ from backend.services.importer import (
     save_session_xlsx_draft,
 )
 from backend.services import claude_service
+from backend.services.availability import availability_on_date
 from backend.services.openai_service import parse_whiteboard_photo
 
 router = APIRouter()
@@ -38,6 +39,7 @@ class SessionCreate(BaseModel):
     pool_slot_id: Optional[int] = None
     status: Optional[str] = 'completed'
     course: Optional[str] = None   # SCM / LCM
+    register_group_count: Optional[int] = Field(default=None, ge=1, le=3)
 
 
 class CalendarStart(BaseModel):
@@ -109,6 +111,9 @@ def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
         coach_notes=body.coach_notes,
         planned_content=body.groups,
         individual_mods=body.individual_mods,
+        register_group_count=(body.register_group_count if body.register_group_count is not None else (
+            len(body.groups) if body.groups else None
+        )),
         pool_slot_id=body.pool_slot_id,
         status=body.status or 'completed',
         course=body.course,
@@ -221,14 +226,33 @@ def start_calendar_session(body: CalendarStart, db: DBSession = Depends(get_db))
 
 @router.post("/calendar/cancel", status_code=201)
 def cancel_calendar_session(body: CalendarCancel, db: DBSession = Depends(get_db)):
-    """Cancel a session — updates existing row or creates a cancelled record."""
+    """Cancel one occurrence while preserving its recurring timetable slot."""
+    reason = body.reason.strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="A cancellation reason is required")
+
     if body.session_id:
         session = db.query(models.Session).filter(models.Session.id == body.session_id).first()
         if session:
+            if session.date != body.date:
+                raise HTTPException(status_code=400, detail="Session date does not match the selected occurrence")
             session.status = "cancelled"
-            session.cancel_reason = body.reason
+            session.cancel_reason = reason
             db.commit()
-            return {"session_id": session.id, "status": "cancelled"}
+            return {"session_id": session.id, "status": "cancelled", "cancel_reason": reason}
+
+    # Reuse an occurrence materialised by a register or import instead of
+    # creating a duplicate for the same timetable slot and date.
+    if body.pool_slot_id:
+        existing = db.query(models.Session).filter(
+            models.Session.pool_slot_id == body.pool_slot_id,
+            models.Session.date == body.date,
+        ).first()
+        if existing:
+            existing.status = "cancelled"
+            existing.cancel_reason = reason
+            db.commit()
+            return {"session_id": existing.id, "status": "cancelled", "cancel_reason": reason}
 
     # No existing row — create a cancelled record to preserve the history
     slot = db.query(models.PoolSlot).filter(models.PoolSlot.id == body.pool_slot_id).first() if body.pool_slot_id else None
@@ -240,13 +264,13 @@ def cancel_calendar_session(body: CalendarCancel, db: DBSession = Depends(get_db
         title=slot.label if slot else "Cancelled session",
         pool_slot_id=body.pool_slot_id,
         status="cancelled",
-        cancel_reason=body.reason,
+        cancel_reason=reason,
         source="calendar",
     )
     db.add(session)
     db.commit()
     db.refresh(session)
-    return {"session_id": session.id, "status": "cancelled"}
+    return {"session_id": session.id, "status": "cancelled", "cancel_reason": reason}
 
 
 @router.post("/calendar/dismiss", status_code=201)
@@ -317,6 +341,11 @@ def update_session(
     for k, v in body.items():
         if k in allowed:
             setattr(session, k, v)
+    if "register_group_count" in body:
+        count = body["register_group_count"]
+        if count is not None and count not in (1, 2, 3):
+            raise HTTPException(status_code=422, detail="Register group count must be 1, 2 or 3")
+        session.register_group_count = count
     # Allow updating group volume_breakdown per group
     if "groups" in body:
         groups = db.query(models.SessionGroup).filter(models.SessionGroup.session_id == session_id).all()
@@ -495,6 +524,7 @@ async def import_photo(
         planned_content=extracted.get("groups"),
         energy_system_focus=extracted.get("energy_system_focus"),
         coach_notes=extracted.get("notes"),
+        register_group_count=(len(extracted.get("groups") or {}) or None),
         source="photo",
     )
     db.add(session)
@@ -521,7 +551,19 @@ async def import_photo(
 def get_register(session_id: int, db: DBSession = Depends(get_db)):
     """Return all active swimmers with existing entries pre-populated."""
     session = _get_or_404(session_id, db)
-    swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).order_by(models.Swimmer.name).all()
+    # Normal slot assignments are planning hints, never a register boundary.
+    swimmers = db.query(models.Swimmer).filter(
+        models.Swimmer.status == "active",
+    ).order_by(models.Swimmer.name).all()
+    swimmer_ids = [swimmer.id for swimmer in swimmers]
+    usual_swimmer_ids = set()
+    if session.pool_slot_id:
+        usual_swimmer_ids = {
+            row[0] for row in db.query(models.SwimmerSlot.swimmer_id).filter(
+                models.SwimmerSlot.pool_slot_id == session.pool_slot_id,
+            ).all()
+        }
+    unavailable = availability_on_date(db, swimmer_ids, session.date)
     existing_entries = {
         e.swimmer_id: e
         for e in db.query(models.SessionEntry).filter(models.SessionEntry.session_id == session_id).all()
@@ -556,11 +598,19 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
     result = []
     for s in swimmers:
         e = existing_entries.get(s.id)
+        availability = unavailable.get(s.id)
         result.append({
             "swimmer_id": s.id,
             "swimmer_name": s.name,
             "squad": s.squad,
             "attended": e.attended if e else None,
+            "usual_for_slot": s.id in usual_swimmer_ids,
+            "exception_reason": availability.get("reason") if availability else None,
+            "availability": ({
+                **availability,
+                "date_from": availability["date_from"].isoformat(),
+                "date_to": availability["date_to"].isoformat(),
+            } if availability else None),
             "group_planned": (e.group_planned if e and e.group_planned else planned_group_map.get(s.id)),
             "sub_group_planned": (e.sub_group_planned if e and e.sub_group_planned else planned_subgroup_map.get(s.id)),
             "group_done": e.group_done if e else None,
@@ -898,6 +948,7 @@ def _session_summary(s: models.Session) -> dict:
         "pool_slot_id": s.pool_slot_id,
         "cancel_reason": s.cancel_reason,
         "course": s.course,
+        "register_group_count": s.register_group_count,
     }
 
 
@@ -948,6 +999,7 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
         "coach_notes": session.coach_notes if session else None,
         "individual_mods": session.individual_mods if session else None,
         "groups": groups,
+        "register_group_count": session.register_group_count if session else None,
         "has_plan": bool(session and (
             session.coach_intent or session.coach_notes or session.planned_content or groups
         )),

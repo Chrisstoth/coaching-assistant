@@ -10,39 +10,38 @@ export default function Register() {
   const [submitting, setSubmitting] = useState(false)
   const [submitted, setSubmitted] = useState(null) // null | synced | queued
   const [expandedId, setExpandedId] = useState(null)
+  const [groupCount, setGroupCount] = useState(null)
+  const [editingGroupCount, setEditingGroupCount] = useState(false)
+  const [savingGroupCount, setSavingGroupCount] = useState(false)
 
   useEffect(() => {
     Promise.all([api.getSession(id), api.getRegister(id)]).then(([sess, reg]) => {
       setSession(sess)
-
-      // Get expected attendance for this session's date to pre-fill the register
-      const expectedPromise = sess.date
-        ? api.getExpectedAttendance(sess.date, sess.squad).catch(() => [])
-        : Promise.resolve([])
-
-      expectedPromise.then((expected) => {
-        const expectedMap = Object.fromEntries(expected.map((e) => [e.id, e]))
-        setEntries(
-          reg.map((r) => {
-            const exp = expectedMap[r.swimmer_id]
-            return {
-              swimmer_id: r.swimmer_id,
-              swimmer_name: r.swimmer_name,
-              squad: r.squad,
-              attended: r.attended ?? false,
-              normally_attends: exp?.expected ?? null,
-              exception_reason: exp?.exception_reason ?? null,
-              availability: exp?.availability ?? null,
-              group_planned: r.group_planned ?? null,
-              sub_group_planned: r.sub_group_planned ?? null,
-              group_done: r.group_done ?? r.group_planned ?? null,
-              sub_group_done: r.sub_group_done ?? null,
-              coach_observation: r.coach_observation ?? '',
-              ai_characterisation: r.ai_characterisation ?? null,
-            }
-          })
-        )
-      })
+      const inferredGroupCount = sess.register_group_count ?? (
+        sess.groups?.length || Object.keys(sess.planned_content || {}).length || null
+      )
+      setGroupCount(inferredGroupCount)
+      setEntries(reg.map((r) => ({
+        swimmer_id: r.swimmer_id,
+        swimmer_name: r.swimmer_name,
+        squad: r.squad,
+        attended: r.attended ?? false,
+        normally_attends: r.usual_for_slot ?? false,
+        exception_reason: r.exception_reason ?? null,
+        availability: r.availability ?? null,
+        group_planned: r.group_planned ?? null,
+        sub_group_planned: r.sub_group_planned ?? null,
+        group_done: r.group_done ?? (
+          inferredGroupCount === 1
+            ? 1
+            : inferredGroupCount > 1 && r.group_planned <= inferredGroupCount
+              ? r.group_planned
+              : null
+        ),
+        sub_group_done: r.sub_group_done ?? null,
+        coach_observation: r.coach_observation ?? '',
+        ai_characterisation: r.ai_characterisation ?? null,
+      })))
     })
   }, [id])
 
@@ -59,6 +58,32 @@ export default function Register() {
       ...e,
       attended: e.exception_reason ? e.attended : true,
     })))
+  }
+
+  const chooseGroupCount = async (count) => {
+    setSavingGroupCount(true)
+    try {
+      const updatedSession = await api.updateSession(id, { register_group_count: count })
+      setSession(updatedSession)
+      setGroupCount(count)
+      setEditingGroupCount(false)
+      setSubmitted(null)
+      setEntries(prev => prev.map(entry => ({
+        ...entry,
+        group_done: count === 1
+          ? 1
+          : entry.group_done && entry.group_done <= count
+            ? entry.group_done
+            : entry.group_planned && entry.group_planned <= count
+              ? entry.group_planned
+              : null,
+        sub_group_done: count === 1 ? null : entry.sub_group_done,
+      })))
+    } catch (error) {
+      alert(`Could not save the session group setup: ${error.message}`)
+    } finally {
+      setSavingGroupCount(false)
+    }
   }
 
   const submit = async (runAI = true) => {
@@ -103,6 +128,12 @@ export default function Register() {
       subGroupsByGroup[g.group_number] = g.sub_groups.map((sg) => sg.label)
     }
   }
+  const plannedGroupNumbers = (session?.groups || []).map(group => group.group_number)
+  const groupNumbers = groupCount > 1
+    ? (plannedGroupNumbers.length === groupCount
+        ? plannedGroupNumbers
+        : Array.from({ length: groupCount }, (_, index) => index + 1))
+    : []
 
   if (!session || entries.length === 0) {
     return <div className="p-4 text-pool-400">Loading register...</div>
@@ -117,7 +148,7 @@ export default function Register() {
           <div className="flex-1">
             <h1 className="text-base font-bold">{session.title || 'Register'}</h1>
             <p className="text-pool-400 text-xs">
-              {session.date} · {presentCount} present{excusedCount > 0 ? ` · ${excusedCount} excused` : ''}
+              {session.date} · {entries.length} swimmers · {presentCount} present{excusedCount > 0 ? ` · ${excusedCount} excused` : ''}
             </p>
           </div>
           <button
@@ -129,40 +160,78 @@ export default function Register() {
         </div>
       </div>
 
+      {/* Session group setup */}
+      <div className={`px-3 py-2.5 border-b ${groupCount && !editingGroupCount ? 'bg-pool-800/60 border-pool-700' : 'bg-amber-900/15 border-amber-800/40'}`}>
+        {groupCount && !editingGroupCount ? (
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-wide font-semibold text-pool-500">Session format</p>
+              <p className="text-sm text-pool-200 mt-0.5">
+                {groupCount === 1 ? 'Whole squad · everyone did the same session' : `${groupCount} training groups`}
+              </p>
+            </div>
+            <button onClick={() => setEditingGroupCount(true)} className="text-xs text-accent-400 px-2 py-2">Change</button>
+          </div>
+        ) : (
+          <div>
+            <p className="text-xs font-semibold text-amber-200">How many different programmes are being done?</p>
+            <p className="text-[11px] text-pool-400 mt-0.5">Choose one before saving the register. You can change it later.</p>
+            <div className="grid grid-cols-3 gap-2 mt-2">
+              {[
+                [1, 'Everyone together'],
+                [2, '2 groups'],
+                [3, '3 groups'],
+              ].map(([count, label]) => (
+                <button
+                  key={count}
+                  onClick={() => chooseGroupCount(count)}
+                  disabled={savingGroupCount}
+                  className={`rounded-lg border px-2 py-2 text-xs font-semibold disabled:opacity-50 ${groupCount === count ? 'bg-accent-700 border-accent-500 text-white' : 'bg-pool-700 border-pool-600 text-pool-300'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Entries */}
       <div className="flex-1 divide-y divide-pool-700">
         {entries.map((entry) => (
-          <div key={entry.swimmer_id} className="p-4">
+          <div key={entry.swimmer_id} className="px-3 py-2">
             {/* Row: name + attended toggle */}
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between gap-2">
               <button
                 onClick={() => setExpandedId(expandedId === entry.swimmer_id ? null : entry.swimmer_id)}
-                className="flex-1 text-left"
+                className="flex-1 min-w-0 text-left py-0.5"
               >
-                <p className={`font-medium text-sm ${entry.attended ? 'text-pool-200' : 'text-pool-500'}`}>
-                  {entry.swimmer_name}
-                </p>
-                <p className="text-xs text-pool-500">
-                  {entry.group_planned && (
-                    <span className="text-pool-500">
-                      Planned G{entry.group_planned}{entry.sub_group_planned || ''}
-                    </span>
-                  )}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <p className={`font-medium text-sm truncate ${entry.attended ? 'text-pool-100' : 'text-pool-400'}`}>
+                    {entry.swimmer_name}
+                  </p>
+                  {entry.normally_attends && <span className="text-[10px] text-teal-300 bg-teal-900/30 rounded px-1.5 py-0.5 shrink-0">Usual</span>}
                   {entry.exception_reason && (
-                    <span className="ml-2 text-yellow-500">
-                      · {entry.availability?.label || entry.exception_reason.replace('_', ' ')}
-                      {entry.availability?.detail ? ` — ${entry.availability.detail}` : ''}
+                    <span className="text-[10px] text-amber-300 bg-amber-900/30 rounded px-1.5 py-0.5 shrink-0">
+                      {entry.availability?.label || entry.exception_reason.replace('_', ' ')}
                     </span>
                   )}
-                  {entry.normally_attends && !entry.exception_reason && (
-                    <span className="ml-2 text-pool-600">· normally here</span>
-                  )}
+                </div>
+                <p className="text-[11px] text-pool-500 truncate mt-0.5">
+                  {groupCount === 1
+                    ? 'Whole squad session'
+                    : entry.group_done
+                    ? `G${entry.group_done}${entry.sub_group_done || ''}`
+                    : entry.group_planned
+                      ? `Planned G${entry.group_planned}${entry.sub_group_planned || ''}`
+                      : entry.attended ? 'Tap to set group or add a note' : 'Not marked present'}
+                  {entry.availability?.detail ? ` · ${entry.availability.detail}` : ''}
                 </p>
               </button>
 
               <button
                 onClick={() => update(entry.swimmer_id, 'attended', !entry.attended)}
-                className={`ml-4 rounded-full px-4 py-1.5 text-sm font-semibold transition-colors ${
+                className={`min-w-14 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                   entry.attended
                     ? 'bg-green-600 text-white'
                     : 'bg-pool-700 text-pool-400'
@@ -173,11 +242,11 @@ export default function Register() {
             </div>
 
             {/* Expanded: group + observation */}
-            {entry.attended && (
-              <div className="space-y-2 mt-2">
+            {entry.attended && expandedId === entry.swimmer_id && (
+              <div className="space-y-2 mt-2 pl-1">
                 {/* Group selector */}
-                <div className="flex gap-2">
-                  {[1, 2, 3].map((g) => (
+                {groupCount > 1 && <div className="flex gap-2">
+                  {groupNumbers.map((g) => (
                     <button
                       key={g}
                       onClick={() => update(entry.swimmer_id, 'group_done', g)}
@@ -190,10 +259,10 @@ export default function Register() {
                       G{g}
                     </button>
                   ))}
-                </div>
+                </div>}
 
                 {/* Sub-group selector — only shown when the selected group has multiple sub-groups */}
-                {entry.group_done && subGroupsByGroup[entry.group_done] && (
+                {groupCount > 1 && entry.group_done && subGroupsByGroup[entry.group_done] && (
                   <div className="flex gap-2">
                     {subGroupsByGroup[entry.group_done].map((label) => (
                       <button
@@ -212,12 +281,10 @@ export default function Register() {
                 )}
 
                 {/* Observation */}
-                {expandedId === entry.swimmer_id && (
-                  <VoiceInput
-                    onTranscript={(t) => update(entry.swimmer_id, 'coach_observation', t)}
-                    placeholder="Observation (optional)..."
-                  />
-                )}
+                <VoiceInput
+                  onTranscript={(t) => update(entry.swimmer_id, 'coach_observation', t)}
+                  placeholder="Observation (optional)..."
+                />
 
                 {/* AI characterisation */}
                 {entry.ai_characterisation && (
@@ -243,17 +310,17 @@ export default function Register() {
         <div className="flex gap-2">
           <button
             onClick={() => submit(false)}
-            disabled={submitting}
+            disabled={submitting || !groupCount}
             className="flex-1 bg-pool-700 rounded-xl py-3 text-sm font-semibold disabled:opacity-40"
           >
             Save
           </button>
           <button
             onClick={() => submit(true)}
-            disabled={submitting}
+            disabled={submitting || !groupCount}
             className="flex-1 bg-accent-600 rounded-xl py-3 text-sm font-semibold disabled:opacity-40"
           >
-            {submitting ? 'Saving + AI...' : 'Save + analyse notes'}
+            {!groupCount ? 'Choose session groups first' : submitting ? 'Saving + AI...' : 'Save + analyse notes'}
           </button>
         </div>
       </div>

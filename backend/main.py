@@ -45,6 +45,7 @@ def _migrate_sessions():
         ("status",            "VARCHAR DEFAULT 'completed'"),
         ("pool_slot_id",      "INTEGER REFERENCES pool_slots(id)"),
         ("cancel_reason",     "TEXT"),
+        ("register_group_count", "INTEGER"),
         ("created_at",        "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
     ]
     with engine.connect() as conn:

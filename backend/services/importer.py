@@ -845,6 +845,7 @@ def save_session_xlsx_draft(
     session.coach_notes = draft.get("coach_notes")
     session.energy_system_focus = draft.get("energy_system_focus")
     session.planned_content = groups
+    session.register_group_count = len(groups) if groups else None
     session.pool_slot_id = slot.id if slot else session.pool_slot_id
     session.course = draft.get("course") or (slot.course if slot else session.course)
     session.source = "excel"

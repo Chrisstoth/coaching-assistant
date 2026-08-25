@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { isSessionNear, localDateKey, weeklySessionQueue } from '../sessionProximity'
+import SessionCancellationDialog from '../components/SessionCancellationDialog'
 
-function SessionDesk({ sessions, onRegister, onDismiss, busyKey }) {
+function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey }) {
   if (sessions.length === 0) {
     return (
       <section className="bg-pool-800/70 border border-pool-700 rounded-2xl p-4">
@@ -43,7 +44,17 @@ function SessionDesk({ sessions, onRegister, onDismiss, busyKey }) {
                     {[day, session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}
                   </p>
                 </div>
-                <button onClick={() => onDismiss(session)} className="text-[11px] text-pool-500 hover:text-pool-300 shrink-0 py-1">Dismiss</button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    onClick={() => onCancel(session)}
+                    className="w-7 h-7 rounded-full border border-red-800/70 bg-red-900/25 text-red-300 text-sm font-bold"
+                    aria-label={`Cancel ${session.title || session.label || 'session'}`}
+                    title="Record this session as cancelled"
+                  >
+                    !
+                  </button>
+                  <button onClick={() => onDismiss(session)} className="text-[11px] text-pool-500 hover:text-pool-300 py-1">Dismiss</button>
+                </div>
               </div>
 
               {(session.coach_intent || session.coach_notes || groups.length > 0 || mods.length > 0) ? (
@@ -487,6 +498,7 @@ export default function Dashboard() {
   const [availability, setAvailability] = useState({ items: [], current_count: 0, upcoming_count: 0 })
   const [seasonNotice, setSeasonNotice] = useState('')
   const [busySessionKey, setBusySessionKey] = useState('')
+  const [cancelTarget, setCancelTarget] = useState(null)
 
   useEffect(() => {
     setLoading(true)
@@ -571,6 +583,21 @@ export default function Dashboard() {
     }
   }
 
+  const sessionCancelled = (result) => {
+    const item = cancelTarget
+    setCalendar(previous => previous.map(day => ({
+      ...day,
+      items: (day.items || []).map(row => {
+        const sameSession = row.session_id === result.session_id
+        const sameOccurrence = item?.slot_id && day.date === item.date && row.slot_id === item.slot_id
+        return sameSession || sameOccurrence
+          ? { ...row, session_id: result.session_id, status: 'cancelled', cancel_reason: result.cancel_reason }
+          : row
+      }),
+    })))
+    setCancelTarget(null)
+  }
+
   // Swimmers needing attention from pulse (approaching target in ≤2 weeks or very low attendance)
   const flaggedSwimmers = pulse.filter(sw =>
     (sw.approaching_target && sw.approaching_target.weeks_out <= 2) ||
@@ -596,6 +623,7 @@ export default function Dashboard() {
           sessions={sessionQueue}
           onRegister={openRegister}
           onDismiss={dismissSession}
+          onCancel={setCancelTarget}
           busyKey={busySessionKey}
         />
       )}
@@ -726,6 +754,12 @@ export default function Dashboard() {
           Schedule
         </Link>
       </div>
+
+      <SessionCancellationDialog
+        session={cancelTarget}
+        onClose={() => setCancelTarget(null)}
+        onCancelled={sessionCancelled}
+      />
 
     </div>
   )

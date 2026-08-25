@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api'
+import SessionCancellationDialog from '../components/SessionCancellationDialog'
 
 function useWhisperVoice(onResult) {
   const [recording, setRecording] = useState(false)
@@ -109,6 +110,7 @@ export default function CoachAI() {
   const [parsingRegister, setParsingRegister] = useState(false)
   const [savingRegister, setSavingRegister] = useState(false)
   const [registerSaved, setRegisterSaved] = useState(false)
+  const [cancellationData, setCancellationData] = useState(null)
 
   // Pin modal
   const [pinning, setPinning] = useState(false)
@@ -141,6 +143,7 @@ export default function CoachAI() {
     setActionResult(null)
     setSessionDraft(null)
     setRegisterData(null)
+    setCancellationData(null)
     setRegisterSaved(false)
     setPinSaved(false)
     setFeedbackPrompt(null)
@@ -370,7 +373,9 @@ export default function CoachAI() {
       }
 
       // Auto-trigger register card if register topic detected
-      if ((res.topics_detected || []).includes('register')) {
+      if (res.cancellation_data) {
+        setCancellationData(res.cancellation_data)
+      } else if ((res.topics_detected || []).includes('register')) {
         // Newer backends resolve the slot as part of the deterministic chat
         // response. Keep the fallback for clients talking to an older server.
         const regData = res.register_data || await api.startRegister(msg, threadId)
@@ -541,6 +546,7 @@ export default function CoachAI() {
     setMessages([])
     setSuggestedAction(null)
     setActionResult(null)
+    setCancellationData(null)
     setPinSaved(false)
   }
 
@@ -880,6 +886,20 @@ export default function CoachAI() {
           </div>
         )}
 
+        <SessionCancellationDialog
+          session={cancellationData}
+          onClose={() => setCancellationData(null)}
+          onCancelled={(result, reason) => {
+            const label = cancellationData?.label || 'The session'
+            setCancellationData(null)
+            setMessages(previous => [...previous, {
+              role: 'assistant',
+              message: `${label} has been recorded as cancelled (${reason}). The recurring timetable is unchanged.`,
+              id: `cancelled-${result.session_id}-${Date.now()}`,
+            }])
+          }}
+        />
+
         {feedbackPrompt && (
           <div className="border border-accent-700/50 bg-accent-900/20 rounded-xl px-4 py-3 space-y-2.5">
             <p className="text-xs font-semibold text-accent-300">Session feedback</p>
@@ -984,6 +1004,7 @@ export default function CoachAI() {
             setActionResult(null)
             setSessionDraft(null)
             setRegisterData(null)
+            setCancellationData(null)
             setRegisterSaved(false)
             setPinSaved(false)
             setFeedbackPrompt(null)
@@ -1346,20 +1367,47 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
 }
 
 function RegisterCard({ data, onDismiss, onSaved }) {
+  const initialGroupCount = data.register_group_count || null
   const initialAttendance = (data.attendees || []).map(a => ({
     swimmer_id: a.id,
     name: a.name,
-    present: a.expected !== false,
-    group: null,
+    present: a.attended === true,
+    group: a.group_done ?? (initialGroupCount === 1 ? 1 : null),
     note: '',
     exception_reason: a.exception_reason || null,
+    usual_for_slot: a.usual_for_slot || false,
   }))
   const [attendance, setAttendance] = useState(initialAttendance)
   const [parseInput, setParseInput] = useState('')
   const [parsing, setParsing] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [groupCount, setGroupCount] = useState(initialGroupCount)
+  const [editingGroupCount, setEditingGroupCount] = useState(!initialGroupCount)
+  const [savingGroupCount, setSavingGroupCount] = useState(false)
+
+  const suppliedGroupNumbers = data.register_group_numbers || []
+  const groupNumbers = groupCount > 1 && suppliedGroupNumbers.length === groupCount
+    ? suppliedGroupNumbers
+    : Array.from({ length: groupCount || 0 }, (_, index) => index + 1)
 
   const setEntry = (i, key, val) => setAttendance(prev => prev.map((e, idx) => idx === i ? { ...e, [key]: val } : e))
+
+  const chooseGroupCount = async (count) => {
+    setSavingGroupCount(true)
+    try {
+      await api.updateSession(data.session_id, { register_group_count: count })
+      setGroupCount(count)
+      setEditingGroupCount(false)
+      setAttendance(previous => previous.map(entry => ({
+        ...entry,
+        group: count === 1 ? 1 : entry.group && entry.group <= count ? entry.group : null,
+      })))
+    } catch (error) {
+      alert(`Could not save the session group setup: ${error.message}`)
+    } finally {
+      setSavingGroupCount(false)
+    }
+  }
 
   const handleParse = async () => {
     if (!parseInput.trim()) return
@@ -1417,6 +1465,28 @@ function RegisterCard({ data, onDismiss, onSaved }) {
         </p>
       )}
 
+      {groupCount && !editingGroupCount ? (
+        <div className="flex items-center justify-between gap-2 bg-pool-800/60 border border-pool-700 rounded-xl px-3 py-2">
+          <div>
+            <p className="text-[10px] text-pool-500 uppercase tracking-wide font-semibold">Session format</p>
+            <p className="text-xs text-pool-200 mt-0.5">{groupCount === 1 ? 'Everyone did the same session' : `${groupCount} training groups`}</p>
+          </div>
+          <button onClick={() => setEditingGroupCount(true)} className="text-xs text-blue-300 px-2 py-1.5">Change</button>
+        </div>
+      ) : (
+        <div className="bg-amber-900/15 border border-amber-800/40 rounded-xl p-3">
+          <p className="text-xs font-semibold text-amber-200">How many different programmes were done?</p>
+          <div className="grid grid-cols-3 gap-1.5 mt-2">
+            {[[1, 'Everyone'], [2, '2 groups'], [3, '3 groups']].map(([count, label]) => (
+              <button key={count} onClick={() => chooseGroupCount(count)} disabled={savingGroupCount}
+                className="bg-pool-700 border border-pool-600 rounded-lg px-2 py-2 text-[11px] font-semibold disabled:opacity-50">
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Freetext parse */}
       <div className="space-y-1.5">
         <p className="text-xs text-pool-400">Describe who's here (or edit manually below):</p>
@@ -1451,12 +1521,15 @@ function RegisterCard({ data, onDismiss, onSaved }) {
               {e.present ? '✓' : '×'}
             </button>
             <span className="flex-1 text-xs font-medium">{e.name}</span>
+            {e.usual_for_slot && (
+              <span className="text-[10px] text-teal-300">Usual</span>
+            )}
             {e.exception_reason && !e.present && (
               <span className="text-xs text-amber-400">{e.exception_reason}</span>
             )}
-            {e.present && (
+            {e.present && groupCount > 1 && (
               <div className="flex gap-1 shrink-0">
-                {[1, 2, 3].map(g => (
+                {groupNumbers.map(g => (
                   <button
                     key={g}
                     onClick={() => setEntry(i, 'group', e.group === g ? null : g)}
@@ -1484,10 +1557,10 @@ function RegisterCard({ data, onDismiss, onSaved }) {
         </button>
         <button
           onClick={handleSubmit}
-          disabled={saving}
+          disabled={saving || !groupCount}
           className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold transition-colors"
         >
-          {saving ? 'Saving…' : 'Save register'}
+          {!groupCount ? 'Choose session groups first' : saving ? 'Saving…' : 'Save register'}
         </button>
       </div>
     </div>

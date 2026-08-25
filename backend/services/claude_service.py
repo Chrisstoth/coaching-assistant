@@ -184,6 +184,8 @@ What this system can do — you have a live database:
 - Swimmer records, times, observations, loads, qualifications and plans are real and persistent.
 - Use the read-only database tools proactively instead of guessing or asking the coach to repeat stored facts.
 - For timetable facts, use get_session_context with the weekday name. Never infer that a stored slot is missing from model context alone.
+- Recurring slot assignments are planning hints only. They do not prove attendance, absence, or that a swimmer completed a session.
+- A session occurrence without a submitted register is not attendance evidence. Only SessionEntry register data can support claims that a swimmer attended or missed a session.
 - Retrieve the smallest useful slice: resolve the swimmer first, then request only the times, observations, load or planning state needed.
 - Never claim that a database change has been made. Conversational changes are proposed and applied only through the app's confirmation or draft-review workflow.
 - Specialist session, macro, meso, micro and taper requests are handled by structured planning workflows outside this general conversation.
@@ -518,7 +520,7 @@ def get_tools() -> list:
         },
         {
             "name": "get_session_context",
-            "description": "Get pool slot, expected swimmer and recent-load context for a day or time of day.",
+            "description": "Get pool slot, usual slot assignments, explicit register state and recent-load context for a day or time of day. Slot assignments are not attendance.",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -2192,7 +2194,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
         label = slot.label or slot.squad or ""
         lines.append(f"\nSESSION SLOT: {day} {slot.time}{course} — {label}")
 
-        # Expected attendees for this slot
+        # Usual timetable assignments for this slot. These are not attendance.
         swimmer_links = (
             db.query(models.SwimmerSlot)
             .filter(models.SwimmerSlot.pool_slot_id == slot.id)
@@ -2200,7 +2202,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
         )
         swimmer_ids = [l.swimmer_id for l in swimmer_links]
         if not swimmer_ids:
-            lines.append("  No swimmers assigned to this slot yet.")
+            lines.append("  No usual swimmer assignments are configured for this slot.")
             continue
 
         swimmers = (
@@ -2209,7 +2211,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
             .order_by(models.Swimmer.name)
             .all()
         )
-        lines.append(f"  Expected attendees ({len(swimmers)}):")
+        lines.append(f"  Usual slot assignments ({len(swimmers)}; planning hint only, not attendance):")
 
         for s in swimmers:
             parts = [f"    {s.name}"]
@@ -2269,7 +2271,15 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
         for s in recent:
             focus = f" [{s.energy_system_focus}]" if s.energy_system_focus else ""
             intent = f" — {s.coach_intent[:80]}" if s.coach_intent else ""
-            lines.append(f"  {s.date} | {s.title or 'Session'}{focus}{intent}")
+            register_count = db.query(models.SessionEntry).filter(
+                models.SessionEntry.session_id == s.id,
+            ).count()
+            register_state = (
+                f"REGISTER SUBMITTED ({register_count} swimmers marked)"
+                if register_count
+                else "NO REGISTER SUBMITTED — do not infer attendance"
+            )
+            lines.append(f"  {s.date} | {s.title or 'Session'}{focus}{intent} | {register_state}")
 
         # Energy system distribution across those sessions
         focus_counts: dict = {}
@@ -2282,7 +2292,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
             lines.append(f"  Distribution: {dist} (of {len(recent)} sessions with focus logged)")
 
     # Per-swimmer energy system exposure over last 2 weeks
-    # For each expected attendee, count sessions attended by focus type
+    # For each usually assigned swimmer, count only explicitly registered attendance by focus type
     swimmer_ids_in_slots = []
     for slot in slots[:3]:
         links = db.query(models.SwimmerSlot).filter(models.SwimmerSlot.pool_slot_id == slot.id).all()
