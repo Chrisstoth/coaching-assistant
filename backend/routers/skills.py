@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
-from backend.services.claude_service import get_client, MODEL, PLANNING_EFFORT
+from backend.services.claude_service import get_client, MODEL, PLANNING_EFFORT, response_text
 from backend.services.availability import availability_ranges
 from backend.services.planning_engine import compact_context, refresh_macro
 
@@ -584,7 +584,7 @@ Design the session now. Output valid JSON only."""
         system=PLAN_SESSION_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response)
 
     # Strip any accidental markdown fences
     if raw.startswith("```"):

@@ -118,6 +118,23 @@ def create_message(*, model: Optional[str] = None, operation: Optional[str] = No
     return response
 
 
+def response_text(response) -> str:
+    """Return the text blocks from a Claude response, ignoring thinking/tool blocks."""
+    parts = []
+    for block in getattr(response, "content", None) or []:
+        if isinstance(block, dict):
+            block_type = block.get("type")
+            value = block.get("text")
+        else:
+            block_type = getattr(block, "type", None)
+            value = getattr(block, "text", None)
+        if (block_type in (None, "text")) and isinstance(value, str):
+            parts.append(value)
+    if not parts:
+        raise ValueError("Claude response did not contain a text block")
+    return "\n".join(parts).strip()
+
+
 def review_session_import(draft: dict) -> dict:
     """Use the fast model as a read-only sanity check after deterministic extraction."""
     compact = {
@@ -4847,7 +4864,7 @@ Rules:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = response.content[0].text.strip()
+    raw = response_text(response)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
