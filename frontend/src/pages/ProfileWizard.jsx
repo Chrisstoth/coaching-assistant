@@ -152,6 +152,7 @@ export default function ProfileWizard() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)  // initial AI opener
   const [sending, setSending] = useState(false)
+  const [pendingReply, setPendingReply] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState(null)
@@ -163,40 +164,106 @@ export default function ProfileWizard() {
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
 
+  const recoverAfterRequestError = useCallback(async (submittedMessages, requestError) => {
+    try {
+      const interviewDraft = await api.getProfileWizardDraft(id)
+      const stored = interviewDraft.messages || []
+      const completedReply = (
+        stored.length === submittedMessages.length + 1
+        && stored.slice(0, -1).every((message, index) => (
+          message.role === submittedMessages[index]?.role
+          && message.content === submittedMessages[index]?.content
+        ))
+        && stored.at(-1)?.role === 'assistant'
+      )
+      if (completedReply) {
+        setMessages(stored)
+        setPendingReply(false)
+        return
+      }
+      if (interviewDraft.awaiting_reply) {
+        setPendingReply(true)
+        return
+      }
+    } catch {
+      // Fall through to the request error while retaining the on-screen answer.
+    }
+    setError(requestError?.name === 'TimeoutError'
+      ? 'The reply is taking longer than expected. Your answer is still here; try the reply again.'
+      : requestError.message)
+  }, [id])
+
   const startInterview = useCallback(async () => {
     setMode('chat')
     setLoading(true)
     setError(null)
     setMessages([])
-    api.profileWizardChat(id, [])
-      .then(data => {
+    setPendingReply(false)
+    try {
+      await api.discardProfileWizardDraft(id)
+      const data = await api.profileWizardChat(id, [])
+      if (data.pending) {
+        setPendingReply(true)
+      } else {
         setMessages([{ role: 'assistant', content: data.reply }])
-        setLoading(false)
-      })
-      .catch(e => {
-        setError(e.message)
-        setLoading(false)
-      })
-  }, [id])
+      }
+    } catch (e) {
+      await recoverAfterRequestError([], e)
+    }
+    setLoading(false)
+  }, [id, recoverAfterRequestError])
 
-  // Load the swimmer first so existing evidence can be offered before an AI interview starts.
+  // Restore a server-side interview draft before showing the start choices.
   useEffect(() => {
     if (!id) return
-    api.getSwimmer(id)
-      .then(data => {
-        setSwimmer(data)
-        if (data.profile_status?.has_profile) {
+    Promise.all([api.getSwimmer(id), api.getProfileWizardDraft(id)])
+      .then(([swimmerData, interviewDraft]) => {
+        setSwimmer(swimmerData)
+        if (interviewDraft.messages?.length || interviewDraft.awaiting_reply) {
+          setMessages(interviewDraft.messages || [])
+          setPendingReply(Boolean(interviewDraft.awaiting_reply))
+          setMode('chat')
+        } else if (swimmerData.profile_status?.has_profile) {
           setMode('choice')
-          setLoading(false)
         } else {
           startInterview()
+          return
         }
+        setLoading(false)
       })
       .catch(e => {
         setError(e.message)
         setLoading(false)
       })
   }, [id, startInterview])
+
+  // A reply may finish after navigation or a dropped browser connection. Poll
+  // the persisted draft so it appears as soon as the server has saved it.
+  useEffect(() => {
+    if (!pendingReply || !id) return undefined
+    let cancelled = false
+    const check = async () => {
+      try {
+        const interviewDraft = await api.getProfileWizardDraft(id)
+        if (cancelled) return
+        if (!interviewDraft.awaiting_reply) {
+          setMessages(interviewDraft.messages || [])
+          setPendingReply(false)
+          if (interviewDraft.messages?.at(-1)?.role !== 'assistant') {
+            setError('The reply did not finish, but your answer is saved. Try the reply again.')
+          }
+        }
+      } catch {
+        // Keep the visible draft and try again; no coach answer is lost.
+      }
+    }
+    check()
+    const timer = window.setInterval(check, 3000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [id, pendingReply])
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -216,12 +283,47 @@ export default function ProfileWizard() {
 
     try {
       const data = await api.profileWizardChat(id, next)
-      setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
+      if (data.pending) {
+        setPendingReply(true)
+      } else {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
+      }
+    } catch (e) {
+      await recoverAfterRequestError(next, e)
+    }
+    setSending(false)
+  }, [id, input, messages, recoverAfterRequestError, sending])
+
+  const retryLastReply = async () => {
+    if (sending || messages.at(-1)?.role !== 'user') return
+    setSending(true)
+    setPendingReply(false)
+    setError(null)
+    try {
+      const data = await api.profileWizardChat(id, messages, true)
+      if (data.pending) {
+        setPendingReply(true)
+      } else {
+        setMessages(previous => [...previous, { role: 'assistant', content: data.reply }])
+      }
+    } catch (e) {
+      await recoverAfterRequestError(messages, e)
+    }
+    setSending(false)
+  }
+
+  const discardInterview = async () => {
+    if (!window.confirm('Discard this unfinished interview and start again? The confirmed swimmer profile will not change.')) return
+    setError(null)
+    try {
+      await api.discardProfileWizardDraft(id)
+      setMessages([])
+      setPendingReply(false)
+      setMode('choice')
     } catch (e) {
       setError(e.message)
     }
-    setSending(false)
-  }, [id, input, messages, sending])
+  }
 
   const saveProfile = async () => {
     if (saving || saved) return
@@ -229,6 +331,7 @@ export default function ProfileWizard() {
     setError(null)
     try {
       await api.profileWizardSave(id, messages)
+      setPendingReply(false)
       setSaved(true)
     } catch (e) {
       setError(e.message)
@@ -270,7 +373,7 @@ export default function ProfileWizard() {
     }
   }
 
-  const canSave = messages.length >= 6 && !saved // at least a few exchanges
+  const canSave = messages.length >= 6 && messages.at(-1)?.role === 'assistant' && !saved // at least a few exchanges
 
   return (
     <div className="fixed inset-0 bg-pool-950 flex flex-col max-w-lg mx-auto">
@@ -367,6 +470,22 @@ export default function ProfileWizard() {
           />
         )}
 
+        {mode === 'chat' && messages.length > 0 && !saved && (
+          <div className="flex items-center justify-between gap-3 bg-pool-900/60 border border-pool-700 rounded-xl px-3 py-2">
+            <p className="text-[10px] text-pool-500 leading-relaxed">
+              Interview draft saved automatically — you can leave and return here.
+            </p>
+            <button
+              type="button"
+              onClick={discardInterview}
+              disabled={sending || pendingReply}
+              className="shrink-0 text-[10px] text-pool-400 underline disabled:opacity-40"
+            >
+              Start over
+            </button>
+          </div>
+        )}
+
         {loading && (
           <div className="flex justify-start">
             <div className="bg-pool-700 rounded-2xl rounded-bl-sm px-4 py-3">
@@ -399,9 +518,28 @@ export default function ProfileWizard() {
           </div>
         )}
 
+        {mode === 'chat' && pendingReply && !sending && (
+          <div className="bg-amber-900/20 border border-amber-800/50 rounded-xl px-3 py-2.5">
+            <div className="flex items-center gap-2">
+              <ThinkingDots />
+              <p className="text-xs text-amber-200">Your answer is saved. Waiting for the reply…</p>
+            </div>
+            <p className="text-[10px] text-pool-500 mt-1.5">You can leave this screen; the interview will resume here.</p>
+          </div>
+        )}
+
         {error && (
           <div className="bg-red-900/20 border border-red-800/50 rounded-xl px-3 py-2 text-xs text-red-300">
             {error}
+            {mode === 'chat' && messages.at(-1)?.role === 'user' && !sending && !pendingReply && (
+              <button
+                type="button"
+                onClick={retryLastReply}
+                className="block mt-2 text-red-200 underline font-semibold"
+              >
+                Try the reply again
+              </button>
+            )}
           </div>
         )}
 
@@ -430,6 +568,7 @@ export default function ProfileWizard() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKey}
+              disabled={pendingReply}
               placeholder="Reply…"
               rows={1}
               className="flex-1 bg-transparent text-sm text-pool-100 placeholder-pool-500 resize-none focus:outline-none leading-relaxed"
@@ -441,7 +580,7 @@ export default function ProfileWizard() {
             />
             <button
               onClick={send}
-              disabled={!input.trim() || sending}
+              disabled={!input.trim() || sending || pendingReply}
               className="shrink-0 w-8 h-8 flex items-center justify-center rounded-full bg-accent-600 disabled:opacity-40 transition-opacity"
             >
               <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">

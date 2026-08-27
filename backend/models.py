@@ -740,6 +740,18 @@ class ProfileConversation(Base):
     swimmer = relationship("Swimmer", back_populates="profile_conversations")
 
 
+class ProfileWizardDraft(Base):
+    """Recoverable, unconfirmed transcript for the foundation interview."""
+    __tablename__ = "profile_wizard_drafts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False, unique=True, index=True)
+    messages = Column(JSON, nullable=False, default=list)
+    awaiting_reply = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 # ---------------------------------------------------------------------------
 # Coaching context — coach's philosophy, squad state, targets
 # ---------------------------------------------------------------------------

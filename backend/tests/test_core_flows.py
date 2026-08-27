@@ -49,6 +49,61 @@ class CoreFlowTests(unittest.TestCase):
         engine.dispose()
         Path(_db_file.name).unlink(missing_ok=True)
 
+    def test_profile_wizard_draft_is_recoverable_without_duplicate_ai_call(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Recoverable Interview Swimmer", squad="Test")
+            db.add(swimmer)
+            db.commit()
+            swimmer_id = swimmer.id
+
+        opening_response = SimpleNamespace(content=[SimpleNamespace(text="Opening question?")])
+        with patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = opening_response
+            opening = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers,
+                json={"messages": []},
+            )
+        self.assertEqual(opening.status_code, 200, opening.text)
+
+        history = [
+            {"role": "assistant", "content": "Opening question?"},
+            {"role": "user", "content": "A detailed coach answer."},
+        ]
+        reply_response = SimpleNamespace(content=[SimpleNamespace(text="Tailored follow-up?")])
+        with patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = reply_response
+            reply = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers,
+                json={"messages": history},
+            )
+        self.assertEqual(reply.status_code, 200, reply.text)
+
+        restored = self.client.get(
+            f"/swimmers/{swimmer_id}/profile-wizard/draft",
+            headers=self.headers,
+        )
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertEqual(restored.json()["messages"][-1]["content"], "Tailored follow-up?")
+        self.assertFalse(restored.json()["awaiting_reply"])
+
+        with patch("backend.services.claude_service.get_client") as client:
+            recovered = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers,
+                json={"messages": history},
+            )
+            client.assert_not_called()
+        self.assertTrue(recovered.json()["recovered"])
+        self.assertEqual(recovered.json()["reply"], "Tailored follow-up?")
+
+        discarded = self.client.delete(
+            f"/swimmers/{swimmer_id}/profile-wizard/draft",
+            headers=self.headers,
+        )
+        self.assertEqual(discarded.status_code, 204, discarded.text)
+
     def test_chat_register_resolves_exact_recurring_slot_without_ai_guessing(self):
         target_date = date.today()
         day_name = target_date.strftime("%A")

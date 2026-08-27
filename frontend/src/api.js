@@ -21,11 +21,11 @@ export function clearToken() {
   localStorage.removeItem(LEGACY_TOKEN_KEY)
 }
 
-async function request(method, path, body = null, isFormData = false) {
+async function request(method, path, body = null, isFormData = false, options = {}) {
   const token = getToken()
   const headers = isFormData ? {} : { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const opts = { method, headers }
+  const opts = { method, headers, ...options }
   if (body) opts.body = isFormData ? body : JSON.stringify(body)
   const res = await fetch(`${BASE}${path}`, opts)
   if (res.status === 401) {
@@ -409,8 +409,18 @@ export const api = {
   },
 
   // Profile Wizard
-  profileWizardChat: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/chat`, { messages }),
+  profileWizardChat: (swimmerId, messages, retry = false) => request(
+    'POST',
+    `/swimmers/${swimmerId}/profile-wizard/chat`,
+    { messages, retry },
+    false,
+    typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+      ? { signal: AbortSignal.timeout(60000) }
+      : {},
+  ),
   profileWizardSave: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/save`, { messages }),
+  getProfileWizardDraft: (swimmerId) => request('GET', `/swimmers/${swimmerId}/profile-wizard/draft`),
+  discardProfileWizardDraft: (swimmerId) => request('DELETE', `/swimmers/${swimmerId}/profile-wizard/draft`),
   previewFoundationFromEvidence: (swimmerId) => request('POST', `/swimmers/${swimmerId}/profile-wizard/draft-existing`, {}),
   saveReviewedFoundation: (swimmerId, data) => request('POST', `/swimmers/${swimmerId}/profile-wizard/save-draft`, data),
 

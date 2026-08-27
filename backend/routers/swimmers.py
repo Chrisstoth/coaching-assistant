@@ -177,6 +177,7 @@ def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     db.query(models.TrainingHistoryNarrative).filter(models.TrainingHistoryNarrative.swimmer_id == swimmer_id).delete()
     db.query(models.AIAnalysis).filter(models.AIAnalysis.swimmer_id == swimmer_id).delete()
     db.query(models.ProfileConversation).filter(models.ProfileConversation.swimmer_id == swimmer_id).delete()
+    db.query(models.ProfileWizardDraft).filter(models.ProfileWizardDraft.swimmer_id == swimmer_id).delete()
 
 
 # ---------------------------------------------------------------------------
@@ -509,7 +510,8 @@ class WizardMessage(BaseModel):
     content: str
 
 class WizardChatRequest(BaseModel):
-    messages: list[WizardMessage] = []
+    messages: list[WizardMessage] = Field(default_factory=list)
+    retry: bool = False
 
 class WizardSaveRequest(BaseModel):
     messages: list[WizardMessage]
@@ -592,11 +594,73 @@ def wizard_save_draft(
 
 @router.post("/{swimmer_id}/profile-wizard/chat")
 def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depends(get_db)):
-    """Stateless wizard chat — send full message history, get next AI response."""
+    """Generate the next turn while keeping an unconfirmed recoverable draft."""
     swimmer = _get_or_404(swimmer_id, db)
     messages = [m.model_dump() for m in body.messages]
-    reply = claude_service.wizard_chat(swimmer, messages, db)
+    draft = db.query(models.ProfileWizardDraft).filter(
+        models.ProfileWizardDraft.swimmer_id == swimmer.id,
+    ).first()
+    stored_messages = list(draft.messages or []) if draft else []
+
+    # A request can finish on the server after the browser connection has gone.
+    # Replaying the submitted history recovers that reply without another AI call.
+    if (
+        len(stored_messages) == len(messages) + 1
+        and stored_messages[:-1] == messages
+        and stored_messages[-1].get("role") == "assistant"
+    ):
+        return {"reply": stored_messages[-1].get("content", ""), "recovered": True}
+
+    if draft and draft.awaiting_reply and stored_messages == messages and not body.retry:
+        return {"pending": True}
+
+    if not draft:
+        draft = models.ProfileWizardDraft(swimmer_id=swimmer.id, messages=[])
+        db.add(draft)
+    draft.messages = messages
+    draft.awaiting_reply = True
+    db.commit()
+
+    try:
+        reply = claude_service.wizard_chat(swimmer, messages, db)
+    except Exception as exc:
+        draft.awaiting_reply = False
+        db.commit()
+        raise HTTPException(
+            status_code=502,
+            detail="The interview reply did not complete. Your answer is saved; retry when ready.",
+        ) from exc
+
+    draft.messages = [*messages, {"role": "assistant", "content": reply}]
+    draft.awaiting_reply = False
+    db.commit()
     return {"reply": reply}
+
+
+@router.get("/{swimmer_id}/profile-wizard/draft")
+def wizard_get_draft(swimmer_id: int, db: DBSession = Depends(get_db)):
+    """Return the unfinished interview without changing the swimmer profile."""
+    _get_or_404(swimmer_id, db)
+    draft = db.query(models.ProfileWizardDraft).filter(
+        models.ProfileWizardDraft.swimmer_id == swimmer_id,
+    ).first()
+    if not draft:
+        return {"messages": [], "awaiting_reply": False, "updated_at": None}
+    return {
+        "messages": list(draft.messages or []),
+        "awaiting_reply": bool(draft.awaiting_reply),
+        "updated_at": draft.updated_at,
+    }
+
+
+@router.delete("/{swimmer_id}/profile-wizard/draft", status_code=204)
+def wizard_delete_draft(swimmer_id: int, db: DBSession = Depends(get_db)):
+    """Discard only the unfinished interview; confirmed data remains untouched."""
+    _get_or_404(swimmer_id, db)
+    db.query(models.ProfileWizardDraft).filter(
+        models.ProfileWizardDraft.swimmer_id == swimmer_id,
+    ).delete()
+    db.commit()
 
 
 @router.post("/{swimmer_id}/profile-wizard/save")
@@ -609,12 +673,17 @@ def wizard_save(swimmer_id: int, body: WizardSaveRequest, db: DBSession = Depend
     # Reassessments add to the foundation rather than replacing areas which
     # were not discussed in this conversation.
     preserve_existing = bool(swimmer.physical_profile or swimmer.psychological_profile)
-    return claude_service.save_wizard_profile(
+    saved = claude_service.save_wizard_profile(
         swimmer,
         messages,
         db,
         preserve_existing=preserve_existing,
     )
+    db.query(models.ProfileWizardDraft).filter(
+        models.ProfileWizardDraft.swimmer_id == swimmer_id,
+    ).delete()
+    db.commit()
+    return saved
 
 
 # ---------------------------------------------------------------------------
