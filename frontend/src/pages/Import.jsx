@@ -2,11 +2,14 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
+import { calendarDayLabel, localDateIso, mondayFor } from '../calendarDates'
 
 export default function Import() {
+  const { energy } = useSessionPresentation()
   const [searchParams] = useSearchParams()
   const requestedTab = searchParams.get('tab')
-  const [tab, setTab] = useState(['combined', 'excel', 'photo'].includes(requestedTab) ? requestedTab : 'combined')
+  const [tab, setTab] = useState(['combined', 'excel', 'photo', 'profiles'].includes(requestedTab) ? requestedTab : 'combined')
   const [result, setResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [plannedSessions, setPlannedSessions] = useState([])
@@ -27,11 +30,12 @@ export default function Import() {
       <h1 className="text-xl font-bold pt-2">Import Data</h1>
 
       {/* Tab selector */}
-      <div className="grid grid-cols-3 bg-pool-800 rounded-xl p-1 gap-1">
+      <div className="grid grid-cols-2 sm:grid-cols-4 bg-pool-800 rounded-xl p-1 gap-1">
         {[
           { id: 'combined', label: 'Squad + Times' },
           { id: 'excel', label: 'Sessions' },
           { id: 'photo', label: 'Photo' },
+          { id: 'profiles', label: 'Profiles' },
         ].map((t) => (
           <button
             key={t.id}
@@ -52,6 +56,7 @@ export default function Import() {
         sessionId: searchParams.get('session'),
       }} />}
       {tab === 'photo' && <PhotoImport setResult={setResult} setLoading={setLoading} loading={loading} plannedSessions={plannedSessions} />}
+      {tab === 'profiles' && <FoundationProfileImport setResult={setResult} />}
 
       {result && (
         <div className="bg-pool-800 rounded-xl p-4 text-sm space-y-1">
@@ -59,6 +64,138 @@ export default function Import() {
           <pre className="text-pool-300 text-xs whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
         </div>
       )}
+    </div>
+  )
+}
+
+
+function FoundationProfileImport({ setResult }) {
+  const [file, setFile] = useState(null)
+  const [preview, setPreview] = useState(null)
+  const [selected, setSelected] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const review = async () => {
+    if (!file) return
+    setLoading(true)
+    setError('')
+    setResult(null)
+    try {
+      const parsed = JSON.parse(await file.text())
+      const data = await api.previewFoundationProfileImport(parsed)
+      setPreview(data)
+      setSelected(data.rows.filter(row => row.can_import).map(row => row.index))
+    } catch (e) {
+      setError(e instanceof SyntaxError ? 'That file is not valid JSON.' : (e?.message || 'Could not review the profile package.'))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const confirm = async () => {
+    if (!preview || selected.length === 0) return
+    setSaving(true)
+    setError('')
+    setResult(null)
+    try {
+      const profiles = preview.rows
+        .filter(row => selected.includes(row.index) && row.can_import)
+        .map(row => ({
+          swimmer_name: row.matched_swimmer_name || row.swimmer_name,
+          review_status: 'coach_confirmed',
+          physical: row.physical,
+          psychological: row.psychological,
+          notes: row.notes,
+        }))
+      const result = await api.confirmFoundationProfileImport({
+        schema_version: preview.schema_version,
+        source: preview.source,
+        generated_at: preview.generated_at,
+        profiles,
+      })
+      setResult(result)
+      setPreview(null)
+      setFile(null)
+      setSelected([])
+    } catch (e) {
+      setError(e?.message || 'Could not import the profile package.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const toggle = (index) => {
+    setSelected(current => current.includes(index)
+      ? current.filter(value => value !== index)
+      : [...current, index])
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="bg-accent-900/20 border border-accent-700/40 rounded-xl p-3">
+        <p className="text-sm font-semibold text-accent-300">Profile Builder import</p>
+        <p className="text-xs text-pool-400 mt-1 leading-relaxed">
+          Upload the JSON produced by the dedicated $lanewatch-profile-builder agent. LaneWatch fills blank foundation fields only; existing confirmed information is never overwritten.
+        </p>
+        <p className="text-[10px] text-green-300 mt-2">No in-app AI call or token cost.</p>
+      </div>
+
+      {!preview ? (
+        <>
+          <label className="block bg-pool-800 rounded-xl p-4 text-center cursor-pointer border-2 border-dashed border-pool-600 hover:border-accent-500 transition-colors">
+            <input
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={event => { setFile(event.target.files[0] || null); setError('') }}
+            />
+            <p className="text-sm text-pool-200">{file?.name || 'Tap to select foundation-profiles.json'}</p>
+            <p className="text-[11px] text-pool-500 mt-1">Canonical Profile Builder JSON</p>
+          </label>
+          <button onClick={review} disabled={!file || loading}
+            className="w-full bg-accent-600 disabled:opacity-40 rounded-xl py-3 text-sm font-semibold">
+            {loading ? 'Checking profiles…' : 'Review profile matches'}
+          </button>
+        </>
+      ) : (
+        <>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-pool-800 rounded-lg p-2"><p className="text-lg font-bold">{preview.summary.ready}</p><p className="text-[10px] text-pool-500">Ready</p></div>
+            <div className="bg-pool-800 rounded-lg p-2"><p className="text-lg font-bold">{preview.summary.fields_to_add}</p><p className="text-[10px] text-pool-500">Fields to add</p></div>
+            <div className="bg-pool-800 rounded-lg p-2"><p className="text-lg font-bold">{preview.summary.with_conflicts}</p><p className="text-[10px] text-pool-500">With conflicts</p></div>
+          </div>
+
+          <div className="max-h-[52vh] overflow-y-auto space-y-2 pr-1">
+            {preview.rows.map(row => (
+              <label key={row.index} className={`flex items-start gap-3 rounded-xl border p-3 ${row.can_import ? 'bg-pool-800 border-pool-600 cursor-pointer' : 'bg-pool-900/30 border-pool-700 opacity-70'}`}>
+                <input type="checkbox" checked={selected.includes(row.index)} disabled={!row.can_import} onChange={() => toggle(row.index)} className="mt-1" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">{row.swimmer_name}</p>
+                  <p className="text-xs text-pool-400 mt-0.5">
+                    {row.matched_swimmer_name ? `Matched ${row.matched_swimmer_name}` : 'Not matched'}
+                    {row.squad ? ` · ${row.squad}` : ''}
+                  </p>
+                  {row.can_import && <p className="text-[11px] text-green-300 mt-1">{row.fillable_fields.length} blank field{row.fillable_fields.length === 1 ? '' : 's'} ready to add</p>}
+                  {row.conflicts.length > 0 && <p className="text-[11px] text-amber-300 mt-1">Preserving {row.conflicts.length} existing field{row.conflicts.length === 1 ? '' : 's'}</p>}
+                  {row.errors.map((message, index) => <p key={index} className="text-[11px] text-red-300 mt-1">{message}</p>)}
+                  {row.warnings.filter(message => !message.includes('existing field')).map((message, index) => <p key={index} className="text-[11px] text-amber-300 mt-1">{message}</p>)}
+                </div>
+              </label>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <button onClick={() => { setPreview(null); setSelected([]) }} className="flex-1 border border-pool-600 rounded-xl py-2.5 text-sm font-semibold">Choose another</button>
+            <button onClick={confirm} disabled={saving || selected.length === 0}
+              className="flex-[1.4] bg-accent-600 disabled:opacity-40 rounded-xl py-2.5 text-sm font-semibold">
+              {saving ? 'Importing…' : `Import ${selected.length} profile${selected.length === 1 ? '' : 's'}`}
+            </button>
+          </div>
+        </>
+      )}
+      {error && <p className="text-xs text-red-300">{error}</p>}
     </div>
   )
 }
@@ -371,6 +508,53 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
   const [draft, setDraft] = useState(null)
   const [aiCheck, setAiCheck] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [selectedTarget, setSelectedTarget] = useState(null)
+  const [dateTargets, setDateTargets] = useState([])
+  const [targetsLoading, setTargetsLoading] = useState(false)
+  const [targetsError, setTargetsError] = useState('')
+  const targetLocked = Boolean(importContext?.date || importContext?.slotId || importContext?.sessionId)
+
+  useEffect(() => {
+    if (!preview || targetLocked || !draft?.date) {
+      setDateTargets([])
+      setTargetsError('')
+      return
+    }
+
+    let cancelled = false
+    const [year, month, day] = draft.date.split('-').map(Number)
+    const selectedDate = new Date(year, month - 1, day, 12)
+    if (Number.isNaN(selectedDate.getTime())) {
+      setDateTargets([])
+      return
+    }
+
+    setTargetsLoading(true)
+    setTargetsError('')
+    api.getCalendar(localDateIso(mondayFor(selectedDate)))
+      .then(days => {
+        if (cancelled) return
+        const matchingDay = days.find(calendarDay => calendarDay.date === draft.date)
+        setDateTargets((matchingDay?.items || []).filter(item => item.status !== 'dismissed'))
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setDateTargets([])
+          setTargetsError(error?.message || 'Could not load sessions for this date.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setTargetsLoading(false)
+      })
+
+    return () => { cancelled = true }
+  }, [preview, targetLocked, draft?.date])
+
+  const targetKey = (target) => {
+    if (!target) return 'standalone'
+    if (target.session_id) return `session-${target.session_id}`
+    return `slot-${target.pool_slot_id || target.slot_id}`
+  }
 
   const extract = async () => {
     if (!file) return
@@ -380,6 +564,7 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
       const res = await api.importExcel(file, aiCheck, importContext)
       setPreview(res)
       setDraft(JSON.parse(JSON.stringify(res.draft)))
+      setSelectedTarget(res.suggested_target || null)
     } catch (e) {
       setResult({ error: e.message })
     } finally {
@@ -397,16 +582,46 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
     }))
   }
 
+  const changeDate = (value) => {
+    setSelectedTarget(null)
+    setDraft(current => ({ ...current, date: value, pool_slot_id: null }))
+  }
+
+  const chooseTarget = (target) => {
+    if (target?.status === 'cancelled') return
+    if (!target) {
+      setSelectedTarget(null)
+      setDraft(current => ({ ...current, pool_slot_id: null }))
+      return
+    }
+    const poolSlotId = target.pool_slot_id || target.slot_id || null
+    setSelectedTarget({
+      ...target,
+      pool_slot_id: poolSlotId,
+      can_import: true,
+    })
+    setDraft(current => ({
+      ...current,
+      date: target.date || current.date,
+      start_time: target.time || current.start_time,
+      end_time: target.end_time || current.end_time,
+      squad: target.squad || current.squad,
+      course: target.course || current.course,
+      pool_slot_id: poolSlotId,
+    }))
+  }
+
   const save = async () => {
     if (!draft) return
     setSaving(true)
     setResult(null)
     try {
-      const targetId = preview?.suggested_target?.can_import
-        ? preview.suggested_target.session_id
+      const saveTarget = targetLocked ? preview?.suggested_target : selectedTarget
+      const targetId = saveTarget?.can_import !== false
+        ? saveTarget?.session_id || null
         : null
-      const session = await api.confirmExcelImport(draft, targetId)
-      window.location.href = `/sessions/${session.id}/register`
+      const session = await api.confirmExcelImport(draft, targetId, aiCheck)
+      window.location.replace(`/sessions/${session.id}/register`)
     } catch (e) {
       setResult({ error: e.message })
       setSaving(false)
@@ -446,7 +661,7 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
             className="mt-0.5"
           />
           <span className="text-xs text-pool-400 leading-relaxed">
-            Run a low-cost AI consistency check after extraction. It flags possible errors but never changes the plan.
+            Analyse the session: check the extraction, estimate energy-system emphasis from work/rest structure, and prepare personalised swimmer watchpoints.
           </span>
         </label>
         <button
@@ -460,13 +675,13 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
     )
   }
 
-  const target = preview.suggested_target
-  const blocked = target?.can_import === false || preview.context_match === false
+  const target = targetLocked ? preview.suggested_target : selectedTarget
+  const blocked = target?.can_import === false || (targetLocked && preview.context_match === false)
   return (
     <div className="space-y-3">
       <p className="text-pool-300 text-sm font-semibold">Review extracted session</p>
 
-      {target && (
+      {targetLocked && target && (
         <div className={`rounded-xl border p-3 ${blocked ? 'bg-red-900/20 border-red-800/60' : 'bg-emerald-900/20 border-emerald-700/50'}`}>
           <p className={`text-xs font-semibold ${blocked ? 'text-red-300' : 'text-emerald-300'}`}>
             {blocked ? 'Cancelled session matched' : target.session_id ? 'Existing session matched' : 'Timetable slot matched'}
@@ -475,6 +690,79 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
             {target.label || 'Scheduled session'} · {target.date} at {target.time}
           </p>
           {!blocked && <p className="text-xs text-pool-400 mt-1">The plan will be linked here automatically.</p>}
+        </div>
+      )}
+
+      {!targetLocked && (
+        <div className="bg-pool-800 rounded-xl p-3 space-y-3 border border-pool-700">
+          <div>
+            <p className="text-xs font-semibold text-pool-200">Choose the date and session</p>
+            <p className="text-[11px] text-pool-500 mt-1">The workbook suggestion is selected initially. You can attach the plan to a different timetable occurrence before saving.</p>
+          </div>
+
+          <label className="block">
+            <span className="block text-xs text-pool-400 mb-1">Session date</span>
+            <input
+              type="date"
+              value={draft.date || ''}
+              onChange={(event) => changeDate(event.target.value)}
+              className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+            />
+          </label>
+
+          {draft.date && (
+            <div className="space-y-2">
+              <p className="text-[11px] text-pool-400">{calendarDayLabel(draft.date)}</p>
+              {targetsLoading && <p className="text-xs text-pool-500">Loading timetable sessions…</p>}
+              {targetsError && <p className="text-xs text-red-300">{targetsError}</p>}
+              {!targetsLoading && !targetsError && dateTargets.length === 0 && (
+                <p className="text-xs text-pool-500">No timetable sessions are scheduled on this date.</p>
+              )}
+              {!targetsLoading && dateTargets.map(item => {
+                const itemTarget = { ...item, date: draft.date, pool_slot_id: item.slot_id }
+                const isSelected = targetKey(selectedTarget) === targetKey(itemTarget)
+                const isCancelled = item.status === 'cancelled'
+                return (
+                  <button
+                    type="button"
+                    key={targetKey(itemTarget)}
+                    onClick={() => chooseTarget(itemTarget)}
+                    disabled={isCancelled}
+                    className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                      isCancelled
+                        ? 'border-pool-700 bg-pool-900/40 opacity-60'
+                        : isSelected
+                          ? 'border-accent-500 bg-accent-900/20'
+                          : 'border-pool-600 bg-pool-700 hover:border-pool-500'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-pool-200">{item.label || item.title || 'Scheduled session'}</p>
+                        <p className="text-xs text-pool-400 mt-0.5">{item.time || 'Time not set'}{item.end_time ? `–${item.end_time}` : ''}{item.squad ? ` · ${item.squad}` : ''}</p>
+                      </div>
+                      <span className={`text-[10px] rounded-full px-2 py-1 ${isCancelled ? 'bg-pool-700 text-pool-400' : 'bg-pool-600 text-pool-300'}`}>
+                        {isCancelled ? 'Cancelled' : item.session_id ? item.status : 'Timetable'}
+                      </span>
+                    </div>
+                  </button>
+                )
+              })}
+
+              <button
+                type="button"
+                onClick={() => chooseTarget(null)}
+                className={`w-full text-left rounded-lg border p-3 transition-colors ${
+                  selectedTarget === null
+                    ? 'border-accent-500 bg-accent-900/20'
+                    : 'border-pool-600 bg-pool-700 hover:border-pool-500'
+                }`}
+              >
+                <p className="text-sm font-medium text-pool-200">New standalone session</p>
+                <p className="text-xs text-pool-400 mt-0.5">Use this date without linking to a timetable occurrence.</p>
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -495,18 +783,44 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
         </div>
       )}
 
+      {draft.energy_analysis && (
+        <div className="bg-teal-900/20 border border-teal-700/40 rounded-xl p-3 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-semibold text-teal-300">Estimated prescribed dose</p>
+            <span className="text-[10px] uppercase text-teal-200">{draft.energy_analysis.confidence || 'estimated'} confidence</span>
+          </div>
+          <p className="text-sm text-pool-200">{draft.energy_analysis.primary_emphasis || energy(draft.energy_system_focus).label}</p>
+          <p className="text-xs text-pool-400">Density: {draft.energy_analysis.density || 'unclear'} · AI estimate for coach review, not measured swimmer fatigue.</p>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(draft.groups?.['1']?.volume_breakdown || {}).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (
+              <span key={zone} className="text-[10px] bg-pool-800 border border-pool-700 rounded-full px-2 py-1 text-pool-300">
+                {energy(zone).label} · {Number(value).toLocaleString()}m
+              </span>
+            ))}
+          </div>
+          {draft.energy_analysis.assumptions?.length > 0 && (
+            <details>
+              <summary className="text-[11px] text-pool-500 cursor-pointer">Review assumptions</summary>
+              {draft.energy_analysis.assumptions.map((item, index) => <p key={index} className="text-[11px] text-pool-400 mt-1">• {item}</p>)}
+            </details>
+          )}
+        </div>
+      )}
+
       <div className="bg-pool-800 rounded-xl p-3 space-y-3">
         <label className="block">
           <span className="block text-xs text-pool-400 mb-1">Title</span>
           <input value={draft.title || ''} onChange={(e) => setDraft({...draft, title: e.target.value})}
             className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
         </label>
-        <div className="grid grid-cols-3 gap-2">
-          <label className="block">
-            <span className="block text-xs text-pool-400 mb-1">Date</span>
-            <input type="date" value={draft.date || ''} onChange={(e) => setDraft({...draft, date: e.target.value})}
-              className="w-full bg-pool-700 rounded-lg px-2 py-2 text-xs border border-pool-600" />
-          </label>
+        <div className={`grid ${targetLocked ? 'grid-cols-3' : 'grid-cols-2'} gap-2`}>
+          {targetLocked && (
+            <label className="block">
+              <span className="block text-xs text-pool-400 mb-1">Date</span>
+              <input type="date" value={draft.date || ''} disabled
+                className="w-full bg-pool-700 opacity-60 rounded-lg px-2 py-2 text-xs border border-pool-600" />
+            </label>
+          )}
           <label className="block">
             <span className="block text-xs text-pool-400 mb-1">Start</span>
             <input type="time" value={draft.start_time || ''} onChange={(e) => setDraft({...draft, start_time: e.target.value})}
@@ -646,7 +960,7 @@ function PhotoImport({ setResult, setLoading, loading, plannedSessions }) {
 
       setResult({ success: true })
       // Redirect to register
-      window.location.href = `/sessions/${sessionId}/register`
+      window.location.replace(`/sessions/${sessionId}/register`)
     } catch (e) {
       setResult({ error: e.message })
     }

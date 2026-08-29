@@ -205,6 +205,31 @@ def add_exception(swimmer_id: int, body: ExceptionCreate, db: DBSession = Depend
     return _exc_out(exc)
 
 
+@router.put("/swimmers/{swimmer_id}/exceptions/{exc_id}")
+def update_exception(
+    swimmer_id: int,
+    exc_id: int,
+    body: ExceptionCreate,
+    db: DBSession = Depends(get_db),
+):
+    exc = db.query(models.SwimmerException).filter(
+        models.SwimmerException.id == exc_id,
+        models.SwimmerException.swimmer_id == swimmer_id,
+    ).first()
+    if not exc:
+        raise HTTPException(status_code=404, detail="Exception not found")
+    if body.date_to < body.date_from:
+        raise HTTPException(status_code=422, detail="Availability end date must be on or after its start date")
+
+    exc.reason = normalise_reason(body.reason)
+    exc.date_from = body.date_from
+    exc.date_to = body.date_to
+    exc.notes = body.notes
+    db.commit()
+    db.refresh(exc)
+    return _exc_out(exc)
+
+
 @router.delete("/swimmers/{swimmer_id}/exceptions/{exc_id}", status_code=204)
 def delete_exception(swimmer_id: int, exc_id: int, db: DBSession = Depends(get_db)):
     exc = db.query(models.SwimmerException).filter(

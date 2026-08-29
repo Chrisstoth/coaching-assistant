@@ -33,6 +33,7 @@ frontend/.env.local
 # Data / CSV uploads (may contain PII)
 *.csv
 *.xlsx
+profile-imports/
 
 # Claude Code settings
 .claude/

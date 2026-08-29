@@ -1,4 +1,5 @@
 import io
+import re
 from datetime import date, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
@@ -10,7 +11,7 @@ from backend.database import get_db
 from backend import models
 from backend.services import claude_service
 from backend.services.importer import match_or_create_swimmer
-from backend.services.profile_status import build_profile_status
+from backend.services.profile_status import FOUNDATION_AREAS, FOUNDATION_KEY_ALIASES, build_profile_status
 
 router = APIRouter()
 
@@ -53,6 +54,174 @@ class SwimmerUpdate(BaseModel):
 
 class ProfileChatMessage(BaseModel):
     message: str
+
+
+class FoundationImportProfile(BaseModel):
+    swimmer_name: str
+    review_status: str = "draft"
+    physical: dict[str, Optional[str]] = Field(default_factory=dict)
+    psychological: dict[str, Optional[str]] = Field(default_factory=dict)
+    notes: Optional[str] = None
+
+
+class FoundationImportPackage(BaseModel):
+    schema_version: int = 1
+    source: str = "lanewatch-profile-builder"
+    generated_at: Optional[str] = None
+    profiles: list[FoundationImportProfile] = Field(default_factory=list)
+
+
+FOUNDATION_IMPORT_FIELDS = {
+    "physical": tuple(key for section, key, _ in FOUNDATION_AREAS if section == "physical"),
+    "psychological": tuple(key for section, key, _ in FOUNDATION_AREAS if section == "psychological"),
+}
+
+
+def _normalise_swimmer_name(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).casefold()
+
+
+def _clean_foundation_import_fields(section: str, values: dict) -> tuple[dict, list[str]]:
+    allowed = set(FOUNDATION_IMPORT_FIELDS[section])
+    cleaned = {}
+    errors = []
+    for key, value in (values or {}).items():
+        if key not in allowed:
+            if value not in (None, ""):
+                errors.append(f"Unknown {section} field: {key}")
+            continue
+        if value is None:
+            cleaned[key] = None
+            continue
+        text = str(value).strip()
+        if len(text) > 2500:
+            errors.append(f"{section}.{key} exceeds 2,500 characters")
+            continue
+        cleaned[key] = text or None
+    for key in FOUNDATION_IMPORT_FIELDS[section]:
+        cleaned.setdefault(key, None)
+    return cleaned, errors
+
+
+def _prepare_foundation_import(body: FoundationImportPackage, db: DBSession) -> dict:
+    if body.schema_version != 1:
+        raise HTTPException(status_code=422, detail="Unsupported foundation profile schema version")
+    if not body.profiles:
+        raise HTTPException(status_code=422, detail="No swimmer profiles were supplied")
+    if len(body.profiles) > 100:
+        raise HTTPException(status_code=422, detail="A maximum of 100 swimmer profiles can be imported at once")
+
+    roster = db.query(models.Swimmer).order_by(models.Swimmer.name).all()
+    by_name: dict[str, list[models.Swimmer]] = {}
+    for swimmer in roster:
+        by_name.setdefault(_normalise_swimmer_name(swimmer.name), []).append(swimmer)
+
+    seen_names = set()
+    rows = []
+    for index, profile in enumerate(body.profiles):
+        errors = []
+        warnings = []
+        name_key = _normalise_swimmer_name(profile.swimmer_name)
+        if not name_key:
+            errors.append("Swimmer name is missing")
+        elif name_key in seen_names:
+            errors.append("This swimmer appears more than once in the import")
+        else:
+            seen_names.add(name_key)
+
+        matches = by_name.get(name_key, [])
+        swimmer = matches[0] if len(matches) == 1 else None
+        if not matches and name_key:
+            errors.append("No exact roster match")
+        elif len(matches) > 1:
+            errors.append("More than one roster swimmer has this name")
+
+        physical, physical_errors = _clean_foundation_import_fields("physical", profile.physical)
+        psychological, psychological_errors = _clean_foundation_import_fields(
+            "psychological", profile.psychological,
+        )
+        errors.extend(physical_errors)
+        errors.extend(psychological_errors)
+        if profile.review_status != "coach_confirmed":
+            errors.append("Profile has not been marked coach_confirmed")
+
+        fillable_fields = []
+        conflicts = []
+        incoming_count = 0
+        if swimmer:
+            stores = {
+                "physical": swimmer.physical_profile if isinstance(swimmer.physical_profile, dict) else {},
+                "psychological": (
+                    swimmer.psychological_profile
+                    if isinstance(swimmer.psychological_profile, dict)
+                    else {}
+                ),
+            }
+            incoming = {"physical": physical, "psychological": psychological}
+            for section, fields in FOUNDATION_IMPORT_FIELDS.items():
+                for field in fields:
+                    value = incoming[section].get(field)
+                    if not value:
+                        continue
+                    incoming_count += 1
+                    accepted_keys = (field, *FOUNDATION_KEY_ALIASES.get(field, ()))
+                    existing_value = next(
+                        (
+                            stores[section].get(key)
+                            for key in accepted_keys
+                            if stores[section].get(key) is not None
+                            and str(stores[section].get(key)).strip()
+                        ),
+                        None,
+                    )
+                    field_name = f"{section}.{field}"
+                    if existing_value is not None:
+                        conflicts.append(field_name)
+                    else:
+                        fillable_fields.append(field_name)
+        else:
+            incoming_count = sum(bool(value) for value in physical.values()) + sum(
+                bool(value) for value in psychological.values()
+            )
+
+        if incoming_count == 0:
+            errors.append("No completed foundation fields were supplied")
+        if swimmer and incoming_count > 0 and not fillable_fields:
+            warnings.append("All supplied fields already contain confirmed information")
+        if conflicts:
+            warnings.append(f"{len(conflicts)} existing field(s) will be preserved")
+
+        rows.append({
+            "index": index,
+            "swimmer_name": profile.swimmer_name.strip(),
+            "review_status": profile.review_status,
+            "matched_swimmer_id": swimmer.id if swimmer else None,
+            "matched_swimmer_name": swimmer.name if swimmer else None,
+            "squad": swimmer.squad if swimmer else None,
+            "physical": physical,
+            "psychological": psychological,
+            "notes": (profile.notes or "").strip() or None,
+            "incoming_field_count": incoming_count,
+            "fillable_fields": fillable_fields,
+            "conflicts": conflicts,
+            "errors": errors,
+            "warnings": warnings,
+            "can_import": bool(swimmer and fillable_fields and not errors),
+        })
+
+    return {
+        "schema_version": body.schema_version,
+        "source": body.source,
+        "generated_at": body.generated_at,
+        "rows": rows,
+        "summary": {
+            "total": len(rows),
+            "ready": sum(row["can_import"] for row in rows),
+            "unmatched_or_invalid": sum(bool(row["errors"]) for row in rows),
+            "with_conflicts": sum(bool(row["conflicts"]) for row in rows),
+            "fields_to_add": sum(len(row["fillable_fields"]) for row in rows),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +290,83 @@ def create_swimmer(body: SwimmerCreate, db: DBSession = Depends(get_db)):
     return result
 
 
+@router.post("/profile-foundations/import/preview")
+def preview_foundation_profiles(
+    body: FoundationImportPackage,
+    db: DBSession = Depends(get_db),
+):
+    """Validate a Profile Builder package without changing any swimmer."""
+    return _prepare_foundation_import(body, db)
+
+
+@router.post("/profile-foundations/import/confirm")
+def confirm_foundation_profiles(
+    body: FoundationImportPackage,
+    db: DBSession = Depends(get_db),
+):
+    """Merge coach-confirmed profile fields into blanks and preserve existing values."""
+    preview = _prepare_foundation_import(body, db)
+    imported = []
+    skipped = []
+    for row in preview["rows"]:
+        if not row["can_import"]:
+            skipped.append({
+                "swimmer_name": row["swimmer_name"],
+                "errors": row["errors"],
+                "warnings": row["warnings"],
+            })
+            continue
+        swimmer = db.get(models.Swimmer, row["matched_swimmer_id"])
+        if not swimmer:
+            skipped.append({"swimmer_name": row["swimmer_name"], "errors": ["Roster match disappeared"]})
+            continue
+
+        stores = {
+            "physical": dict(swimmer.physical_profile) if isinstance(swimmer.physical_profile, dict) else {},
+            "psychological": (
+                dict(swimmer.psychological_profile)
+                if isinstance(swimmer.psychological_profile, dict)
+                else {}
+            ),
+        }
+        incoming = {"physical": row["physical"], "psychological": row["psychological"]}
+        added_fields = []
+        for field_name in row["fillable_fields"]:
+            section, field = field_name.split(".", 1)
+            value = incoming[section].get(field)
+            if value:
+                stores[section][field] = value
+                added_fields.append(field_name)
+
+        swimmer.physical_profile = stores["physical"]
+        swimmer.psychological_profile = stores["psychological"]
+        summary = f"Foundation imported from {body.source} after coach review; added {len(added_fields)} field(s)."
+        if row["notes"]:
+            summary += f" Notes: {row['notes'][:600]}"
+        db.add(models.SwimmerProfileVersion(
+            swimmer_id=swimmer.id,
+            profile_type="wizard",
+            data=stores,
+            change_summary=summary,
+            obs_count=None,
+        ))
+        imported.append({
+            "swimmer_id": swimmer.id,
+            "swimmer_name": swimmer.name,
+            "added_fields": added_fields,
+            "preserved_conflicts": row["conflicts"],
+        })
+
+    db.commit()
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "imported_count": len(imported),
+        "skipped_count": len(skipped),
+        "fields_added": sum(len(row["added_fields"]) for row in imported),
+    }
+
+
 @router.get("/{swimmer_id}")
 def get_swimmer(swimmer_id: int, db: DBSession = Depends(get_db)):
     swimmer = _get_or_404(swimmer_id, db)
@@ -164,9 +410,33 @@ def bulk_delete_swimmers(body: dict = Body(...), db: DBSession = Depends(get_db)
 
 def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     """Delete all child records for a swimmer before deleting the swimmer row."""
-    db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer_id).delete()
+    # Keep this explicit rather than relying only on ORM relationship cascades:
+    # production databases enforce foreign keys, and several newer planning and
+    # competition tables are intentionally not loaded as Swimmer relationships.
+    recommendation_ids = db.query(models.PlanningRecommendation.id).filter(
+        models.PlanningRecommendation.swimmer_id == swimmer_id,
+    )
+    db.query(models.PlanningRecommendationEvent).filter(
+        models.PlanningRecommendationEvent.recommendation_id.in_(recommendation_ids)
+    ).delete(synchronize_session=False)
+    db.query(models.PlanningRecommendation).filter(
+        models.PlanningRecommendation.swimmer_id == swimmer_id,
+    ).delete(synchronize_session=False)
+
+    # Qualification assessments can reference both the swimmer and one of
+    # their SwimTime rows, so they must be cleared before times.
+    db.query(models.QualificationAssessment).filter(
+        models.QualificationAssessment.swimmer_id == swimmer_id,
+    ).delete(synchronize_session=False)
+    db.query(models.SwimmerSessionLoad).filter(
+        models.SwimmerSessionLoad.swimmer_id == swimmer_id,
+    ).delete(synchronize_session=False)
     db.query(models.SessionEntry).filter(models.SessionEntry.swimmer_id == swimmer_id).delete()
+    db.query(models.MeetEntry).filter(models.MeetEntry.swimmer_id == swimmer_id).delete()
     db.query(models.MeetTarget).filter(models.MeetTarget.swimmer_id == swimmer_id).delete()
+    db.query(models.PathwayMembership).filter(models.PathwayMembership.swimmer_id == swimmer_id).delete()
+    db.query(models.PlanningSnapshot).filter(models.PlanningSnapshot.swimmer_id == swimmer_id).delete()
+    db.query(models.SkillOutput).filter(models.SkillOutput.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerSlot).filter(models.SwimmerSlot.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerException).filter(models.SwimmerException.swimmer_id == swimmer_id).delete()
     db.query(models.Schedule).filter(models.Schedule.swimmer_id == swimmer_id).delete()
@@ -175,9 +445,12 @@ def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     db.query(models.SwimmerLoadEvent).filter(models.SwimmerLoadEvent.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerProfileVersion).filter(models.SwimmerProfileVersion.swimmer_id == swimmer_id).delete()
     db.query(models.TrainingHistoryNarrative).filter(models.TrainingHistoryNarrative.swimmer_id == swimmer_id).delete()
+    db.query(models.BenchmarkLog).filter(models.BenchmarkLog.swimmer_id == swimmer_id).delete()
+    db.query(models.SwimmerTarget).filter(models.SwimmerTarget.swimmer_id == swimmer_id).delete()
     db.query(models.AIAnalysis).filter(models.AIAnalysis.swimmer_id == swimmer_id).delete()
     db.query(models.ProfileConversation).filter(models.ProfileConversation.swimmer_id == swimmer_id).delete()
     db.query(models.ProfileWizardDraft).filter(models.ProfileWizardDraft.swimmer_id == swimmer_id).delete()
+    db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer_id).delete()
 
 
 # ---------------------------------------------------------------------------

@@ -39,6 +39,7 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey }) {
                   <div className="flex items-center gap-2">
                     {current && <span className="w-2 h-2 rounded-full bg-accent-400" />}
                     <p className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</p>
+                    {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{session.cycle_code}</span>}
                   </div>
                   <p className="text-xs text-pool-400 mt-1">
                     {[day, session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}

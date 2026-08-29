@@ -30,8 +30,10 @@ from backend.routers.ai_chat import (
 )
 from backend.services.claude_service import (
     COACHING_CONTEXT_CHAR_LIMIT, FAST_MODEL,
-    _coaching_context_for_prompt, detect_topics, execute_tool, record_ai_usage,
+    _coaching_context_for_prompt, detect_topics, execute_tool, get_athlete_plan_system_prompt,
+    get_season_plan_system_prompt, get_system_prompt, record_ai_usage,
 )
+from backend.services.terminology import coach_terminology_context
 
 
 class CoreFlowTests(unittest.TestCase):
@@ -48,6 +50,80 @@ class CoreFlowTests(unittest.TestCase):
         cls.client_context.__exit__(None, None, None)
         engine.dispose()
         Path(_db_file.name).unlink(missing_ok=True)
+
+    def test_session_presentation_settings_and_ai_equivalency_check(self):
+        payload = {
+            "club_name": "Test Swimming Club",
+            "logo_data_url": "data:image/png;base64,aGVsbG8=",
+            "terminology_name": "Club colours",
+            "terminology_levels": [{
+                "id": "red",
+                "label": "Red",
+                "description": "Short high-aerobic-power repeats with deliberate recovery.",
+                "colour": "#dc2626",
+                "canonical_zone": "vo2",
+            }],
+        }
+        saved = self.client.put("/session-presentation", headers=self.headers, json=payload)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertEqual(saved.json()["club_name"], "Test Swimming Club")
+        self.assertEqual(saved.json()["terminology_levels"][0]["canonical_zone"], "vo2")
+
+        restored = self.client.get("/session-presentation", headers=self.headers)
+        self.assertEqual(restored.status_code, 200, restored.text)
+        self.assertEqual(restored.json()["terminology_name"], "Club colours")
+
+        with SessionLocal() as db:
+            terminology_context = coach_terminology_context(db)
+            self.assertIn('"Red" = internal `vo2`', terminology_context)
+            self.assertIn("natural-language replies", terminology_context)
+            general_prompt = get_system_prompt(
+                db,
+                include_squad_snapshot=False,
+                include_recent_sessions=False,
+                include_active_notes=False,
+                include_approaching_targets=False,
+            )
+            self.assertIn("COACH INTENSITY / ENERGY LANGUAGE: Club colours", general_prompt)
+            self.assertIn("COACH INTENSITY / ENERGY LANGUAGE: Club colours", get_season_plan_system_prompt(db))
+            self.assertIn("COACH INTENSITY / ENERGY LANGUAGE: Club colours", get_athlete_plan_system_prompt(db))
+
+        ai_response = SimpleNamespace(content=[SimpleNamespace(
+            type="text",
+            text='[{"id":"red","canonical_zone":"vo2","reason":"High aerobic power.","confidence":"high"}]',
+        )])
+        with patch("backend.routers.session_presentation.create_message", return_value=ai_response):
+            checked = self.client.post(
+                "/session-presentation/check-equivalencies",
+                headers=self.headers,
+                json=payload,
+            )
+        self.assertEqual(checked.status_code, 200, checked.text)
+        self.assertEqual(checked.json()["mappings"][0]["canonical_zone"], "vo2")
+
+        with SessionLocal() as db:
+            db.query(models.SessionPresentationSettings).delete()
+            db.commit()
+
+    def test_blank_programme_groups_do_not_create_narrow_print_columns(self):
+        created = self.client.post(
+            "/sessions",
+            headers=self.headers,
+            json={
+                "date": "2026-08-27",
+                "title": "Whole squad print test",
+                "groups": {
+                    "1": {"sets": "8 x 100 @ 1:30"},
+                    "2": {"sets": ""},
+                    "3": {"sets": "", "volume_breakdown": {"aerobic": 0}},
+                },
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.json()["register_group_count"], 1)
+        self.assertEqual(len(created.json()["groups"]), 1)
+        deleted = self.client.delete(f"/sessions/{created.json()['id']}", headers=self.headers)
+        self.assertEqual(deleted.status_code, 204, deleted.text)
 
     def test_profile_wizard_draft_is_recoverable_without_duplicate_ai_call(self):
         with SessionLocal() as db:
@@ -103,6 +179,42 @@ class CoreFlowTests(unittest.TestCase):
             headers=self.headers,
         )
         self.assertEqual(discarded.status_code, 204, discarded.text)
+
+        profile_json = {
+            "physical": {
+                "aerobic_base": "Holds aerobic pace and stroke shape across sustained work.",
+                "strengths": "This non-foundation field must be ignored.",
+            },
+            "psychological": {
+                "motivation_style": "Engages most when progress is made visible.",
+                "notes": "This non-foundation field must be ignored.",
+            },
+        }
+        save_response = SimpleNamespace(content=[SimpleNamespace(text=json.dumps(profile_json))])
+        with patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = save_response
+            saved = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/save",
+                headers=self.headers,
+                json={"messages": history},
+            )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertIn("API interview", saved.json()["change_summary"])
+        with SessionLocal() as db:
+            swimmer = db.get(models.Swimmer, swimmer_id)
+            self.assertEqual(
+                swimmer.physical_profile["aerobic_base"],
+                "Holds aerobic pace and stroke shape across sustained work.",
+            )
+            self.assertNotIn("strengths", swimmer.physical_profile)
+            self.assertEqual(
+                swimmer.psychological_profile["motivation_style"],
+                "Engages most when progress is made visible.",
+            )
+            self.assertNotIn("notes", swimmer.psychological_profile)
+            self.assertEqual(db.query(models.ProfileWizardDraft).filter(
+                models.ProfileWizardDraft.swimmer_id == swimmer_id,
+            ).count(), 0)
 
     def test_chat_register_resolves_exact_recurring_slot_without_ai_guessing(self):
         target_date = date.today()
@@ -408,6 +520,103 @@ class CoreFlowTests(unittest.TestCase):
             db.delete(swimmer)
             db.commit()
 
+    def test_delete_swimmer_clears_all_linked_records(self):
+        today = date.today()
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Cascade Delete Test Swimmer", squad="Test")
+            session = models.Session(date=today, title="Cascade test")
+            meet = models.Meet(name="Cascade Test Meet", date=today)
+            macro = models.TrainingMacro(
+                name="Cascade Test Macro", date_from=today, date_to=today,
+            )
+            db.add_all([swimmer, session, meet, macro])
+            db.flush()
+            pathway = models.PlanningPathway(macro_id=macro.id, name="Cascade Test Pathway")
+            standard_set = models.QualificationStandardSet(
+                meet_id=meet.id, name="Cascade Test Standards",
+            )
+            db.add_all([pathway, standard_set])
+            db.flush()
+            standard = models.QualificationStandard(
+                standard_set_id=standard_set.id,
+                event_name="100 Freestyle SCM", canonical_event="100 Freestyle SCM",
+                course="SCM", standard_type="qualifying", time_seconds=60.0,
+            )
+            swim_time = models.SwimTime(
+                swimmer_id=swimmer.id, event="100 Freestyle SCM",
+                time_seconds=59.5, date=today,
+            )
+            recommendation = models.PlanningRecommendation(
+                swimmer_id=swimmer.id, kind="swimmer_flag", title="Cascade flag",
+                detail="Delete with swimmer", fingerprint=f"cascade-{swimmer.id}",
+            )
+            db.add_all([standard, swim_time, recommendation])
+            db.flush()
+            linked_rows = [
+                models.SwimmerSessionLoad(
+                    swimmer_id=swimmer.id, session_id=session.id, session_date=today,
+                ),
+                models.MeetEntry(
+                    meet_id=meet.id, swimmer_id=swimmer.id,
+                    event_name="100 Freestyle", canonical_event="100 Freestyle SCM",
+                ),
+                models.QualificationAssessment(
+                    standard_set_id=standard_set.id, standard_id=standard.id,
+                    swimmer_id=swimmer.id, best_time_id=swim_time.id, status="achieved",
+                ),
+                models.BenchmarkLog(
+                    swimmer_id=swimmer.id, distance=100, stroke="free", effort="max",
+                    time_seconds=59.5, date=today,
+                ),
+                models.SwimmerTarget(swimmer_id=swimmer.id, label="Cascade target"),
+                models.SkillOutput(
+                    skill_type="adaptation_review", swimmer_id=swimmer.id,
+                    full_output="Cascade output",
+                ),
+                models.PathwayMembership(pathway_id=pathway.id, swimmer_id=swimmer.id),
+                models.PlanningSnapshot(
+                    macro_id=macro.id, pathway_id=pathway.id, swimmer_id=swimmer.id,
+                    as_of_date=today,
+                ),
+                models.PlanningRecommendationEvent(
+                    recommendation_id=recommendation.id, event_type="created",
+                ),
+            ]
+            db.add_all(linked_rows)
+            db.commit()
+            swimmer_id = swimmer.id
+            session_id = session.id
+            meet_id = meet.id
+            macro_id = macro.id
+            recommendation_id = recommendation.id
+
+        deleted = self.client.delete(f"/swimmers/{swimmer_id}", headers=self.headers)
+        self.assertEqual(deleted.status_code, 204, deleted.text)
+
+        with SessionLocal() as db:
+            self.assertIsNone(db.get(models.Swimmer, swimmer_id))
+            linked_models = (
+                models.SwimTime, models.SwimmerSessionLoad, models.MeetEntry,
+                models.QualificationAssessment, models.BenchmarkLog, models.SwimmerTarget,
+                models.SkillOutput, models.PathwayMembership, models.PlanningSnapshot,
+                models.PlanningRecommendation,
+            )
+            for model in linked_models:
+                self.assertEqual(
+                    db.query(model).filter(model.swimmer_id == swimmer_id).count(), 0,
+                    f"{model.__name__} survived swimmer deletion",
+                )
+            self.assertEqual(
+                db.query(models.PlanningRecommendationEvent).filter(
+                    models.PlanningRecommendationEvent.recommendation_id == recommendation_id,
+                ).count(),
+                0,
+            )
+            db.delete(db.get(models.Session, session_id))
+            db.delete(db.get(models.TrainingMacro, macro_id))
+            db.delete(db.get(models.Meet, meet_id))
+            db.commit()
+
     def test_availability_excuses_holidays_competitions_and_taper_rest(self):
         today = date.today()
         competition_day = today + timedelta(days=1)
@@ -450,6 +659,26 @@ class CoreFlowTests(unittest.TestCase):
         )
         self.assertEqual(holiday.status_code, 201, holiday.text)
         holiday_id = holiday.json()["id"]
+
+        invalid_update = self.client.put(
+            f"/schedule/swimmers/{swimmer_id}/exceptions/{holiday_id}", headers=self.headers,
+            json={
+                "reason": "holiday", "date_from": (today + timedelta(days=1)).isoformat(),
+                "date_to": today.isoformat(), "notes": "Invalid range",
+            },
+        )
+        self.assertEqual(invalid_update.status_code, 422, invalid_update.text)
+        updated_holiday = self.client.put(
+            f"/schedule/swimmers/{swimmer_id}/exceptions/{holiday_id}", headers=self.headers,
+            json={
+                "reason": "holiday", "date_from": (today - timedelta(days=1)).isoformat(),
+                "date_to": (today + timedelta(days=1)).isoformat(), "notes": "Corrected holiday dates",
+            },
+        )
+        self.assertEqual(updated_holiday.status_code, 200, updated_holiday.text)
+        self.assertEqual(updated_holiday.json()["date_from"], (today - timedelta(days=1)).isoformat())
+        self.assertEqual(updated_holiday.json()["date_to"], (today + timedelta(days=1)).isoformat())
+        self.assertEqual(updated_holiday.json()["notes"], "Corrected holiday dates")
 
         expected = self.client.get(
             f"/schedule/expected/{today.isoformat()}?squad=Availability%20Test",
@@ -661,9 +890,24 @@ class CoreFlowTests(unittest.TestCase):
             db.add(models.SwimmerProfileVersion(
                 swimmer_id=swimmer_id,
                 profile_type="technical",
-                data={"technical_strengths": "Strong kick and raw speed"},
+                data={
+                    "race_execution": "Even early pacing with a late technical fade.",
+                    "coachability": "Responds quickly to concise technical cues.",
+                },
                 change_summary="Existing technical evidence",
                 obs_count=1,
+            ))
+            db.add(models.SwimmerProfileVersion(
+                swimmer_id=swimmer_id,
+                profile_type="training",
+                data={
+                    "aerobic": "Strong aerobic base across sustained work.",
+                    "speed": "Strong kick and raw speed",
+                    "fatigue_markers": "Stroke length shortens late in hard sets.",
+                    "predictive_notes": "Responds best to short quality speed supported by aerobic work.",
+                },
+                change_summary="Existing training evidence",
+                obs_count=2,
             ))
             db.add(models.SwimmerObservation(
                 swimmer_id=swimmer_id,
@@ -682,35 +926,12 @@ class CoreFlowTests(unittest.TestCase):
             ))
             db.commit()
 
-        proposed = {
-            "physical": {
-                "aerobic_base": {
-                    "value": "AI must not replace this",
-                    "evidence": "Living profile",
-                    "confidence": "supported",
-                },
-                "sprint_tendency": {
-                    "value": "Strong kick and raw speed",
-                    "evidence": "Technical profile",
-                    "confidence": "supported",
-                },
-            },
-            "psychological": {
-                "coachability": {
-                    "value": "Responds quickly to concise technical cues",
-                    "evidence": "Coach observation",
-                    "confidence": "supported",
-                },
-            },
-        }
-        fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: SimpleNamespace(
-            content=[SimpleNamespace(text=json.dumps(proposed))],
-        )))
-        with patch("backend.services.claude_service.get_client", return_value=fake_client):
+        with patch("backend.services.claude_service.get_client") as ai_client:
             preview = self.client.post(
                 f"/swimmers/{swimmer_id}/profile-wizard/draft-existing",
                 headers=self.headers,
             )
+        ai_client.assert_not_called()
 
         self.assertEqual(preview.status_code, 200, preview.text)
         draft = preview.json()
@@ -719,11 +940,65 @@ class CoreFlowTests(unittest.TestCase):
             "Coach-confirmed aerobic foundation",
         )
         self.assertEqual(draft["physical"]["aerobic_base"]["confidence"], "confirmed")
+        self.assertEqual(draft["physical"]["sprint_tendency"]["value"], "Strong kick and raw speed")
         self.assertEqual(draft["physical"]["sprint_tendency"]["confidence"], "supported")
+        self.assertEqual(
+            draft["physical"]["race_pattern"]["value"],
+            "Even early pacing with a late technical fade.",
+        )
+        self.assertEqual(
+            draft["physical"]["fatigue_profile"]["value"],
+            "Stroke length shortens late in hard sets.",
+        )
+        self.assertEqual(
+            draft["psychological"]["coachability"]["value"],
+            "Responds quickly to concise technical cues.",
+        )
         self.assertEqual(draft["psychological"]["motivation_style"]["confidence"], "missing")
-        self.assertEqual(draft["source_counts"]["living_profiles"], 1)
+        self.assertFalse(draft["uses_ai"])
+        self.assertEqual(draft["method"], "direct_profile_carryover")
+        self.assertEqual(draft["source_counts"]["living_profiles"], 2)
         self.assertEqual(draft["source_counts"]["observations"], 1)
         self.assertEqual(draft["source_counts"]["coaching_notes"], 1)
+
+        fake_response = SimpleNamespace(content=[SimpleNamespace(
+            text="Given the late-set stroke shortening already observed, what recovery pattern do you see before technique returns?",
+        )])
+        with patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = fake_response
+            tailored = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers,
+                json={"messages": [
+                    {"role": "assistant", "content": "What happens to stroke length when fatigue arrives?"},
+                    {"role": "user", "content": "It shortens late in threshold sets."},
+                ]},
+            )
+        self.assertEqual(tailored.status_code, 200, tailored.text)
+        system_prompt = client.return_value.messages.create.call_args.kwargs["system"]
+        self.assertIn("Foundation Carryover Swimmer", system_prompt)
+        self.assertIn("Stroke length shortens late in hard sets", system_prompt)
+        self.assertIn("QUESTIONS ALREADY ASKED", system_prompt)
+        self.assertIn("What happens to stroke length when fatigue arrives?", system_prompt)
+        self.assertIn("Do not ask a question that is semantically equivalent", system_prompt)
+
+        repeated_response = SimpleNamespace(content=[SimpleNamespace(
+            text="What happens to stroke length when fatigue arrives?",
+        )])
+        corrected_response = SimpleNamespace(content=[SimpleNamespace(
+            text="Their technical cues appear to land quickly; what type of progress feedback keeps them most engaged?",
+        )])
+        with SessionLocal() as db:
+            swimmer = db.get(models.Swimmer, swimmer_id)
+            with patch("backend.services.claude_service.get_client") as client:
+                client.return_value.messages.create.side_effect = [repeated_response, corrected_response]
+                from backend.services import claude_service
+                corrected = claude_service.wizard_chat(swimmer, [
+                    {"role": "assistant", "content": "What happens to stroke length when fatigue arrives?"},
+                    {"role": "user", "content": "It shortens late in threshold sets."},
+                ], db)
+            self.assertEqual(client.return_value.messages.create.call_count, 2)
+            self.assertIn("progress feedback", corrected)
 
         with SessionLocal() as db:
             swimmer = db.get(models.Swimmer, swimmer_id)
@@ -746,7 +1021,7 @@ class CoreFlowTests(unittest.TestCase):
             },
         )
         self.assertEqual(saved.status_code, 200, saved.text)
-        self.assertEqual(saved.json()["profile_status"]["completed_areas"], 3)
+        self.assertEqual(saved.json()["profile_status"]["completed_areas"], 4)
 
         with SessionLocal() as db:
             swimmer = db.get(models.Swimmer, swimmer_id)
@@ -765,6 +1040,106 @@ class CoreFlowTests(unittest.TestCase):
                 models.SwimmerProfileVersion.swimmer_id == swimmer_id,
             ).delete()
             db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
+
+    def test_profile_builder_json_import_previews_and_fills_blanks_without_overwriting(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(
+                name="JSON Profile Swimmer",
+                squad="Agent Test",
+                physical_profile={"aerobic_base": "Existing coach-confirmed aerobic value"},
+            )
+            draft_swimmer = models.Swimmer(name="Draft JSON Swimmer", squad="Agent Test")
+            db.add_all([swimmer, draft_swimmer])
+            db.commit()
+            swimmer_id = swimmer.id
+
+        package = {
+            "schema_version": 1,
+            "source": "lanewatch-profile-builder",
+            "generated_at": date.today().isoformat(),
+            "profiles": [
+                {
+                    "swimmer_name": "  JSON   Profile Swimmer ",
+                    "review_status": "coach_confirmed",
+                    "physical": {
+                        "aerobic_base": "Incoming value must not overwrite",
+                        "sprint_tendency": "Sharp first 15m with speed drop-off after 25m.",
+                    },
+                    "psychological": {
+                        "coachability": "Applies concise feedback quickly and retains it.",
+                    },
+                    "notes": "Reviewed in the dedicated profile interview.",
+                },
+                {
+                    "swimmer_name": "Draft JSON Swimmer",
+                    "review_status": "draft",
+                    "physical": {"aerobic_base": "Not yet approved"},
+                    "psychological": {},
+                },
+                {
+                    "swimmer_name": "Not On Roster",
+                    "review_status": "coach_confirmed",
+                    "physical": {"aerobic_base": "Cannot safely match"},
+                    "psychological": {},
+                },
+            ],
+        }
+
+        preview = self.client.post(
+            "/swimmers/profile-foundations/import/preview",
+            headers=self.headers,
+            json=package,
+        )
+        self.assertEqual(preview.status_code, 200, preview.text)
+        data = preview.json()
+        self.assertEqual(data["summary"]["ready"], 1)
+        self.assertEqual(data["summary"]["unmatched_or_invalid"], 2)
+        self.assertEqual(data["summary"]["with_conflicts"], 1)
+        self.assertEqual(data["summary"]["fields_to_add"], 3)
+        row = data["rows"][0]
+        self.assertEqual(row["matched_swimmer_id"], swimmer_id)
+        self.assertEqual(row["conflicts"], ["physical.aerobic_base"])
+        self.assertEqual(
+            row["fillable_fields"],
+            ["physical.sprint_tendency", "psychological.coachability"],
+        )
+
+        confirmed = self.client.post(
+            "/swimmers/profile-foundations/import/confirm",
+            headers=self.headers,
+            json=package,
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        self.assertEqual(confirmed.json()["imported_count"], 1)
+        self.assertEqual(confirmed.json()["skipped_count"], 2)
+        self.assertEqual(confirmed.json()["fields_added"], 2)
+
+        with SessionLocal() as db:
+            swimmer = db.get(models.Swimmer, swimmer_id)
+            self.assertEqual(
+                swimmer.physical_profile["aerobic_base"],
+                "Existing coach-confirmed aerobic value",
+            )
+            self.assertEqual(
+                swimmer.physical_profile["sprint_tendency"],
+                "Sharp first 15m with speed drop-off after 25m.",
+            )
+            self.assertEqual(
+                swimmer.psychological_profile["coachability"],
+                "Applies concise feedback quickly and retains it.",
+            )
+            version = db.query(models.SwimmerProfileVersion).filter(
+                models.SwimmerProfileVersion.swimmer_id == swimmer_id,
+                models.SwimmerProfileVersion.profile_type == "wizard",
+            ).one()
+            self.assertIn("lanewatch-profile-builder", version.change_summary)
+            db.query(models.SwimmerProfileVersion).filter(
+                models.SwimmerProfileVersion.swimmer_id == swimmer_id,
+            ).delete()
+            db.query(models.Swimmer).filter(
+                models.Swimmer.name.in_(["JSON Profile Swimmer", "Draft JSON Swimmer"]),
+            ).delete(synchronize_session=False)
             db.commit()
 
     def test_confirmed_chat_profile_update_uses_one_incremental_synthesis(self):
@@ -1018,6 +1393,101 @@ class CoreFlowTests(unittest.TestCase):
             GENERAL_HISTORY,
         )
 
+    def test_confirmed_microcycle_materialises_stable_session_codes(self):
+        slot_ids = []
+        session_ids = []
+        macro_id = None
+        macro = self.client.post(
+            "/season/macros", headers=self.headers,
+            json={
+                "sequence_index": 7,
+                "name": "Cycle code test macro", "squad": "Cycle Code Squad",
+                "date_from": "2028-01-01", "date_to": "2028-03-31",
+                "mesos": [{
+                    "sequence_index": 2,
+                    "name": "Cycle code meso", "squad": "Cycle Code Squad",
+                    "phase_type": "build", "date_from": "2028-01-01", "date_to": "2028-02-15",
+                }],
+            },
+        )
+        self.assertEqual(macro.status_code, 201, macro.text)
+        macro_id = macro.json()["id"]
+        block_id = macro.json()["mesos"][0]["id"]
+
+        with SessionLocal() as db:
+            monday = models.PoolSlot(
+                day_of_week=0, time="06:00", end_time="07:30", squad="Cycle Code Squad",
+                label="Monday AM Cycle", active=True,
+            )
+            wednesday = models.PoolSlot(
+                day_of_week=2, time="18:00", end_time="19:30", squad="Cycle Code Squad",
+                label="Wednesday PM Cycle", active=True,
+            )
+            db.add_all([monday, wednesday])
+            db.commit()
+            slot_ids = [monday.id, wednesday.id]
+
+        micro = self.client.post(
+            "/season/microcycles", headers=self.headers,
+            json={
+                "macro_id": macro_id, "block_id": block_id, "sequence_index": 3,
+                "squad": "Cycle Code Squad", "week_start": "2028-01-03",
+                "label": "Cycle code week", "status": "draft",
+                "sessions": [
+                    {"date": "2028-01-03", "day": "Monday", "slot_label": "Monday AM Cycle", "session_type": "aerobic", "energy_focus": "aerobic", "key_emphasis": "Aerobic quality"},
+                    {"date": "2028-01-05", "day": "Wednesday", "slot_label": "Wednesday PM Cycle", "session_type": "threshold", "energy_focus": "threshold", "key_emphasis": "Threshold durability"},
+                ],
+            },
+        )
+        self.assertEqual(micro.status_code, 201, micro.text)
+        self.assertEqual([row["cycle_code"] for row in micro.json()["sessions"]], ["7.2.3.1", "7.2.3.2"])
+
+        confirmed = self.client.patch(
+            f"/season/microcycles/{micro.json()['id']}", headers=self.headers,
+            json={"status": "confirmed"},
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        planned = confirmed.json()["sessions"]
+        session_ids = [row["session_id"] for row in planned]
+        self.assertEqual([row["cycle_code"] for row in planned], ["7.2.3.1", "7.2.3.2"])
+
+        detail = self.client.get(f"/sessions/{session_ids[1]}", headers=self.headers)
+        self.assertEqual(detail.status_code, 200, detail.text)
+        self.assertEqual(detail.json()["cycle_code"], "7.2.3.2")
+        self.assertEqual(detail.json()["cycle_context"]["phase_type"], "build")
+        self.assertEqual(detail.json()["cycle_context"]["microcycle_label"], "Cycle code week")
+
+        imported = self.client.post(
+            "/sessions/import/excel/confirm", headers=self.headers,
+            json={
+                "target_session_id": session_ids[1],
+                "draft": {
+                    "date": "2028-01-05", "start_time": "18:00", "end_time": "19:30",
+                    "title": "Imported threshold plan", "groups": {"1": {"sets": "8x100 threshold", "total_metres": 800}},
+                },
+            },
+        )
+        self.assertEqual(imported.status_code, 201, imported.text)
+        self.assertEqual(imported.json()["cycle_code"], "7.2.3.2")
+
+        calendar = self.client.get("/sessions/calendar?week_start=2028-01-03", headers=self.headers)
+        codes = {item.get("cycle_code") for day in calendar.json() for item in day["items"]}
+        self.assertIn("7.2.3.1", codes)
+        self.assertIn("7.2.3.2", codes)
+
+        with SessionLocal() as db:
+            for session_id in session_ids:
+                session = db.query(models.Session).filter(models.Session.id == session_id).first()
+                if session:
+                    db.delete(session)
+            macro_row = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+            if macro_row:
+                db.delete(macro_row)
+            for slot_id in slot_ids:
+                slot = db.query(models.PoolSlot).filter(models.PoolSlot.id == slot_id).first()
+                if slot:
+                    db.delete(slot)
+            db.commit()
     def test_season_rollover_builds_attendance_baseline_without_erasing_history(self):
         start = date.today() - timedelta(days=3)
         end = start.replace(year=start.year + 1)
@@ -1277,10 +1747,22 @@ class CoreFlowTests(unittest.TestCase):
         workbook.save(workbook_bytes)
 
         try:
-            with patch("backend.routers.sessions.claude_service.review_session_import") as review:
-                review.return_value = {
-                    "status": "ok", "issues": [], "summary": "No consistency issues found.",
+            with patch("backend.routers.sessions.claude_service.analyse_session_energy") as analysis:
+                analysis.return_value = {
+                    "version": 1, "kind": "ai_estimated_prescribed_dose",
+                    "energy_system_focus": "aerobic", "primary_emphasis": "Aerobic skills",
+                    "density": "moderate", "total_metres": 400,
+                    "group_breakdowns": {"1": {
+                        "total_metres": 400,
+                        "zones": {"aerobic": 200, "threshold": 0, "vo2": 0,
+                                  "race_pace": 0, "lact_tol": 0,
+                                  "short_race_pace": 0, "kicking": 200, "sprint": 0},
+                        "work_rest_summary": "Moderate recovery", "likely_cost": "Low",
+                    }},
+                    "segments": [], "assumptions": [], "confidence": "moderate",
                     "model": "fast-test-model",
+                    "review": {"status": "ok", "issues": [],
+                               "summary": "No consistency issues found.", "model": "fast-test-model"},
                 }
                 preview = self.client.post(
                     "/sessions/import/excel",
@@ -1305,7 +1787,7 @@ class CoreFlowTests(unittest.TestCase):
             self.assertIsNone(payload["suggested_target"]["session_id"])
             self.assertTrue(payload["context_match"])
             self.assertEqual(payload["ai_review"]["status"], "ok")
-            review.assert_called_once()
+            analysis.assert_called_once()
 
             with SessionLocal() as db:
                 self.assertIsNone(db.query(models.Session).filter(
@@ -1336,7 +1818,8 @@ class CoreFlowTests(unittest.TestCase):
             self.assertEqual(session["source"], "excel")
             self.assertEqual(session["register_group_count"], 1)
             self.assertEqual(session["groups"][0]["sets"]["items"][0]["description"], "Kick with board")
-            self.assertEqual(session["groups"][0]["volume_breakdown"]["session_total"], 400)
+            self.assertEqual(session["groups"][0]["volume_breakdown"]["aerobic"], 200)
+            self.assertEqual(session["groups"][0]["volume_breakdown"]["kicking"], 200)
 
             calendar = self.client.get(
                 "/sessions/calendar?week_start=2026-08-24", headers=self.headers,
@@ -1585,6 +2068,269 @@ class CoreFlowTests(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 422, response.text)
+
+    def test_gala_import_and_session_intelligence_lifecycle(self):
+        with SessionLocal() as db:
+            existing = models.Meet(
+                name="BPSC Season Opener (25m)",
+                date=date(2026, 9, 12),
+                date_to=date(2026, 9, 13),
+                location="BSV",
+                course="SCM",
+            )
+            db.add(existing)
+            db.commit()
+
+        session_date = date(2027, 2, 3)
+        prediction = {
+            "swimmer_id": 0,
+            "kind": "ai_prediction_not_observation",
+            "predicted_response": "Threshold load should be appropriate if pace remains even.",
+            "relative_load": "appropriate",
+            "fatigue_cost": "moderate",
+            "expected_recovery": "Likely within 24 hours, subject to the coach's observation.",
+            "training_emphasis": "Sustained threshold pace control",
+            "watch_question": "Does stroke length remain stable over the final two repetitions?",
+            "watch_reason": "The previous coach note identified late-set shortening.",
+            "priority": 2,
+            "evidence": ["Previous coach observation"],
+            "next_session_consideration": "Retain the progression only if quality is observed today.",
+        }
+        energy = {
+            "version": 1,
+            "kind": "ai_estimated_prescribed_dose",
+            "energy_system_focus": "threshold",
+            "primary_emphasis": "Sustained threshold work with controlled recovery",
+            "density": "high",
+            "total_metres": 800,
+            "group_breakdowns": {
+                "1": {
+                    "total_metres": 800,
+                    "zones": {
+                        "aerobic": 0, "threshold": 800, "vo2": 0,
+                        "race_pace": 0, "lact_tol": 0,
+                        "short_race_pace": 0, "kicking": 0, "sprint": 0,
+                    },
+                    "work_rest_summary": "8 x 100 on a short send-off",
+                    "likely_cost": "Moderate-to-high aerobic cost",
+                },
+            },
+            "segments": [],
+            "assumptions": ["Actual swim times are not available."],
+            "confidence": "moderate",
+            "model": "test-model",
+        }
+        assessment = {
+            "swimmer_id": 0,
+            "observed_response": "The coach observed stable stroke length throughout.",
+            "prediction_comparison": "confirmed: the targeted quality remained stable.",
+            "fatigue_and_recovery": "No extra fatigue concern is supported by this note.",
+            "next_session_action": "Continue the planned progression.",
+            "future_watchpoint": "Check whether pace and stroke length both hold when volume rises.",
+            "profile_evidence": "One supporting observation; do not update the profile yet.",
+            "confidence": "moderate",
+        }
+
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Intelligence Lifecycle Swimmer", squad="AI Lifecycle")
+            macro = models.TrainingMacro(
+                sequence_index=1, name="Macro one", squad="AI Lifecycle",
+                date_from=date(2027, 1, 1), date_to=date(2027, 4, 30),
+            )
+            db.add_all([swimmer, macro])
+            db.flush()
+            meso = models.SeasonBlock(
+                macro_id=macro.id, sequence_index=2, name="Threshold build",
+                squad="AI Lifecycle", phase_type="build",
+                date_from=date(2027, 2, 1), date_to=date(2027, 2, 28),
+            )
+            db.add(meso)
+            db.flush()
+            micro = models.Microcycle(
+                macro_id=macro.id, block_id=meso.id, sequence_index=1,
+                squad="AI Lifecycle", week_start=date(2027, 2, 1),
+                week_end=date(2027, 2, 7), label="Build week", status="confirmed",
+            )
+            db.add(micro)
+            db.flush()
+            session = models.Session(
+                date=session_date, squad="AI Lifecycle", title="Threshold control",
+                coach_intent="Hold stroke length under threshold load", source="excel",
+                status="planned", microcycle_id=micro.id, session_sequence=2,
+                cycle_code="1.2.1.2", register_group_count=1,
+            )
+            db.add(session)
+            db.flush()
+            db.add(models.SessionGroup(
+                session_id=session.id, group_number=1, description="Threshold",
+                sets={"raw": "8 x 100 on 1:30"},
+            ))
+            db.commit()
+            swimmer_id = swimmer.id
+            session_id = session.id
+
+        prediction["swimmer_id"] = swimmer_id
+        assessment["swimmer_id"] = swimmer_id
+
+        def save_prediction(session, db, swimmer_ids=None):
+            entry = db.query(models.SessionEntry).filter(
+                models.SessionEntry.session_id == session.id,
+                models.SessionEntry.swimmer_id == swimmer_id,
+            ).first()
+            if not entry:
+                entry = models.SessionEntry(session_id=session.id, swimmer_id=swimmer_id)
+                db.add(entry)
+            entry.ai_expected_response = json.dumps(prediction)
+            db.flush()
+            return [prediction]
+
+        with patch(
+            "backend.routers.sessions.claude_service.analyse_session_energy",
+            return_value=energy,
+        ), patch(
+            "backend.routers.sessions.claude_service.generate_session_predictions",
+            side_effect=save_prediction,
+        ):
+            intelligence = self.client.post(
+                f"/sessions/{session_id}/intelligence",
+                headers=self.headers,
+                json={"refresh_energy": True, "swimmer_ids": [swimmer_id]},
+            )
+        self.assertEqual(intelligence.status_code, 200, intelligence.text)
+        intelligence_data = intelligence.json()
+        self.assertEqual(intelligence_data["session"]["cycle_code"], "1.2.1.2")
+        self.assertEqual(intelligence_data["session"]["energy_analysis"]["density"], "high")
+        self.assertEqual(intelligence_data["prediction_count"], 1)
+
+        register = self.client.get(f"/sessions/{session_id}/register", headers=self.headers)
+        register_row = next(row for row in register.json() if row["swimmer_id"] == swimmer_id)
+        self.assertEqual(register_row["ai_expected_response"]["watch_question"], prediction["watch_question"])
+        self.assertIsNone(register_row["attended"])
+
+        attendance = self.client.put(
+            f"/sessions/{session_id}/register", headers=self.headers,
+            json={
+                "session_complete": False, "run_ai": False,
+                "entries": [{
+                    "swimmer_id": swimmer_id, "attended": True,
+                    "group_planned": 1, "group_done": 1,
+                }],
+            },
+        )
+        self.assertEqual(attendance.status_code, 200, attendance.text)
+        with SessionLocal() as db:
+            saved_session = db.query(models.Session).filter(models.Session.id == session_id).one()
+            self.assertEqual(saved_session.status, "active")
+            self.assertEqual(db.query(models.SwimmerSessionLoad).filter(
+                models.SwimmerSessionLoad.session_id == session_id,
+                models.SwimmerSessionLoad.swimmer_id == swimmer_id,
+            ).count(), 0)
+
+        with patch(
+            "backend.routers.sessions.claude_service.generate_session_predictions",
+            return_value=[prediction],
+        ), patch(
+            "backend.routers.sessions.claude_service.characterise_session_entries_batch",
+            return_value={swimmer_id: assessment},
+        ):
+            completed = self.client.put(
+                f"/sessions/{session_id}/register", headers=self.headers,
+                json={
+                    "session_complete": True, "run_ai": True,
+                    "entries": [{
+                        "swimmer_id": swimmer_id, "attended": True,
+                        "group_planned": 1, "group_done": 1,
+                        "coach_observation": "Stroke length stayed stable on reps seven and eight.",
+                    }],
+                },
+            )
+        self.assertEqual(completed.status_code, 200, completed.text)
+        self.assertEqual(completed.json()[0]["ai_characterisation"]["next_session_action"], "Continue the planned progression.")
+        with SessionLocal() as db:
+            saved_session = db.query(models.Session).filter(models.Session.id == session_id).one()
+            entry = db.query(models.SessionEntry).filter(
+                models.SessionEntry.session_id == session_id,
+                models.SessionEntry.swimmer_id == swimmer_id,
+            ).one()
+            observation = db.query(models.SwimmerObservation).filter(
+                models.SwimmerObservation.session_id == session_id,
+                models.SwimmerObservation.swimmer_id == swimmer_id,
+            ).one()
+            load = db.query(models.SwimmerSessionLoad).filter(
+                models.SwimmerSessionLoad.session_id == session_id,
+                models.SwimmerSessionLoad.swimmer_id == swimmer_id,
+            ).one()
+            self.assertEqual(saved_session.status, "completed")
+            self.assertIn("stable", entry.coach_observation)
+            self.assertEqual(json.loads(entry.ai_characterisation)["confidence"], "moderate")
+            self.assertIn("stable", observation.content)
+            self.assertEqual(load.volume_breakdown["threshold"], 800)
+
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Gala Calendar"
+        sheet.append(["Date Start", "Date End", "Competition", "Venue"])
+        sheet.append([date(2026, 9, 12), date(2026, 9, 13), "BPSC Season   Opener (25m)", "BSV"])
+        sheet.append(["10/10/2026", "10/10/2026", "Arena League R1", None])
+        sheet.append(["06/03/2027", "07/03/2027", "Arena League Finals Weekend B/A (50m)", "Birmingham"])
+        sheet.append(["10/10/2026", "10/10/2026", "BPSC 800m (25m)", "BSV"])
+        payload = io.BytesIO()
+        workbook.save(payload)
+
+        preview = self.client.post(
+            "/meets/import/excel",
+            headers=self.headers,
+            files={
+                "file": (
+                    "galas.xlsx",
+                    payload.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            },
+        )
+        self.assertEqual(preview.status_code, 200, preview.text)
+        data = preview.json()
+        self.assertEqual(data["sheet_name"], "Gala Calendar")
+        self.assertEqual(data["summary"], {"total": 4, "ready": 3, "duplicates": 1, "invalid": 0})
+        self.assertEqual(data["rows"][0]["name"], "BPSC Season Opener (25m)")
+        self.assertEqual(data["rows"][0]["course"], "SCM")
+        self.assertFalse(data["rows"][0]["can_import"])
+        self.assertIsNone(data["rows"][1]["location"])
+        self.assertEqual(data["rows"][2]["course"], "LCM")
+
+        confirmed = self.client.post(
+            "/meets/import/excel/confirm",
+            headers=self.headers,
+            json={"rows": [{**row, "include": True} for row in data["rows"]]},
+        )
+        self.assertEqual(confirmed.status_code, 200, confirmed.text)
+        self.assertEqual(confirmed.json()["created_count"], 3)
+        self.assertEqual(confirmed.json()["skipped_count"], 1)
+
+        repeated = self.client.post(
+            "/meets/import/excel/confirm",
+            headers=self.headers,
+            json={"rows": [{**row, "include": True} for row in data["rows"]]},
+        )
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json()["created_count"], 0)
+        self.assertEqual(repeated.json()["skipped_count"], 4)
+
+        with SessionLocal() as db:
+            arena = db.query(models.Meet).filter(models.Meet.name == "Arena League R1").one()
+            finals = db.query(models.Meet).filter(
+                models.Meet.name == "Arena League Finals Weekend B/A (50m)",
+            ).one()
+            self.assertIsNone(arena.location)
+            self.assertIsNone(arena.course)
+            self.assertEqual(finals.course, "LCM")
+            db.query(models.Meet).filter(models.Meet.name.in_([
+                "BPSC Season Opener (25m)",
+                "Arena League R1",
+                "Arena League Finals Weekend B/A (50m)",
+                "BPSC 800m (25m)",
+            ])).delete(synchronize_session=False)
+            db.commit()
 
     def test_old_chat_history_rolls_into_bounded_memory(self):
         with SessionLocal() as db:

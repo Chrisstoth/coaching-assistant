@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 const VOLUME_LABELS = {
   aerobic: 'Aer', threshold: 'Thr', vo2: 'VO2', race_pace: 'RP',
@@ -303,6 +304,7 @@ function mondayForBlock(meso, existing) {
 }
 
 function MicrocycleBoard({ meso, microcycles, onReload, printMode = false }) {
+  const { energy } = useSessionPresentation()
   const [planning, setPlanning] = useState(false)
   const [draft, setDraft] = useState(null)
   const [saving, setSaving] = useState(false)
@@ -365,8 +367,11 @@ function MicrocycleBoard({ meso, microcycles, onReload, printMode = false }) {
             <div className="grid gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
               {micro.sessions.map((session, index) => (
                 <div key={index} className="bg-pool-800 rounded-lg p-2 border border-pool-700/60">
-                  <p className="text-xs font-semibold text-pool-200">{session.day || fmt(session.date)}</p>
-                  <p className="text-xs text-accent-400 capitalize">{session.session_type || session.energy_focus}</p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-xs font-semibold text-pool-200">{session.day || fmt(session.date)}</p>
+                    {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300">{session.cycle_code}</span>}
+                  </div>
+                  <p className="text-xs text-accent-400">{energy(session.session_type || session.energy_focus).label}</p>
                   <p className="text-xs text-pool-400 mt-1">{session.key_emphasis}</p>
                 </div>
               ))}

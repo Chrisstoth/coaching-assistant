@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import VoiceInput from '../components/VoiceInput'
+import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 function SessionWatchpoints({ notes }) {
   const [open, setOpen] = useState(false)
@@ -25,6 +27,60 @@ function SessionWatchpoints({ notes }) {
           ))}
         </div>
       )}
+    </div>
+  )
+}
+
+function SessionDose({ analysis }) {
+  const { energy } = useSessionPresentation()
+  if (!analysis) return null
+  const breakdowns = Object.values(analysis.group_breakdowns || {})
+  const zones = breakdowns[0]?.zones || {}
+  return (
+    <div className="bg-teal-900/15 border-b border-teal-800/35 px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-teal-200">Estimated session dose</p>
+          <p className="text-[11px] text-pool-400 mt-0.5">{analysis.primary_emphasis || 'Energy emphasis estimated from the imported set'} · {analysis.density || 'unclear'} density</p>
+        </div>
+        <span className="text-[9px] uppercase text-teal-300 shrink-0">AI estimate</span>
+      </div>
+      <div className="flex flex-wrap gap-1 mt-2">
+        {Object.entries(zones).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (
+          <span key={zone} className="text-[9px] rounded-full bg-pool-800 px-2 py-0.5 text-pool-300">{energy(zone).label} {Number(value).toLocaleString()}m</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PredictionCard({ prediction }) {
+  if (!prediction || typeof prediction !== 'object') return null
+  return (
+    <div className="bg-teal-900/15 border border-teal-700/35 rounded-lg p-3 space-y-1.5">
+      <p className="text-[10px] uppercase tracking-wide font-semibold text-teal-300">AI prediction · not an observation</p>
+      {prediction.predicted_response && <p className="text-xs text-pool-300">{prediction.predicted_response}</p>}
+      {prediction.watch_question && (
+        <div className="border-t border-teal-800/40 pt-2 mt-2">
+          <p className="text-xs font-semibold text-amber-200">Question for you</p>
+          <p className="text-xs text-pool-200 mt-1">{prediction.watch_question}</p>
+          {prediction.watch_reason && <p className="text-[11px] text-pool-500 mt-1">{prediction.watch_reason}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AssessmentCard({ assessment }) {
+  if (!assessment) return null
+  if (typeof assessment === 'string') return <div className="bg-pool-700 rounded-lg p-3 text-xs text-pool-300 leading-relaxed">{assessment}</div>
+  return (
+    <div className="bg-pool-700 rounded-lg p-3 text-xs text-pool-300 leading-relaxed space-y-1.5">
+      <p className="text-pool-400 font-medium">Post-session interpretation</p>
+      {assessment.observed_response && <p>{assessment.observed_response}</p>}
+      {assessment.prediction_comparison && <p><span className="text-pool-500">Prediction · </span>{assessment.prediction_comparison}</p>}
+      {assessment.fatigue_and_recovery && <p><span className="text-pool-500">Recovery · </span>{assessment.fatigue_and_recovery}</p>}
+      {assessment.next_session_action && <p className="text-teal-200"><span className="text-pool-500">Next session · </span>{assessment.next_session_action}</p>}
     </div>
   )
 }
@@ -75,9 +131,18 @@ export default function Register() {
         sub_group_done: r.sub_group_done ?? null,
         coach_observation: r.coach_observation ?? '',
         ai_characterisation: r.ai_characterisation ?? null,
+        ai_expected_response: r.ai_expected_response ?? null,
       })))
     })
   }, [id])
+
+  useEffect(() => {
+    if (!submitted) return undefined
+    const returnHome = window.setTimeout(() => {
+      navigate('/', { replace: true })
+    }, 1400)
+    return () => window.clearTimeout(returnHome)
+  }, [navigate, submitted])
 
   const update = (swimmerId, field, value) => {
     setSubmitted(null)
@@ -120,7 +185,7 @@ export default function Register() {
     }
   }
 
-  const submit = async (runAI = true) => {
+  const submit = async (runAI = true, sessionComplete = true) => {
     setSubmitting(true)
     try {
       const results = await api.submitRegister(id, {
@@ -134,17 +199,23 @@ export default function Register() {
           coach_observation: attended ? coach_observation : null,
         })),
         run_ai: runAI,
+        session_complete: sessionComplete,
       })
       if (results?.queued) {
-        setSubmitted('queued')
+        setSubmitted(sessionComplete ? 'complete_queued' : 'attendance_queued')
         return
       }
       // Update AI characterisations
       const aiMap = Object.fromEntries(results.map((r) => [r.swimmer_id, r.ai_characterisation]))
+      const predictionMap = Object.fromEntries(results.map((r) => [r.swimmer_id, r.ai_expected_response]))
       setEntries((prev) =>
-        prev.map((e) => ({ ...e, ai_characterisation: aiMap[e.swimmer_id] ?? e.ai_characterisation }))
+        prev.map((e) => ({
+          ...e,
+          ai_characterisation: aiMap[e.swimmer_id] ?? e.ai_characterisation,
+          ai_expected_response: predictionMap[e.swimmer_id] ?? e.ai_expected_response,
+        }))
       )
-      setSubmitted('synced')
+      setSubmitted(sessionComplete ? 'complete_synced' : 'attendance_synced')
     } catch (e) {
       alert(`Error: ${e.message}`)
     } finally {
@@ -154,7 +225,10 @@ export default function Register() {
 
   const presentCount = entries.filter((e) => e.attended).length
   const excusedCount = entries.filter((e) => !e.attended && e.exception_reason).length
-  const watchedSwimmerIds = new Set(sessionNotes.flatMap(note => note.swimmer_ids || []))
+  const watchedSwimmerIds = new Set([
+    ...sessionNotes.flatMap(note => note.swimmer_ids || []),
+    ...entries.filter(entry => entry.ai_expected_response?.watch_question).map(entry => entry.swimmer_id),
+  ])
   const watchpointsWithoutObservation = entries.filter(entry => (
     entry.attended
     && watchedSwimmerIds.has(entry.swimmer_id)
@@ -183,6 +257,8 @@ export default function Register() {
 
   return (
     <div className="flex flex-col min-h-screen">
+      {submitted && <RegisterSavedOverlay queued={submitted.includes('queued')} complete={submitted.startsWith('complete')} />}
+
       {/* Header */}
       <div className="bg-pool-800 px-4 pt-4 pb-3 sticky top-0 z-10">
         <div className="flex items-center gap-3 mb-2">
@@ -196,7 +272,10 @@ export default function Register() {
             className="text-pool-400 text-2xl"
           >‹</button>
           <div className="flex-1">
-            <h1 className="text-base font-bold">{session.title || 'Register'}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-base font-bold">{session.title || 'Register'}</h1>
+              {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 border border-teal-700/40 rounded px-1.5 py-0.5">{session.cycle_code}</span>}
+            </div>
             <p className="text-pool-400 text-xs">
               {session.date} · {entries.length} swimmers · {presentCount} present{excusedCount > 0 ? ` · ${excusedCount} excused` : ''}
             </p>
@@ -209,6 +288,8 @@ export default function Register() {
           </button>
         </div>
       </div>
+
+      <SessionDose analysis={session.energy_analysis} />
 
       {/* Session group setup */}
       <div className={`px-3 py-2.5 border-b ${groupCount && !editingGroupCount ? 'bg-pool-800/60 border-pool-700' : 'bg-amber-900/15 border-amber-800/40'}`}>
@@ -336,20 +417,18 @@ export default function Register() {
                 )}
 
                 {/* Observation */}
+                <PredictionCard prediction={entry.ai_expected_response} />
                 <VoiceInput
                   onTranscript={(t) => update(entry.swimmer_id, 'coach_observation', t)}
-                  placeholder={watchedSwimmerIds.has(entry.swimmer_id)
+                  placeholder={entry.ai_expected_response?.watch_question
+                    ? entry.ai_expected_response.watch_question
+                    : watchedSwimmerIds.has(entry.swimmer_id)
                     ? 'What did you observe against the watchpoint?'
                     : 'Observation (optional)...'}
                 />
 
                 {/* AI characterisation */}
-                {entry.ai_characterisation && (
-                  <div className="bg-pool-700 rounded-lg p-3 text-xs text-pool-300 leading-relaxed">
-                    <p className="text-pool-400 font-medium mb-1">AI Response</p>
-                    {entry.ai_characterisation}
-                  </div>
-                )}
+                <AssessmentCard assessment={entry.ai_characterisation} />
               </div>
             )}
           </div>
@@ -363,26 +442,20 @@ export default function Register() {
             Watchpoint check: {watchpointObservationNames}{additionalWatchpointCount ? ` and ${additionalWatchpointCount} more` : ''} {watchpointsWithoutObservation.length === 1 ? 'has' : 'have'} no session observation yet.
           </p>
         )}
-        {submitted === 'synced' && (
-          <p className="text-green-400 text-sm text-center">Register saved and synced.</p>
-        )}
-        {submitted === 'queued' && (
-          <p className="text-amber-300 text-sm text-center">Saved on this device — it will sync automatically when the connection returns.</p>
-        )}
         <div className="flex gap-2">
           <button
-            onClick={() => submit(false)}
+            onClick={() => submit(true, false)}
             disabled={submitting || !groupCount}
             className="flex-1 bg-pool-700 rounded-xl py-3 text-sm font-semibold disabled:opacity-40"
           >
-            Save
+            {submitting ? 'Saving…' : session.status === 'completed' ? 'Update attendance' : 'Save attendance'}
           </button>
           <button
-            onClick={() => submit(true)}
+            onClick={() => submit(true, true)}
             disabled={submitting || !groupCount}
             className="flex-1 bg-accent-600 rounded-xl py-3 text-sm font-semibold disabled:opacity-40"
           >
-            {!groupCount ? 'Choose session groups first' : submitting ? 'Saving + AI...' : 'Save + analyse notes'}
+            {!groupCount ? 'Choose session groups first' : submitting ? 'Assessing…' : session.status === 'completed' ? 'Reassess observations' : 'Finish + assess'}
           </button>
         </div>
       </div>

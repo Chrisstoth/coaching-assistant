@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 const ENERGY_COLOURS = {
   aerobic: 'text-blue-400',
@@ -53,6 +54,8 @@ function SeasonIcon() {
 }
 
 function SessionRow({ session }) {
+  const { energy } = useSessionPresentation()
+  const energyDisplay = energy(session.energy_system_focus)
   const eColor = ENERGY_COLOURS[session.energy_system_focus] || 'text-pool-400'
   return (
     <Link
@@ -60,7 +63,10 @@ function SessionRow({ session }) {
       className="flex items-center justify-between py-3 border-b border-pool-700/50 last:border-0"
     >
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-pool-100 truncate">{session.title || 'Session'}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-sm font-medium text-pool-100 truncate">{session.title || 'Session'}</p>
+          {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300">{session.cycle_code}</span>}
+        </div>
         <p className="text-xs text-pool-400 mt-0.5">
           {session.date}
           {session.squad && <span className="ml-2 text-pool-500">{session.squad}</span>}
@@ -69,7 +75,7 @@ function SessionRow({ session }) {
       <div className="flex items-center gap-2 ml-3 shrink-0">
         {session.energy_system_focus && (
           <span className={`text-xs font-medium ${eColor}`}>
-            {session.energy_system_focus}
+            {energyDisplay.label}
           </span>
         )}
         <svg className="w-4 h-4 text-pool-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">

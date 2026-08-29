@@ -196,7 +196,10 @@ function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onLon
       {/* Top row */}
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <p className="font-medium text-sm truncate">{item.label}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-sm truncate">{item.label}</p>
+            {item.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{item.cycle_code}</span>}
+          </div>
           <p className="text-pool-400 text-xs mt-0.5">
             {item.time}{item.end_time ? `–${item.end_time}` : ''}
           </p>

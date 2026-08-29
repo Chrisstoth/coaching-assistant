@@ -83,8 +83,13 @@ function FoundationDraftReview({ draft, saving, onSave, onCancel }) {
           <div>
             <p className="text-sm font-semibold text-pool-100">Review the carry-over draft</p>
             <p className="text-xs text-pool-400 mt-1 leading-relaxed">
-              Edit anything that is inaccurate. Blank fields remain unconfirmed and can be completed through the interview later.
+              Stored profile text has been copied into directly matching fields. Edit anything that is inaccurate; blank fields can be completed through the interview later.
             </p>
+            {draft.uses_ai === false && (
+              <span className="inline-block mt-2 bg-green-900/30 border border-green-800/50 text-green-300 rounded-full px-2 py-1 text-[10px] font-semibold">
+                No AI call · no tokens used
+              </span>
+            )}
           </div>
           <button type="button" onClick={onCancel} disabled={saving} className="text-pool-500 text-lg">×</button>
         </div>
@@ -137,7 +142,7 @@ function FoundationDraftReview({ draft, saving, onSave, onCancel }) {
         >
           {saving ? 'Saving reviewed foundation…' : 'Confirm and save reviewed fields'}
         </button>
-        <p className="text-[10px] text-pool-600 text-center">Only this confirmation writes to the swimmer’s foundation.</p>
+        <p className="text-[10px] text-pool-600 text-center">This is a preview — nothing changes until you confirm.</p>
       </div>
     </div>
   )
@@ -223,11 +228,8 @@ export default function ProfileWizard() {
           setMessages(interviewDraft.messages || [])
           setPendingReply(Boolean(interviewDraft.awaiting_reply))
           setMode('chat')
-        } else if (swimmerData.profile_status?.has_profile) {
-          setMode('choice')
         } else {
-          startInterview()
-          return
+          setMode('choice')
         }
         setLoading(false)
       })
@@ -235,7 +237,7 @@ export default function ProfileWizard() {
         setError(e.message)
         setLoading(false)
       })
-  }, [id, startInterview])
+  }, [id])
 
   // A reply may finish after navigation or a dropped browser connection. Poll
   // the persisted draft so it appears as soon as the server has saved it.
@@ -423,9 +425,11 @@ export default function ProfileWizard() {
         {mode === 'choice' && !saved && (
           <div className="bg-pool-800 border border-pool-700 rounded-2xl p-4 space-y-4">
             <div>
-              <p className="text-sm font-semibold text-pool-100">Existing evidence is ready to review</p>
+              <p className="text-sm font-semibold text-pool-100">
+                {swimmer?.profile_status?.has_profile ? 'Continue this swimmer’s profile' : 'Choose how to build this swimmer’s profile'}
+              </p>
               <p className="text-xs text-pool-400 mt-1 leading-relaxed">
-                LANEWATCH can draft the nine foundation areas from existing living profiles, observations and coaching notes. You will review every field before anything is saved.
+                The interview reads {swimmer?.name}'s live times, observations, completed foundation areas and living profiles before choosing each question.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2 text-center">
@@ -438,23 +442,26 @@ export default function ProfileWizard() {
                 <p className="text-[10px] text-pool-500">foundation confirmed</p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={prepareExistingDraft}
-              disabled={drafting}
-              className="w-full bg-accent-600 hover:bg-accent-500 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold"
-            >
-              {drafting ? 'Reviewing existing evidence…' : 'Draft from existing evidence'}
-            </button>
+            {swimmer?.profile_status?.has_profile && (
+              <button
+                type="button"
+                onClick={prepareExistingDraft}
+                disabled={drafting}
+                className="w-full bg-accent-600 hover:bg-accent-500 disabled:opacity-50 rounded-xl py-3 text-sm font-semibold"
+              >
+                {drafting ? 'Preparing carry-over…' : 'Carry over existing profile evidence'}
+              </button>
+            )}
             <button
               type="button"
               onClick={startInterview}
               disabled={drafting}
-              className="w-full border border-pool-600 text-pool-300 rounded-xl py-2.5 text-xs font-semibold disabled:opacity-50"
+              className={`w-full rounded-xl py-2.5 text-sm font-semibold disabled:opacity-50 ${swimmer?.profile_status?.has_profile ? 'border border-pool-600 text-pool-300' : 'bg-accent-600 text-white'}`}
             >
-              Continue with interview instead
+              Start tailored in-app interview
             </button>
-            <p className="text-[10px] text-pool-600 text-center">Drafting does not change the swimmer’s profile.</p>
+
+            <p className="text-[10px] text-pool-600 text-center">The API interview saves a draft as you go; the swimmer profile changes only when you choose Save Profile.</p>
           </div>
         )}
 

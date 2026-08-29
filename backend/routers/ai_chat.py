@@ -19,6 +19,7 @@ from backend.services.claude_service import (
 )
 from backend.services.agent_policy import choose_agent_route
 from backend.services.availability import availability_on_date
+from backend.services.cycle_codes import link_session
 
 router = APIRouter()
 
@@ -808,6 +809,8 @@ def _resolve_register_request(
             source="calendar",
         )
         db.add(session)
+        db.flush()
+        link_session(session, db)
         db.commit()
         db.refresh(session)
         created_from_slot = True
@@ -1709,6 +1712,7 @@ def _save_session_from_data(data: dict, db: DBSession) -> int:
     )
     db.add(session)
     db.flush()
+    link_session(session, db)
 
     all_swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
     name_map = {s.name.lower(): s.id for s in all_swimmers}

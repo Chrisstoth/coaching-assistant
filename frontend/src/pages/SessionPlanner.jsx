@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { api } from '../api'
+import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
 
 const ENERGY_COLOURS = {
   aerobic: 'bg-blue-900/40 text-blue-300 border-blue-800',
@@ -17,6 +18,12 @@ export default function SessionPlanner() {
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(null)
+  const [presentation, setPresentation] = useState(DEFAULT_PRESENTATION)
+  const displayEnergy = zone => energyPresentation(zone, presentation)
+
+  useEffect(() => {
+    api.getSessionPresentation().then(setPresentation).catch(() => {})
+  }, [])
 
   const analyse = async () => {
     if (!text.trim()) return
@@ -55,324 +62,22 @@ export default function SessionPlanner() {
 
   const printSheet = () => {
     if (!result) return
-    const { parsed, per_swimmer, expected_effects } = result
-
-    const energyLabel = parsed.energy_focus
-      ? parsed.energy_focus.charAt(0).toUpperCase() + parsed.energy_focus.slice(1)
-      : ''
-
-    const groupColours = {
-      1: '#2196f3',
-      2: '#d97706',
-      3: '#65a30d',
+    const parsed = result.parsed || {}
+    try {
+      openSessionPrint({
+        session: {
+          ...parsed,
+          date,
+          energy_system_focus: parsed.energy_focus,
+          groups: parsed.groups || {},
+          coach_intent: result.plan_alignment,
+        },
+        settings: presentation,
+        recommendations: result.per_swimmer || [],
+      })
+    } catch (error) {
+      alert(error.message)
     }
-
-    const groupsHtml = Object.entries(parsed.groups || {}).map(([num, grp]) => `
-      <div class="group-card">
-        <div class="group-header" style="border-left: 4px solid ${groupColours[num] || '#888'}">
-          <span class="group-num">Group ${num}</span>
-          <span class="group-label">${grp.label || ''}</span>
-        </div>
-        <ul class="set-list">
-          ${(grp.sets || []).map(s => `<li>${s}</li>`).join('')}
-        </ul>
-      </div>
-    `).join('')
-
-    const swimmerTableRows = (per_swimmer || []).map(sw => `
-      <tr>
-        <td>${sw.name}</td>
-        <td class="group-cell" style="color: ${groupColours[sw.suggested_group] || '#888'}">Group ${sw.suggested_group}</td>
-        <td class="note-cell">${sw.note || ''}</td>
-      </tr>
-    `).join('')
-
-    const swimmerTable = per_swimmer && per_swimmer.length > 0 ? `
-      <section class="section">
-        <h2 class="section-title">Swimmer Groups</h2>
-        <table class="swimmer-table">
-          <thead>
-            <tr><th>Swimmer</th><th>Group</th><th>Note</th></tr>
-          </thead>
-          <tbody>${swimmerTableRows}</tbody>
-        </table>
-      </section>
-    ` : ''
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Session Sheet — ${parsed.title || 'Training Session'}</title>
-  <style>
-    @font-face { font-family: 'Oxanium'; src: url('/fonts/Oxanium-Regular.ttf') format('truetype'); font-weight: 400; }
-    @font-face { font-family: 'Oxanium'; src: url('/fonts/Oxanium-SemiBold.ttf') format('truetype'); font-weight: 600; }
-    @font-face { font-family: 'Oxanium'; src: url('/fonts/Oxanium-Bold.ttf') format('truetype'); font-weight: 700; }
-    @font-face { font-family: 'Orbitron'; src: url('/fonts/Orbitron-Bold.ttf') format('truetype'); font-weight: 700; }
-
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: 'Oxanium', Arial, sans-serif;
-      background: #fff;
-      color: #111;
-      font-size: 13px;
-      padding: 24px 28px;
-      max-width: 800px;
-      margin: 0 auto;
-    }
-
-    /* Header */
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      border-bottom: 3px solid #2196f3;
-      padding-bottom: 14px;
-      margin-bottom: 18px;
-    }
-    .header-left {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-    .brand-lockup { display: flex; align-items: center; color: #15171a; }
-    .brand-mark { height: 42px; width: auto; margin-right: 10px; }
-    .brand-name { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; font-style: italic; letter-spacing: .13em; }
-    .brand-ai { align-self: flex-start; margin: -3px 0 0 5px; padding: 2px 5px; border-radius: 999px; background: #15171a; color: #fff; font-family: 'Orbitron', sans-serif; font-size: 7px; font-weight: 700; transform: skewX(-12.5deg); }
-    .club-name {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #1565c0;
-    }
-    .header-right {
-      text-align: right;
-    }
-    .session-title {
-      font-size: 20px;
-      font-weight: 700;
-      color: #111;
-      line-height: 1.2;
-    }
-    .session-meta {
-      font-size: 12px;
-      color: #555;
-      margin-top: 4px;
-      display: flex;
-      gap: 12px;
-      justify-content: flex-end;
-      flex-wrap: wrap;
-    }
-    .badge {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 999px;
-      font-size: 11px;
-      font-weight: 600;
-      background: #e3f2fd;
-      color: #1565c0;
-      border: 1px solid #90caf9;
-    }
-
-    /* Sections */
-    .section {
-      margin-bottom: 16px;
-    }
-    .section-title {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.1em;
-      color: #888;
-      margin-bottom: 8px;
-      padding-bottom: 4px;
-      border-bottom: 1px solid #e5e5e5;
-    }
-
-    /* Warm/cool */
-    .warmcool-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-    .warmcool-card {
-      background: #f9f9f9;
-      border-radius: 8px;
-      padding: 10px 12px;
-      border: 1px solid #e5e5e5;
-    }
-    .warmcool-label {
-      font-size: 10px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #888;
-      margin-bottom: 4px;
-    }
-
-    /* Groups */
-    .groups-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 12px;
-    }
-    .group-card {
-      border: 1px solid #e5e5e5;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    .group-header {
-      padding: 8px 10px;
-      background: #f5f5f5;
-      display: flex;
-      align-items: baseline;
-      gap: 8px;
-    }
-    .group-num {
-      font-size: 13px;
-      font-weight: 700;
-      color: #111;
-    }
-    .group-label {
-      font-size: 11px;
-      color: #666;
-    }
-    .set-list {
-      list-style: none;
-      padding: 8px 10px;
-    }
-    .set-list li {
-      padding: 4px 0;
-      border-bottom: 1px solid #f0f0f0;
-      font-size: 13px;
-      line-height: 1.4;
-    }
-    .set-list li:last-child {
-      border-bottom: none;
-    }
-
-    /* Swimmer table */
-    .swimmer-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 12px;
-    }
-    .swimmer-table th {
-      text-align: left;
-      padding: 6px 8px;
-      background: #f5f5f5;
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #666;
-      border-bottom: 1px solid #e5e5e5;
-    }
-    .swimmer-table td {
-      padding: 6px 8px;
-      border-bottom: 1px solid #f0f0f0;
-    }
-    .group-cell {
-      font-weight: 700;
-      white-space: nowrap;
-    }
-    .note-cell {
-      color: #444;
-    }
-
-    /* Coaching note */
-    .coaching-note {
-      background: #e3f2fd;
-      border: 1px solid #90caf9;
-      border-radius: 8px;
-      padding: 10px 14px;
-      font-size: 12px;
-      line-height: 1.6;
-      color: #444;
-    }
-
-    /* Footer */
-    .footer {
-      margin-top: 20px;
-      padding-top: 10px;
-      border-top: 1px solid #e5e5e5;
-      display: flex;
-      justify-content: space-between;
-      font-size: 10px;
-      color: #aaa;
-    }
-
-    @media print {
-      body { padding: 12px 16px; }
-      @page { margin: 12mm; }
-    }
-  </style>
-</head>
-<body>
-
-  <header class="header">
-    <div class="header-left">
-      <div class="brand-lockup">
-        <img src="/lanewatch-mark-ink.png" class="brand-mark" alt="" />
-        <span class="brand-name">LANEWATCH</span><span class="brand-ai">AI</span>
-      </div>
-    </div>
-    <div class="header-right">
-      <div class="session-title">${parsed.title || 'Training Session'}</div>
-      <div class="session-meta">
-        ${date ? `<span>${new Date(date + 'T12:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>` : ''}
-        ${parsed.total_volume_m ? `<span>${parsed.total_volume_m}</span>` : ''}
-        ${energyLabel ? `<span class="badge">${energyLabel}</span>` : ''}
-      </div>
-    </div>
-  </header>
-
-  ${(parsed.warm_up || parsed.cool_down) ? `
-  <section class="section">
-    <div class="warmcool-row">
-      ${parsed.warm_up ? `
-      <div class="warmcool-card">
-        <div class="warmcool-label">Warm Up</div>
-        <div>${parsed.warm_up}</div>
-      </div>` : '<div></div>'}
-      ${parsed.cool_down ? `
-      <div class="warmcool-card">
-        <div class="warmcool-label">Cool Down</div>
-        <div>${parsed.cool_down}</div>
-      </div>` : '<div></div>'}
-    </div>
-  </section>
-  ` : ''}
-
-  <section class="section">
-    <h2 class="section-title">Main Set</h2>
-    <div class="groups-grid">
-      ${groupsHtml}
-    </div>
-  </section>
-
-  ${swimmerTable}
-
-  ${expected_effects ? `
-  <section class="section">
-    <h2 class="section-title">Coach's Focus</h2>
-    <div class="coaching-note">${expected_effects}</div>
-  </section>
-  ` : ''}
-
-  <footer class="footer">
-    <span>Generated by LaneWatch AI</span>
-    <span>${new Date().toLocaleDateString('en-GB')}</span>
-  </footer>
-
-  <script>window.onload = () => window.print()</script>
-</body>
-</html>`
-
-    const win = window.open('', '_blank')
-    win.document.write(html)
-    win.document.close()
   }
 
   return (
@@ -435,7 +140,7 @@ export default function SessionPlanner() {
                 <div className="flex items-center gap-2 mt-1">
                   {result.parsed?.energy_focus && (
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${ENERGY_COLOURS[result.parsed.energy_focus] || 'bg-pool-700 text-pool-400 border-pool-600'}`}>
-                      {result.parsed.energy_focus}
+                      {displayEnergy(result.parsed.energy_focus).label}
                     </span>
                   )}
                   {result.parsed?.total_volume_m && (

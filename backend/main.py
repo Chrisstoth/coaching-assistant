@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes
-from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation
 from backend.auth_dep import verify_token
 
 
@@ -46,6 +46,10 @@ def _migrate_sessions():
         ("pool_slot_id",      "INTEGER REFERENCES pool_slots(id)"),
         ("cancel_reason",     "TEXT"),
         ("register_group_count", "INTEGER"),
+        ("energy_analysis", "JSON"),
+        ("microcycle_id", "INTEGER REFERENCES microcycles(id)"),
+        ("session_sequence", "INTEGER"),
+        ("cycle_code", "VARCHAR"),
         ("created_at",        "TIMESTAMP WITH TIME ZONE DEFAULT NOW()"),
     ]
     with engine.connect() as conn:
@@ -147,6 +151,17 @@ def _migrate_threads():
             db.commit()
 
 
+def _backfill_cycle_coordinates():
+    """Populate sequence numbers and unambiguous historical session links."""
+    from sqlalchemy.orm import Session as OrmSession
+    from backend.database import engine
+    from backend.services.cycle_codes import backfill_session_links
+
+    with OrmSession(engine) as db:
+        backfill_session_links(db)
+        db.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -155,6 +170,7 @@ async def lifespan(app: FastAPI):
     _migrate_session_entries()
     _migrate_planning_cohorts()
     _migrate_threads()
+    _backfill_cycle_coordinates()
     yield
 
 
@@ -193,6 +209,7 @@ app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"], de
 app.include_router(cohorts.router, prefix="/cohorts", tags=["Cohorts"], dependencies=_auth)
 app.include_router(planning_agent.router, prefix="/planning-agent", tags=["Planning Agent"], dependencies=_auth)
 app.include_router(qualification_standards.router, prefix="/qualification-standards", tags=["Qualification Standards"], dependencies=_auth)
+app.include_router(session_presentation.router, prefix="/session-presentation", tags=["Session Presentation"], dependencies=_auth)
 
 
 @app.get("/health")

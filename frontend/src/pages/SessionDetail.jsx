@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 const VOL_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
 const VOL_LABELS = { aerobic: 'Aerobic', threshold: 'Threshold', vo2: 'VO2', race_pace: 'Race Pace', lact_tol: 'Lact Tol', short_race_pace: 'Short Race', kicking: 'Kicking', sprint: 'Sprint' }
 const VOL_COLOURS = { aerobic: '#3b82f6', threshold: '#f59e0b', vo2: '#ef4444', race_pace: '#8b5cf6', lact_tol: '#ec4899', short_race_pace: '#06b6d4', kicking: '#10b981', sprint: '#f97316' }
 
-function VolumeEditor({ value = {}, onChange }) {
+function VolumeEditor({ value = {}, onChange, presentation = DEFAULT_PRESENTATION }) {
   const total = VOL_KEYS.reduce((s, k) => s + (Number(value[k]) || 0), 0)
   return (
     <div className="space-y-1">
@@ -14,7 +16,7 @@ function VolumeEditor({ value = {}, onChange }) {
         {VOL_KEYS.map(k => (
           <div key={k} className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: VOL_COLOURS[k] }} />
-            <label className="text-xs text-pool-400 w-20 flex-shrink-0">{VOL_LABELS[k]}</label>
+            <label className="text-xs text-pool-400 w-20 flex-shrink-0">{energyPresentation(k, presentation).label || VOL_LABELS[k]}</label>
             <input
               type="number"
               min="0"
@@ -35,7 +37,7 @@ function VolumeEditor({ value = {}, onChange }) {
   )
 }
 
-function VolumeDisplay({ breakdown }) {
+function VolumeDisplay({ breakdown, presentation = DEFAULT_PRESENTATION }) {
   if (!breakdown) return null
   const entries = VOL_KEYS.map(k => [k, breakdown[k] || 0]).filter(([, v]) => v > 0)
   if (!entries.length) return null
@@ -46,7 +48,7 @@ function VolumeDisplay({ breakdown }) {
       <div className="flex flex-wrap gap-1.5">
         {entries.map(([k, v]) => (
           <span key={k} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: VOL_COLOURS[k] + '33', color: VOL_COLOURS[k], border: `1px solid ${VOL_COLOURS[k]}55` }}>
-            {VOL_LABELS[k]} {(v / 1000).toFixed(2)}km
+            {energyPresentation(k, presentation).label || VOL_LABELS[k]} {(v / 1000).toFixed(2)}km
           </span>
         ))}
       </div>
@@ -67,10 +69,16 @@ export default function SessionDetail() {
   const [editingVolGroup, setEditingVolGroup] = useState(null)
   const [volDraft, setVolDraft] = useState({})
   const [savingVol, setSavingVol] = useState(false)
+  const [generatingIntelligence, setGeneratingIntelligence] = useState(false)
+  const [presentation, setPresentation] = useState(DEFAULT_PRESENTATION)
 
   useEffect(() => {
     if (id !== 'new') api.getSession(id).then(setSession)
   }, [id])
+
+  useEffect(() => {
+    api.getSessionPresentation().then(setPresentation).catch(() => {})
+  }, [])
 
   const startEditVol = (g) => {
     setEditingVolGroup(g.group_number)
@@ -89,138 +97,25 @@ export default function SessionDetail() {
     setSavingVol(false)
   }
 
+  const generateIntelligence = async () => {
+    setGeneratingIntelligence(true)
+    try {
+      const result = await api.generateSessionIntelligence(id, { refresh_energy: Boolean(session.energy_analysis) })
+      setSession(result.session)
+    } catch (error) {
+      alert(`Could not analyse session: ${error.message}`)
+    } finally {
+      setGeneratingIntelligence(false)
+    }
+  }
+
   const printSheet = () => {
     if (!session) return
-    const groupColours = { 1: '#2196f3', 2: '#d97706', 3: '#65a30d' }
-
-    const getSets = (g) => {
-      if (Array.isArray(g.sets)) return g.sets
-      if (g.sets?.raw) return g.sets.raw.split('\n').filter(Boolean)
-      if (typeof g.sets === 'string') return g.sets.split('\n').filter(Boolean)
-      return []
+    try {
+      openSessionPrint({ session, settings: presentation, recommendations })
+    } catch (error) {
+      alert(error.message)
     }
-
-    const groupsHtml = (session.groups || []).map(g => `
-      <div class="group-card">
-        <div class="group-header" style="border-left: 4px solid ${groupColours[g.group_number] || '#888'}">
-          <span class="group-num">Group ${g.group_number}</span>
-          ${g.description ? `<span class="group-label">${g.description}</span>` : ''}
-        </div>
-        <ul class="set-list">
-          ${getSets(g).map(s => `<li>${s}</li>`).join('') || '<li style="color:#aaa">No sets recorded</li>'}
-        </ul>
-      </div>
-    `).join('')
-
-    const swimmerRows = recommendations
-      ? recommendations.map(r => `
-          <tr>
-            <td>${r.name}</td>
-            <td class="group-cell" style="color:${groupColours[r.group] || '#888'}">Group ${r.group}</td>
-            <td class="note-cell">${r.reason || ''}</td>
-          </tr>`).join('')
-      : ''
-
-    const swimmerTable = swimmerRows ? `
-      <section class="section">
-        <h2 class="section-title">Swimmer Groups</h2>
-        <table class="swimmer-table">
-          <thead><tr><th>Swimmer</th><th>Group</th><th>Note</th></tr></thead>
-          <tbody>${swimmerRows}</tbody>
-        </table>
-      </section>` : ''
-
-    const energyLabel = session.energy_system_focus
-      ? session.energy_system_focus.charAt(0).toUpperCase() + session.energy_system_focus.slice(1)
-      : ''
-
-    const dateStr = session.date
-      ? new Date(session.date + 'T12:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
-      : ''
-
-    const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>Session Sheet — ${session.title || 'Training Session'}</title>
-  <style>
-    @font-face { font-family: 'Oxanium'; src: url('/fonts/Oxanium-Regular.ttf') format('truetype'); font-weight: 400; }
-    @font-face { font-family: 'Oxanium'; src: url('/fonts/Oxanium-SemiBold.ttf') format('truetype'); font-weight: 600; }
-    @font-face { font-family: 'Oxanium'; src: url('/fonts/Oxanium-Bold.ttf') format('truetype'); font-weight: 700; }
-    @font-face { font-family: 'Orbitron'; src: url('/fonts/Orbitron-Bold.ttf') format('truetype'); font-weight: 700; }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Oxanium', Arial, sans-serif; background: #fff; color: #111; font-size: 13px; padding: 24px 28px; max-width: 800px; margin: 0 auto; }
-    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #2196f3; padding-bottom: 14px; margin-bottom: 18px; }
-    .header-left { display: flex; align-items: center; gap: 14px; }
-    .brand-lockup { display: flex; align-items: center; color: #15171a; }
-    .brand-mark { height: 42px; width: auto; margin-right: 10px; }
-    .brand-name { font-family: 'Orbitron', sans-serif; font-size: 13px; font-weight: 700; font-style: italic; letter-spacing: .13em; }
-    .brand-ai { align-self: flex-start; margin: -3px 0 0 5px; padding: 2px 5px; border-radius: 999px; background: #15171a; color: #fff; font-family: 'Orbitron', sans-serif; font-size: 7px; font-weight: 700; transform: skewX(-12.5deg); }
-    .session-title { font-size: 20px; font-weight: 700; color: #111; line-height: 1.2; }
-    .session-meta { font-size: 12px; color: #555; margin-top: 4px; display: flex; gap: 12px; justify-content: flex-end; flex-wrap: wrap; }
-    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
-    .section { margin-bottom: 16px; }
-    .section-title { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #888; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #e5e5e5; }
-    .groups-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-    .group-card { border: 1px solid #e5e5e5; border-radius: 8px; overflow: hidden; }
-    .group-header { padding: 8px 10px; background: #f5f5f5; display: flex; align-items: baseline; gap: 8px; }
-    .group-num { font-size: 13px; font-weight: 700; color: #111; }
-    .group-label { font-size: 11px; color: #666; }
-    .set-list { list-style: none; padding: 8px 10px; }
-    .set-list li { padding: 4px 0; border-bottom: 1px solid #f0f0f0; font-size: 13px; line-height: 1.4; }
-    .set-list li:last-child { border-bottom: none; }
-    .swimmer-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    .swimmer-table th { text-align: left; padding: 6px 8px; background: #f5f5f5; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: #666; border-bottom: 1px solid #e5e5e5; }
-    .swimmer-table td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
-    .group-cell { font-weight: 700; white-space: nowrap; }
-    .note-cell { color: #444; }
-    .coaching-note { background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px; padding: 10px 14px; font-size: 12px; line-height: 1.6; color: #34404a; }
-    .footer { margin-top: 20px; padding-top: 10px; border-top: 1px solid #e5e5e5; display: flex; justify-content: space-between; font-size: 10px; color: #aaa; }
-    @media print { body { padding: 12px 16px; } @page { margin: 12mm; } }
-  </style>
-</head>
-<body>
-  <header class="header">
-    <div class="header-left">
-      <div class="brand-lockup">
-        <img src="/lanewatch-mark-ink.png" class="brand-mark" alt="" />
-        <span class="brand-name">LANEWATCH</span><span class="brand-ai">AI</span>
-      </div>
-    </div>
-    <div style="text-align:right">
-      <div class="session-title">${session.title || 'Training Session'}</div>
-      <div class="session-meta">
-        ${dateStr ? `<span>${dateStr}</span>` : ''}
-        ${session.squad ? `<span>${session.squad}</span>` : ''}
-        ${energyLabel ? `<span class="badge">${energyLabel}</span>` : ''}
-      </div>
-    </div>
-  </header>
-
-  ${session.coach_intent ? `
-  <section class="section">
-    <h2 class="section-title">Coach Intent</h2>
-    <div class="coaching-note">${session.coach_intent}</div>
-  </section>` : ''}
-
-  <section class="section">
-    <h2 class="section-title">Main Set</h2>
-    <div class="groups-grid">${groupsHtml}</div>
-  </section>
-
-  ${swimmerTable}
-
-  <footer class="footer">
-    <span>Generated by LaneWatch AI</span>
-    <span>${new Date().toLocaleDateString('en-GB')}</span>
-  </footer>
-  <script>window.onload = () => window.print()</script>
-</body>
-</html>`
-
-    const win = window.open('', '_blank')
-    win.document.write(html)
-    win.document.close()
   }
 
   const getRecommendations = async () => {
@@ -258,7 +153,10 @@ export default function SessionDetail() {
       <div className="flex items-center gap-3 pt-2">
         <button type="button" onClick={goBack} aria-label="Go back" className="text-pool-400 text-2xl">‹</button>
         <div className="flex-1">
-          <h1 className="text-lg font-bold">{session.title || 'Session'}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-bold">{session.title || 'Session'}</h1>
+            {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 border border-teal-700/40 rounded px-1.5 py-0.5">{session.cycle_code}</span>}
+          </div>
           <p className="text-pool-400 text-xs">
             {session.date}
             {(session.start_time || session.end_time) && (
@@ -273,6 +171,30 @@ export default function SessionDetail() {
           className="text-pool-600 hover:text-red-400 text-sm transition-colors ml-auto"
         >
           Delete
+        </button>
+      </div>
+
+      {session.cycle_context && (
+        <div className="bg-teal-900/15 border border-teal-700/35 rounded-xl p-3">
+          <p className="text-[10px] uppercase tracking-wide font-semibold text-teal-300">Cycle position · {session.cycle_code}</p>
+          <p className="text-xs text-pool-300 mt-1">
+            {[session.cycle_context.macrocycle_name, session.cycle_context.mesocycle_name, session.cycle_context.microcycle_label].filter(Boolean).join(' · ')}
+          </p>
+        </div>
+      )}
+
+      <div className="bg-pool-800 rounded-xl p-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-pool-200">Session intelligence</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">
+            {session.energy_analysis
+              ? `${session.energy_analysis.primary_emphasis || energyPresentation(session.energy_system_focus, presentation).label} · ${session.energy_analysis.density || 'unclear'} density`
+              : 'Estimate the prescribed dose and prepare personalised register questions.'}
+          </p>
+        </div>
+        <button onClick={generateIntelligence} disabled={generatingIntelligence || !session.groups?.length}
+          className="shrink-0 text-xs font-semibold text-teal-300 bg-teal-900/30 border border-teal-700/40 rounded-lg px-3 py-2 disabled:opacity-40">
+          {generatingIntelligence ? 'Analysing…' : session.energy_analysis ? 'Refresh AI' : 'Analyse'}
         </button>
       </div>
 
@@ -341,10 +263,10 @@ export default function SessionDetail() {
           {editingVolGroup === g.group_number ? (
             <div className="mt-3 pt-3 border-t border-pool-700">
               <p className="text-xs text-pool-400 mb-2">Volume breakdown (metres per zone)</p>
-              <VolumeEditor value={volDraft} onChange={setVolDraft} />
+              <VolumeEditor value={volDraft} onChange={setVolDraft} presentation={presentation} />
             </div>
           ) : (
-            <VolumeDisplay breakdown={g.volume_breakdown} />
+            <VolumeDisplay breakdown={g.volume_breakdown} presentation={presentation} />
           )}
         </div>
       ))}
@@ -402,7 +324,7 @@ export default function SessionDetail() {
 }
 
 
-function GroupVolumeToggle({ value, onChange }) {
+function GroupVolumeToggle({ value, onChange, presentation }) {
   const [open, setOpen] = useState(false)
   const total = VOL_KEYS.reduce((s, k) => s + (Number(value[k]) || 0), 0)
   return (
@@ -416,7 +338,7 @@ function GroupVolumeToggle({ value, onChange }) {
       </button>
       {open && (
         <div className="mt-2">
-          <VolumeEditor value={value} onChange={onChange} />
+          <VolumeEditor value={value} onChange={onChange} presentation={presentation} />
         </div>
       )}
     </div>
@@ -424,6 +346,7 @@ function GroupVolumeToggle({ value, onChange }) {
 }
 
 function NewSession() {
+  const { settings: presentation } = useSessionPresentation()
   const [form, setForm] = useState({
     date: new Date().toISOString().split('T')[0],
     start_time: '',
@@ -517,11 +440,10 @@ function NewSession() {
           onChange={(e) => setForm({ ...form, energy_system_focus: e.target.value })}
           className="w-full bg-pool-800 rounded-xl px-4 py-3 text-sm border border-pool-700 focus:border-accent-500 focus:outline-none"
         >
-          <option value="">Energy system (optional)</option>
-          <option value="aerobic">Aerobic</option>
-          <option value="threshold">Threshold</option>
-          <option value="speed">Speed</option>
-          <option value="recovery">Recovery</option>
+          <option value="">{presentation.terminology_name || 'Energy system'} (optional)</option>
+          {presentation.terminology_levels.map(level => (
+            <option key={level.id} value={level.canonical_zone}>{level.label}</option>
+          ))}
           <option value="mixed">Mixed</option>
         </select>
 
@@ -538,6 +460,7 @@ function NewSession() {
             <GroupVolumeToggle
               value={form.groups[n]?.volume_breakdown || {}}
               onChange={(v) => setGroup(n, 'volume_breakdown', v)}
+              presentation={presentation}
             />
           </div>
         ))}

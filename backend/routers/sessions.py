@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+import json
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from pydantic import BaseModel, Field
@@ -14,6 +15,8 @@ from backend.services.importer import (
 from backend.services import claude_service
 from backend.services.availability import availability_on_date
 from backend.services.openai_service import parse_whiteboard_photo
+from backend.services.cycle_codes import cycle_context, link_session
+from backend.services.terminology import coach_terminology_context
 
 router = APIRouter()
 
@@ -33,6 +36,7 @@ class SessionCreate(BaseModel):
     title: Optional[str] = None
     coach_intent: Optional[str] = None
     energy_system_focus: Optional[str] = None
+    energy_analysis: Optional[dict] = None
     coach_notes: Optional[str] = None
     groups: Optional[dict] = None   # {1: {description, sets}, 2: ..., 3: ...}
     individual_mods: Optional[dict] = None  # {"swimmer_name": "modification note"}
@@ -40,6 +44,8 @@ class SessionCreate(BaseModel):
     status: Optional[str] = 'completed'
     course: Optional[str] = None   # SCM / LCM
     register_group_count: Optional[int] = Field(default=None, ge=1, le=3)
+    microcycle_id: Optional[int] = None
+    session_sequence: Optional[int] = Field(default=None, ge=1)
 
 
 class CalendarStart(BaseModel):
@@ -73,16 +79,36 @@ class RegisterEntry(BaseModel):
 class RegisterSubmit(BaseModel):
     entries: list[RegisterEntry]
     run_ai: bool = True
+    session_complete: bool = True
 
 
 class ExcelImportConfirm(BaseModel):
     draft: dict
     target_session_id: Optional[int] = None
+    generate_predictions: bool = False
 
 
 # ---------------------------------------------------------------------------
 # Sessions CRUD
 # ---------------------------------------------------------------------------
+
+def _meaningful_group(content) -> bool:
+    if not isinstance(content, dict):
+        return False
+    if str(content.get("description") or "").strip():
+        return True
+    sets = content.get("sets")
+    if (isinstance(sets, list) and any(str(item or "").strip() for item in sets)) or (
+        not isinstance(sets, list) and str(sets or "").strip()
+    ):
+        return True
+    for value in (content.get("volume_breakdown") or {}).values():
+        try:
+            if float(value or 0) > 0:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
 
 @router.get("")
 def list_sessions(
@@ -100,6 +126,10 @@ def list_sessions(
 
 @router.post("", status_code=201)
 def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
+    meaningful_groups = {
+        group_num: content for group_num, content in (body.groups or {}).items()
+        if _meaningful_group(content)
+    }
     session = models.Session(
         date=body.date,
         start_time=body.start_time,
@@ -108,11 +138,12 @@ def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
         title=body.title,
         coach_intent=body.coach_intent,
         energy_system_focus=body.energy_system_focus,
+        energy_analysis=body.energy_analysis,
         coach_notes=body.coach_notes,
         planned_content=body.groups,
         individual_mods=body.individual_mods,
         register_group_count=(body.register_group_count if body.register_group_count is not None else (
-            len(body.groups) if body.groups else None
+            len(meaningful_groups) if meaningful_groups else None
         )),
         pool_slot_id=body.pool_slot_id,
         status=body.status or 'completed',
@@ -121,9 +152,15 @@ def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
     )
     db.add(session)
     db.flush()
+    target_micro = None
+    if body.microcycle_id:
+        target_micro = db.query(models.Microcycle).filter(models.Microcycle.id == body.microcycle_id).first()
+        if not target_micro:
+            raise HTTPException(status_code=422, detail="Microcycle not found")
+    link_session(session, db, microcycle=target_micro, session_sequence=body.session_sequence)
 
-    if body.groups:
-        for group_num, content in body.groups.items():
+    if meaningful_groups:
+        for group_num, content in meaningful_groups.items():
             sg = models.SessionGroup(
                 session_id=session.id,
                 group_number=int(group_num),
@@ -219,6 +256,8 @@ def start_calendar_session(body: CalendarStart, db: DBSession = Depends(get_db))
         source="calendar",
     )
     db.add(session)
+    db.flush()
+    link_session(session, db)
     db.commit()
     db.refresh(session)
     return _session_detail(session, db)
@@ -268,6 +307,8 @@ def cancel_calendar_session(body: CalendarCancel, db: DBSession = Depends(get_db
         source="calendar",
     )
     db.add(session)
+    db.flush()
+    link_session(session, db)
     db.commit()
     db.refresh(session)
     return {"session_id": session.id, "status": "cancelled", "cancel_reason": reason}
@@ -308,6 +349,10 @@ def dismiss_calendar_session(body: CalendarDismiss, db: DBSession = Depends(get_
         )
         db.add(session)
 
+    if not session.microcycle_id:
+        db.flush()
+        link_session(session, db)
+
     db.commit()
     db.refresh(session)
     return {"session_id": session.id, "status": session.status}
@@ -346,6 +391,20 @@ def update_session(
         if count is not None and count not in (1, 2, 3):
             raise HTTPException(status_code=422, detail="Register group count must be 1, 2 or 3")
         session.register_group_count = count
+    if "microcycle_id" in body or "session_sequence" in body:
+        microcycle_id = body.get("microcycle_id", session.microcycle_id)
+        micro = db.query(models.Microcycle).filter(models.Microcycle.id == microcycle_id).first() if microcycle_id else None
+        if microcycle_id and not micro:
+            raise HTTPException(status_code=422, detail="Microcycle not found")
+        if not micro:
+            session.microcycle_id = None
+            session.session_sequence = None
+            session.cycle_code = None
+        else:
+            sequence = body.get("session_sequence", session.session_sequence)
+            if sequence is not None and (not isinstance(sequence, int) or sequence < 1):
+                raise HTTPException(status_code=422, detail="Session sequence must be a positive integer")
+            link_session(session, db, microcycle=micro, session_sequence=sequence)
     # Allow updating group volume_breakdown per group
     if "groups" in body:
         groups = db.query(models.SessionGroup).filter(models.SessionGroup.session_id == session_id).all()
@@ -455,12 +514,16 @@ async def import_excel(
             "The workbook does not match the existing session selected from the home dashboard."
         )
     result["ai_review"] = None
+    result["ai_energy_analysis"] = None
     if ai_check:
         try:
-            result["ai_review"] = claude_service.review_session_import(result["draft"])
+            analysis = claude_service.analyse_session_energy(result["draft"], coach_terminology_context(db))
+            result["ai_review"] = analysis.pop("review", None)
+            claude_service.apply_energy_analysis_to_draft(result["draft"], analysis)
+            result["ai_energy_analysis"] = analysis
         except Exception:
             result["warnings"].append(
-                "The optional AI consistency check was unavailable; deterministic extraction still completed."
+                "The optional AI consistency and energy analysis was unavailable; deterministic extraction still completed and you can generate the dose estimate later."
             )
     return result
 
@@ -472,7 +535,23 @@ def confirm_excel_import(body: ExcelImportConfirm, db: DBSession = Depends(get_d
     except (TypeError, ValueError) as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _session_detail(session, db)
+    prediction_count = 0
+    intelligence_error = None
+    if body.generate_predictions:
+        try:
+            prediction_count = len(claude_service.generate_session_predictions(session, db))
+            db.commit()
+            db.refresh(session)
+        except Exception as exc:
+            db.rollback()
+            session = _get_or_404(session.id, db)
+            intelligence_error = str(exc)
+    payload = _session_detail(session, db)
+    payload["intelligence"] = {
+        "prediction_count": prediction_count,
+        "error": intelligence_error,
+    }
+    return payload
 
 
 @router.post("/import/excel/bulk", status_code=201)
@@ -529,6 +608,7 @@ async def import_photo(
     )
     db.add(session)
     db.flush()
+    link_session(session, db)
 
     for group_num, content_data in (extracted.get("groups") or {}).items():
         sg = models.SessionGroup(
@@ -541,6 +621,54 @@ async def import_photo(
 
     db.commit()
     return {"session_id": session.id, "extracted": extracted}
+
+
+# ---------------------------------------------------------------------------
+# Session intelligence: prescribed dose + pre-session swimmer questions
+# ---------------------------------------------------------------------------
+
+@router.post("/{session_id}/intelligence")
+def generate_session_intelligence(
+    session_id: int,
+    body: dict = Body(default={}),
+    db: DBSession = Depends(get_db),
+):
+    session = _get_or_404(session_id, db)
+    refresh_energy = bool(body.get("refresh_energy"))
+    swimmer_ids = body.get("swimmer_ids")
+
+    if refresh_energy or not session.energy_analysis:
+        draft = {
+            "title": session.title,
+            "coach_intent": session.coach_intent,
+            "groups": {
+                str(group.group_number): {
+                    "description": group.description,
+                    "sets": (group.sets or {}).get("raw") if isinstance(group.sets, dict) else group.sets,
+                    "items": (group.sets or {}).get("items") if isinstance(group.sets, dict) else None,
+                    "volume_breakdown": group.volume_breakdown,
+                }
+                for group in session.groups
+            },
+        }
+        analysis = claude_service.analyse_session_energy(draft, coach_terminology_context(db))
+        analysis.pop("review", None)
+        claude_service.apply_energy_analysis_to_draft(draft, analysis)
+        session.energy_analysis = analysis
+        session.energy_system_focus = analysis.get("energy_system_focus") or session.energy_system_focus
+        for group in session.groups:
+            content = (draft.get("groups") or {}).get(str(group.group_number)) or {}
+            if content.get("volume_breakdown"):
+                group.volume_breakdown = content["volume_breakdown"]
+
+    predictions = claude_service.generate_session_predictions(session, db, swimmer_ids=swimmer_ids)
+    db.commit()
+    db.refresh(session)
+    return {
+        "session": _session_detail(session, db),
+        "predictions": predictions,
+        "prediction_count": len(predictions),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -616,8 +744,8 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
             "group_done": e.group_done if e else None,
             "sub_group_done": e.sub_group_done if e else None,
             "coach_observation": e.coach_observation if e else None,
-            "ai_characterisation": e.ai_characterisation if e else None,
-            "ai_expected_response": e.ai_expected_response if e else None,
+            "ai_characterisation": _decode_ai_json(e.ai_characterisation) if e else None,
+            "ai_expected_response": _decode_ai_json(e.ai_expected_response) if e else None,
             "entry_id": e.id if e else None,
         })
     return result
@@ -660,23 +788,6 @@ def submit_register(
         entry.coach_observation = entry_data.coach_observation
         db.flush()
 
-        # AI characterisation if attended and AI requested
-        if body.run_ai and entry_data.attended and (entry_data.coach_observation or "").strip():
-            try:
-                characterisation = claude_service.characterise_session_entry(
-                    swimmer, session, entry, db
-                )
-                entry.ai_characterisation = characterisation
-                db.add(models.AIAnalysis(
-                    swimmer_id=swimmer.id,
-                    session_id=session_id,
-                    analysis_type="session_response",
-                    content=characterisation,
-                    model_used=claude_service.FAST_MODEL,
-                ))
-            except Exception as e:
-                entry.ai_characterisation = f"[AI error: {str(e)}]"
-
         # Mirror coach observation into swimmer observation log
         if entry_data.attended and entry_data.coach_observation and entry_data.coach_observation.strip():
             _energy_to_obs = {
@@ -715,11 +826,74 @@ def submit_register(
             "swimmer_name": swimmer.name,
             "attended": entry.attended,
             "ai_characterisation": entry.ai_characterisation,
+            "ai_expected_response": _decode_ai_json(entry.ai_expected_response),
         })
+
+    entry_rows = db.query(models.SessionEntry).filter(
+        models.SessionEntry.session_id == session_id,
+    ).all()
+    entry_by_swimmer = {row.swimmer_id: row for row in entry_rows}
+
+    # Predictions are generated once in a batch and cached. At register time
+    # they remain hypotheses/questions; only the coach supplies observations.
+    if body.run_ai:
+        attended_ids = [row.swimmer_id for row in body.entries if row.attended]
+        try:
+            claude_service.generate_session_predictions(session, db, swimmer_ids=attended_ids)
+        except Exception as exc:
+            for result in results:
+                if result["swimmer_id"] in attended_ids:
+                    result["prediction_error"] = str(exc)
+
+    # Only interpret response after the coach explicitly finishes the session.
+    if body.run_ai and body.session_complete:
+        try:
+            assessments = claude_service.characterise_session_entries_batch(session, entry_rows, db)
+            for swimmer_id, assessment in assessments.items():
+                entry = entry_by_swimmer.get(swimmer_id)
+                if not entry:
+                    continue
+                encoded = json.dumps(assessment, ensure_ascii=False)
+                entry.ai_characterisation = encoded
+                db.query(models.AIAnalysis).filter(
+                    models.AIAnalysis.swimmer_id == swimmer_id,
+                    models.AIAnalysis.session_id == session_id,
+                    models.AIAnalysis.analysis_type == "session_response",
+                ).delete()
+                db.add(models.AIAnalysis(
+                    swimmer_id=swimmer_id,
+                    session_id=session_id,
+                    analysis_type="session_response",
+                    content=encoded,
+                    model_used=claude_service.FAST_MODEL,
+                ))
+                observation = db.query(models.SwimmerObservation).filter(
+                    models.SwimmerObservation.swimmer_id == swimmer_id,
+                    models.SwimmerObservation.session_id == session_id,
+                ).first()
+                if observation:
+                    observation.ai_summary = assessment.get("observed_response") or assessment.get("next_session_action")
+        except Exception as exc:
+            for result in results:
+                entry = entry_by_swimmer.get(result["swimmer_id"])
+                if entry and entry.attended and (entry.coach_observation or "").strip():
+                    result["assessment_error"] = str(exc)
+
+    for result in results:
+        entry = entry_by_swimmer.get(result["swimmer_id"])
+        if entry:
+            result["ai_expected_response"] = _decode_ai_json(entry.ai_expected_response)
+            result["ai_characterisation"] = _decode_ai_json(entry.ai_characterisation)
 
     # Create SwimmerSessionLoad records for attended swimmers
     for entry_data in body.entries:
+        if not body.session_complete:
+            continue
         if not entry_data.attended or not entry_data.group_done:
+            db.query(models.SwimmerSessionLoad).filter(
+                models.SwimmerSessionLoad.swimmer_id == entry_data.swimmer_id,
+                models.SwimmerSessionLoad.session_id == session_id,
+            ).delete()
             continue
         group = next((g for g in session.groups if g.group_number == entry_data.group_done), None)
         if not group:
@@ -763,8 +937,12 @@ def submit_register(
                 volume_breakdown=volume,
             ))
 
-    # Saving the register is the explicit signal that this session is finished.
-    session.status = "completed"
+    # Attendance may be taken at the start. Completion is a separate coach
+    # action after observations can be recorded.
+    if body.session_complete:
+        session.status = "completed"
+    elif session.status != "completed":
+        session.status = "active"
     db.commit()
     return results
 
@@ -933,7 +1111,17 @@ def _get_or_404(session_id: int, db: DBSession) -> models.Session:
     return session
 
 
+def _decode_ai_json(value):
+    if not value or not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return value
+
+
 def _session_summary(s: models.Session) -> dict:
+    context = cycle_context(s)
     return {
         "id": s.id,
         "date": s.date,
@@ -943,12 +1131,17 @@ def _session_summary(s: models.Session) -> dict:
         "title": s.title or (s.pool_slot.label if s.pool_slot else None),
         "source": s.source,
         "energy_system_focus": s.energy_system_focus,
+        "energy_analysis": s.energy_analysis,
         "coach_intent": s.coach_intent,
         "status": s.status or "completed",
         "pool_slot_id": s.pool_slot_id,
         "cancel_reason": s.cancel_reason,
         "course": s.course,
         "register_group_count": s.register_group_count,
+        "microcycle_id": s.microcycle_id,
+        "session_sequence": s.session_sequence,
+        "cycle_code": s.cycle_code,
+        "cycle_context": context,
     }
 
 
@@ -1008,6 +1201,8 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
         "has_blocks": slot.has_blocks if slot else None,
         "pool_config": _effective_pool_config(slot, day_date),
         "alternate_ends": slot.alternate_ends if slot else False,
+        "cycle_code": session.cycle_code if session else None,
+        "cycle_context": cycle_context(session) if session else None,
     }
 
 

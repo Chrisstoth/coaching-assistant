@@ -1,0 +1,6 @@
+interface:
+  display_name: "LaneWatch Profile Builder"
+  short_description: "Build reviewable swimmer foundation profiles"
+  default_prompt: "Use $lanewatch-profile-builder to interview me and prepare reviewed swimmer foundation profiles for LaneWatch."
+policy:
+  allow_implicit_invocation: false

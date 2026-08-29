@@ -186,10 +186,20 @@ class Session(Base):
     coach_notes = Column(Text, nullable=True)
     coach_intent = Column(Text, nullable=True)           # why this session was planned
     energy_system_focus = Column(String, nullable=True) # aerobic / threshold / speed / recovery
+    # AI-estimated external training dose. Coach-authored observations remain
+    # separate on SessionEntry and are never fabricated into this structure.
+    energy_analysis = Column(JSON, nullable=True)
     individual_mods = Column(JSON, nullable=True)        # {"swimmer_name": "modification note"}
     # How many distinct programmes were actually run. Null means the coach has
     # not confirmed it yet; 1 means the whole squad completed the same work.
     register_group_count = Column(Integer, nullable=True)
+
+    # Stable link into the season-planning hierarchy. ``cycle_code`` is the
+    # human-facing coordinate (for example 1.2.1.2); database relationships
+    # remain the source of truth.
+    microcycle_id = Column(Integer, ForeignKey("microcycles.id"), nullable=True, index=True)
+    session_sequence = Column(Integer, nullable=True)
+    cycle_code = Column(String, nullable=True, index=True)
 
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 
@@ -207,6 +217,7 @@ class Session(Base):
     groups = relationship("SessionGroup", back_populates="session", cascade="all, delete-orphan")
     entries = relationship("SessionEntry", back_populates="session", cascade="all, delete-orphan")
     analyses = relationship("AIAnalysis", back_populates="session")
+    microcycle = relationship("Microcycle", back_populates="linked_sessions")
 
 
 class SessionGroup(Base):
@@ -792,6 +803,18 @@ class CoachingConversation(Base):
     profile = relationship("CoachingProfile", back_populates="conversations")
 
 
+class SessionPresentationSettings(Base):
+    """Singleton club branding and coach-facing intensity terminology."""
+    __tablename__ = "session_presentation_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    club_name = Column(String, nullable=True)
+    logo_data_url = Column(Text, nullable=True)
+    terminology_name = Column(String, nullable=False, default="LaneWatch energy zones")
+    terminology_levels = Column(JSON, nullable=False, default=list)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 # ---------------------------------------------------------------------------
 # Coach AI chat — open-ended assistant conversation
 # ---------------------------------------------------------------------------
@@ -889,6 +912,7 @@ class SeasonBlock(Base):
     __tablename__ = "season_blocks"
     id = Column(Integer, primary_key=True, index=True)
     macro_id = Column(Integer, ForeignKey("training_macros.id"), nullable=True)
+    sequence_index = Column(Integer, default=0)
     name = Column(String, nullable=False)
     squad = Column(String, nullable=True)
     phase_type = Column(String, nullable=True)  # base / build / peak / taper / competition / recovery / transition
@@ -910,6 +934,7 @@ class Microcycle(Base):
     id = Column(Integer, primary_key=True, index=True)
     macro_id = Column(Integer, ForeignKey("training_macros.id"), nullable=True, index=True)
     block_id = Column(Integer, ForeignKey("season_blocks.id"), nullable=True, index=True)
+    sequence_index = Column(Integer, default=0)
     squad = Column(String, nullable=True)
     week_start = Column(Date, nullable=False, index=True)
     week_end = Column(Date, nullable=False)
@@ -927,6 +952,7 @@ class Microcycle(Base):
 
     macro = relationship("TrainingMacro", back_populates="microcycles")
     block = relationship("SeasonBlock", back_populates="microcycles")
+    linked_sessions = relationship("Session", back_populates="microcycle")
 
 
 class PlanningCohort(Base):

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import useLongPress from '../hooks/useLongPress'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 const ENERGY_COLOURS = {
   aerobic: 'bg-blue-900 text-blue-300',
@@ -12,6 +13,8 @@ const ENERGY_COLOURS = {
 
 function SessionCard({ s, onLongPress }) {
   const navigate = useNavigate()
+  const { energy } = useSessionPresentation()
+  const energyDisplay = energy(s.energy_system_focus)
   const eColour = ENERGY_COLOURS[s.energy_system_focus] || 'bg-pool-700 text-pool-400'
   const longPress = useLongPress(
     () => onLongPress(s),
@@ -25,7 +28,10 @@ function SessionCard({ s, onLongPress }) {
     >
       <div className="flex justify-between items-start">
         <div className="flex-1">
-          <p className="font-medium text-sm">{s.title || 'Session'}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-medium text-sm">{s.title || 'Session'}</p>
+            {s.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5">{s.cycle_code}</span>}
+          </div>
           <p className="text-pool-400 text-xs mt-0.5">
             {s.date}
             {(s.start_time || s.end_time) && (
@@ -39,7 +45,7 @@ function SessionCard({ s, onLongPress }) {
         <div className="flex flex-col items-end gap-1.5 ml-3">
           {s.energy_system_focus && (
             <span className={`text-xs rounded-full px-2 py-0.5 ${eColour}`}>
-              {s.energy_system_focus}
+              {energyDisplay.label}
             </span>
           )}
           <Link

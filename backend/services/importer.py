@@ -844,11 +844,17 @@ def save_session_xlsx_draft(
     session.coach_intent = draft.get("coach_intent")
     session.coach_notes = draft.get("coach_notes")
     session.energy_system_focus = draft.get("energy_system_focus")
+    session.energy_analysis = draft.get("energy_analysis") or session.energy_analysis
     session.planned_content = groups
     session.register_group_count = len(groups) if groups else None
     session.pool_slot_id = slot.id if slot else session.pool_slot_id
     session.course = draft.get("course") or (slot.course if slot else session.course)
     session.source = "excel"
+
+    # Preserve a plan coordinate when updating a materialised session, or
+    # attach an unlinked import to the one unambiguous weekly plan for its date.
+    from backend.services.cycle_codes import link_session
+    link_session(session, db)
 
     db.query(models.SessionGroup).filter(models.SessionGroup.session_id == session.id).delete()
     for group_number, content in groups.items():
@@ -858,7 +864,10 @@ def save_session_xlsx_draft(
             group_number=int(group_number),
             description=content.get("description", ""),
             sets={"raw": content.get("sets", ""), "items": content.get("items") or []},
-            volume_breakdown={"session_total": total_metres} if total_metres else None,
+            volume_breakdown=(
+                content.get("volume_breakdown")
+                or ({"session_total": total_metres} if total_metres else None)
+            ),
         ))
     db.commit()
     db.refresh(session)

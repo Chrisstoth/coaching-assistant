@@ -13,7 +13,12 @@ from sqlalchemy.orm import Session as DBSession
 from backend import models
 from backend.services.availability import availability_ranges, is_excused
 from backend.services.event_normalizer import canonicalize_event, event_parts
-from backend.services.profile_status import build_profile_status
+from backend.services.profile_status import (
+    FOUNDATION_KEY_ALIASES,
+    LIVING_PROFILE_TYPES,
+    build_profile_status,
+)
+from backend.services.terminology import coach_terminology_context
 
 _client: Optional[anthropic.Anthropic] = None
 _client_proxy = None
@@ -169,6 +174,393 @@ Return an empty issues array when the extraction is internally consistent."""
         "issues": issues,
         "summary": str(parsed.get("summary") or ("No consistency issues found." if not issues else "Review suggested."))[:300],
         "model": FAST_MODEL,
+    }
+
+
+SESSION_ENERGY_KEYS = [
+    "aerobic", "threshold", "vo2", "race_pace", "lact_tol",
+    "short_race_pace", "kicking", "sprint",
+]
+
+
+def _clean_zone_breakdown(value: object) -> dict:
+    raw = value if isinstance(value, dict) else {}
+    cleaned = {}
+    for key in SESSION_ENERGY_KEYS:
+        try:
+            metres = max(0, int(round(float(raw.get(key, 0) or 0))))
+        except (TypeError, ValueError):
+            metres = 0
+        cleaned[key] = metres
+    return cleaned
+
+
+def analyse_session_energy(draft: dict, coach_language: str = "") -> dict:
+    """Estimate programme dose from sets, durations, send-offs and recovery.
+
+    This is deliberately labelled as an estimate of the prescribed session,
+    not a measurement of any swimmer's physiological response.
+    """
+    compact_groups = {}
+    for key, group in (draft.get("groups") or {}).items():
+        if not isinstance(group, dict):
+            continue
+        compact_groups[str(key)] = {
+            "description": group.get("description"),
+            "sets": group.get("sets"),
+            "items": group.get("items"),
+            "stated_total_metres": group.get("total_metres"),
+        }
+    prompt = f"""Analyse this swimming session as a prescribed external training dose.
+Use repetition duration/distance, send-off, likely work time, recovery, work-to-rest ratio,
+intensity wording, accumulated repetitions, stroke and kick content. Energy systems overlap:
+classify the primary training emphasis of each metre and state uncertainty. Do not claim to
+measure swimmer fatigue or actual metabolic contribution.
+
+SESSION:
+{json.dumps({"title": draft.get("title"), "intent": draft.get("coach_intent"), "groups": compact_groups}, ensure_ascii=False)}
+
+{coach_language}
+
+Return JSON only:
+{{
+  "review": {{"status":"ok|check","issues":["short concrete issue"],"summary":"one short sentence"}},
+  "energy_system_focus": "aerobic|threshold|vo2|race_pace|lact_tol|sprint|recovery|mixed",
+  "primary_emphasis": "short plain-English description",
+  "density": "low|moderate|high|very_high",
+  "total_metres": 0,
+  "group_breakdowns": {{
+    "1": {{
+      "total_metres": 0,
+      "zones": {{"aerobic":0,"threshold":0,"vo2":0,"race_pace":0,"lact_tol":0,"short_race_pace":0,"kicking":0,"sprint":0}},
+      "work_rest_summary": "short description",
+      "likely_cost": "short description"
+    }}
+  }},
+  "segments": [{{"label":"set label","metres":0,"zone":"one exact zone key","reason":"brief work/rest rationale"}}],
+  "assumptions": ["important assumption"],
+  "confidence": "low|moderate|high"
+}}
+
+Rules:
+- Group zone metres should sum to that group's total whenever distances are available.
+- Kicking is a content category here; count kick metres under kicking rather than double-counting.
+- Use work/rest structure over labels when they conflict.
+- Keep canonical zone keys exactly as specified in JSON. In plain-English fields such as primary_emphasis,
+  work_rest_summary, likely_cost and reasons, use the coach's terminology when supplied.
+- Keep segments and assumptions concise."""
+    response = create_message(
+        model=FAST_MODEL,
+        operation="analyse_session_energy",
+        max_tokens=1400,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parsed = json.loads(_strip_json(response.content[0].text))
+    group_breakdowns = {}
+    for key, value in (parsed.get("group_breakdowns") or {}).items():
+        if not isinstance(value, dict):
+            continue
+        zones = _clean_zone_breakdown(value.get("zones"))
+        total = sum(zones.values())
+        group_breakdowns[str(key)] = {
+            "total_metres": total,
+            "zones": zones,
+            "work_rest_summary": str(value.get("work_rest_summary") or "")[:300],
+            "likely_cost": str(value.get("likely_cost") or "")[:300],
+        }
+    total_metres = max((row["total_metres"] for row in group_breakdowns.values()), default=0)
+    return {
+        "version": 1,
+        "kind": "ai_estimated_prescribed_dose",
+        "energy_system_focus": str(parsed.get("energy_system_focus") or "mixed")[:40],
+        "primary_emphasis": str(parsed.get("primary_emphasis") or "")[:300],
+        "density": str(parsed.get("density") or "moderate")[:30],
+        "total_metres": total_metres or int(parsed.get("total_metres") or 0),
+        "group_breakdowns": group_breakdowns,
+        "segments": [row for row in (parsed.get("segments") or []) if isinstance(row, dict)][:20],
+        "assumptions": [str(row)[:240] for row in (parsed.get("assumptions") or [])[:8]],
+        "confidence": str(parsed.get("confidence") or "moderate")[:30],
+        "model": FAST_MODEL,
+        "review": {
+            "status": "check" if (parsed.get("review") or {}).get("issues") else "ok",
+            "issues": [str(row)[:240] for row in ((parsed.get("review") or {}).get("issues") or [])[:6]],
+            "summary": str((parsed.get("review") or {}).get("summary") or "No consistency issues found.")[:300],
+            "model": FAST_MODEL,
+        },
+    }
+
+
+def apply_energy_analysis_to_draft(draft: dict, analysis: dict) -> dict:
+    """Attach a reviewed AI dose estimate to an extracted draft."""
+    draft["energy_analysis"] = analysis
+    draft["energy_system_focus"] = analysis.get("energy_system_focus")
+    groups = draft.get("groups") or {}
+    for key, breakdown in (analysis.get("group_breakdowns") or {}).items():
+        group = groups.get(str(key)) or groups.get(int(key) if str(key).isdigit() else key)
+        if isinstance(group, dict):
+            group["volume_breakdown"] = breakdown.get("zones") or {}
+            if breakdown.get("total_metres"):
+                group["total_metres"] = breakdown["total_metres"]
+    return draft
+
+
+def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, db: DBSession) -> dict:
+    recent_entries = (
+        db.query(models.SessionEntry, models.Session)
+        .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+        .filter(
+            models.SessionEntry.swimmer_id == swimmer.id,
+            models.SessionEntry.attended.is_(True),
+            models.Session.date < session.date,
+        )
+        .order_by(models.Session.date.desc())
+        .limit(5)
+        .all()
+    )
+    recent_session_ids = [prior.id for _, prior in recent_entries]
+    recent_loads = {
+        row.session_id: row for row in db.query(models.SwimmerSessionLoad).filter(
+            models.SwimmerSessionLoad.swimmer_id == swimmer.id,
+            models.SwimmerSessionLoad.session_id.in_(recent_session_ids),
+        ).all()
+    } if recent_session_ids else {}
+    recent = []
+    for entry, prior in recent_entries:
+        load = recent_loads.get(prior.id)
+        recent.append({
+            "date": prior.date.isoformat(),
+            "focus": prior.energy_system_focus,
+            "cycle_code": prior.cycle_code,
+            "group_done": entry.group_done,
+            "zone_load": load.volume_breakdown if load else None,
+            "observation": entry.coach_observation,
+            "prior_assessment": entry.ai_characterisation,
+        })
+
+    planned_group = None
+    planned_sub_group = None
+    for group in session.groups:
+        if swimmer.id in (group.target_swimmer_ids or []):
+            planned_group = group.group_number
+        for sub_group in group.sub_groups or []:
+            if swimmer.id in (sub_group.swimmer_ids or []):
+                planned_group = group.group_number
+                planned_sub_group = sub_group.label
+    macro = session.microcycle.macro if session.microcycle else None
+    if not macro and session.microcycle and session.microcycle.block:
+        macro = session.microcycle.block.macro
+    if not planned_group and macro and macro.group_definitions:
+        for label, definition in macro.group_definitions.items():
+            if not isinstance(definition, dict):
+                continue
+            if swimmer.id not in (definition.get("swimmer_ids") or []):
+                continue
+            try:
+                planned_group = int(str(label).lower().replace("group", "").replace("g", "").strip())
+            except ValueError:
+                planned_group = label
+            break
+    training_profile = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(
+            models.SwimmerProfileVersion.swimmer_id == swimmer.id,
+            models.SwimmerProfileVersion.profile_type == "training",
+        )
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .first()
+    )
+    active_events = db.query(models.SwimmerLoadEvent).filter(
+        models.SwimmerLoadEvent.swimmer_id == swimmer.id,
+        models.SwimmerLoadEvent.date_from <= session.date,
+        models.SwimmerLoadEvent.resolved.is_(False),
+    ).all()
+    return {
+        "swimmer_id": swimmer.id,
+        "name": swimmer.name,
+        "dob": swimmer.dob.isoformat() if swimmer.dob else None,
+        "target_events": swimmer.target_events or [],
+        "strengths": swimmer.strengths,
+        "development": swimmer.weaknesses,
+        "physical_profile": swimmer.physical_profile or {},
+        "profile_notes": (swimmer.profile_notes or "")[:600],
+        "training_response_profile": training_profile.data if training_profile else {},
+        "planned_group": planned_group,
+        "planned_sub_group": planned_sub_group,
+        "recent_observed_sessions": recent,
+        "active_load_events": [{"type": row.event_type, "severity": row.severity, "description": row.description} for row in active_events],
+    }
+
+
+def generate_session_predictions(
+    session: models.Session,
+    db: DBSession,
+    swimmer_ids: Optional[list[int]] = None,
+) -> list[dict]:
+    """Create cached pre-session predictions and focused coach questions in one call."""
+    if swimmer_ids is None and not session.squad:
+        return []
+    query = db.query(models.Swimmer).filter(models.Swimmer.status == "active")
+    if swimmer_ids is not None:
+        query = query.filter(models.Swimmer.id.in_(swimmer_ids))
+    elif session.squad:
+        query = query.filter(models.Swimmer.squad == session.squad)
+    swimmers = query.order_by(models.Swimmer.name).all()
+    if not swimmers:
+        return []
+
+    existing_entries = {
+        row.swimmer_id: row for row in db.query(models.SessionEntry).filter(
+            models.SessionEntry.session_id == session.id,
+            models.SessionEntry.swimmer_id.in_([row.id for row in swimmers]),
+        ).all()
+    }
+    pending = [row for row in swimmers if not existing_entries.get(row.id) or not existing_entries[row.id].ai_expected_response]
+    if not pending:
+        cached = []
+        for swimmer in swimmers:
+            value = existing_entries[swimmer.id].ai_expected_response
+            try:
+                cached.append(json.loads(value))
+            except (TypeError, json.JSONDecodeError):
+                cached.append({
+                    "swimmer_id": swimmer.id,
+                    "predicted_response": str(value),
+                    "kind": "legacy_prediction",
+                })
+        return cached
+
+    from backend.services.cycle_codes import cycle_context
+    cycle = cycle_context(session)
+    session_groups = [{
+        "group_number": group.group_number,
+        "description": group.description,
+        "sets": group.sets,
+        "volume_breakdown": group.volume_breakdown,
+    } for group in session.groups]
+    briefs = [_prediction_swimmer_brief(row, session, db) for row in pending]
+    prompt = f"""Prepare pre-session coaching predictions for the swimmers below.
+This is a hypothesis and question-generation task, not an observation task. Never state that a swimmer
+is fatigued, struggled, maintained technique, or completed work unless the supplied historical coach
+observations say so. The coach is the source of truth for what happens today.
+
+SESSION:
+{json.dumps({"date": session.date.isoformat(), "title": session.title, "intent": session.coach_intent, "cycle": cycle, "energy_analysis": session.energy_analysis, "groups": session_groups}, ensure_ascii=False)}
+
+SWIMMERS:
+{json.dumps(briefs, ensure_ascii=False)}
+
+Return JSON only as an array with exactly one item per supplied swimmer:
+[{{
+  "swimmer_id": 1,
+  "predicted_response": "brief hypothesis",
+  "relative_load": "low|appropriate|high|unclear",
+  "fatigue_cost": "low|moderate|high|unclear",
+  "expected_recovery": "brief range with uncertainty",
+  "training_emphasis": "what adaptation this session is expected to emphasise for them",
+  "watch_question": "one specific poolside-observable question, or null",
+  "watch_reason": "why this is worth checking, tied to supplied evidence, or null",
+  "priority": 0,
+  "evidence": ["specific supplied fact"],
+  "next_session_consideration": "provisional guidance, explicitly dependent on today's coach observation"
+}}]
+
+Priority: 0=no question, 1=useful, 2=important, 3=high concern. Ask only when prior evidence,
+the swimmer profile, an active load event, or today's technical goal makes the answer genuinely useful.
+Questions must be observable, e.g. pace consistency, stroke count/length, technique under fatigue,
+recovery between repetitions, or whether planned quality was completed. Do not ask generic questions."""
+    response = create_message(
+        model=FAST_MODEL,
+        operation="generate_session_predictions",
+        max_tokens=min(5000, 450 + len(pending) * 180),
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parsed = json.loads(_strip_json(response.content[0].text))
+    by_id = {int(row.get("swimmer_id")): row for row in parsed if isinstance(row, dict) and row.get("swimmer_id")}
+    saved = []
+    for swimmer in pending:
+        prediction = by_id.get(swimmer.id) or {
+            "swimmer_id": swimmer.id,
+            "predicted_response": "Insufficient evidence for a personalised prediction.",
+            "relative_load": "unclear", "fatigue_cost": "unclear", "expected_recovery": "unclear",
+            "training_emphasis": session.energy_system_focus or "unspecified",
+            "watch_question": None, "watch_reason": None, "priority": 0,
+            "evidence": [], "next_session_consideration": "Record a coach observation before adjusting the next session.",
+        }
+        prediction["kind"] = "ai_prediction_not_observation"
+        prediction["session_id"] = session.id
+        entry = existing_entries.get(swimmer.id)
+        if not entry:
+            entry = models.SessionEntry(session_id=session.id, swimmer_id=swimmer.id)
+            db.add(entry)
+            existing_entries[swimmer.id] = entry
+        entry.ai_expected_response = json.dumps(prediction, ensure_ascii=False)
+        saved.append(prediction)
+    db.flush()
+    return saved
+
+
+def characterise_session_entries_batch(
+    session: models.Session,
+    entries: list[models.SessionEntry],
+    db: DBSession,
+) -> dict[int, dict]:
+    """Interpret coach observations for multiple swimmers in one post-session call."""
+    observed = [row for row in entries if row.attended and (row.coach_observation or "").strip()]
+    if not observed:
+        return {}
+    from backend.services.cycle_codes import cycle_context
+    swimmers = {row.id: row for row in db.query(models.Swimmer).filter(
+        models.Swimmer.id.in_([entry.swimmer_id for entry in observed]),
+    ).all()}
+    rows = []
+    for entry in observed:
+        swimmer = swimmers.get(entry.swimmer_id)
+        if not swimmer:
+            continue
+        try:
+            prediction = json.loads(entry.ai_expected_response) if entry.ai_expected_response else None
+        except (TypeError, json.JSONDecodeError):
+            prediction = entry.ai_expected_response
+        rows.append({
+            "swimmer": _prediction_swimmer_brief(swimmer, session, db),
+            "group_done": entry.group_done,
+            "sub_group_done": entry.sub_group_done,
+            "prediction": prediction,
+            "coach_observation_today": entry.coach_observation,
+        })
+    prompt = f"""Interpret the coach's post-session observations. The coach observation is the only evidence
+of what happened today. Compare it with the cached pre-session prediction, swimmer history, session dose
+and cycle position. Do not add unobserved symptoms, pace, heart rate, fatigue or technical outcomes.
+
+SESSION:
+{json.dumps({"id": session.id, "date": session.date.isoformat(), "title": session.title, "intent": session.coach_intent, "cycle": cycle_context(session), "energy_analysis": session.energy_analysis}, ensure_ascii=False)}
+
+OBSERVED SWIMMERS:
+{json.dumps(rows, ensure_ascii=False)}
+
+Return JSON only as an array:
+[{{
+  "swimmer_id": 1,
+  "observed_response": "what the coach's note supports",
+  "prediction_comparison": "confirmed|partly_confirmed|not_confirmed|unclear, with one sentence",
+  "fatigue_and_recovery": "cautious interpretation and expected recovery",
+  "next_session_action": "one practical adjustment or thing to retain",
+  "future_watchpoint": "one specific question for the next relevant session, or null",
+  "profile_evidence": "whether this is new evidence, repeated evidence, or too little to update a profile",
+  "confidence": "low|moderate|high"
+}}]
+
+Keep each field short. A single observation must not redefine the swimmer's profile."""
+    response = create_message(
+        model=FAST_MODEL,
+        operation="characterise_session_entries_batch",
+        max_tokens=min(4000, 500 + len(rows) * 220),
+        messages=[{"role": "user", "content": prompt}],
+    )
+    parsed = json.loads(_strip_json(response.content[0].text))
+    return {
+        int(row["swimmer_id"]): row for row in parsed
+        if isinstance(row, dict) and row.get("swimmer_id")
     }
 
 
@@ -1080,6 +1472,9 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
                     source="calendar",
                 )
                 db.add(session)
+                db.flush()
+                from backend.services.cycle_codes import link_session
+                link_session(session, db)
         session.status = "cancelled"
         session.cancel_reason = tool_input["reason"].strip()
         db.commit()
@@ -1304,6 +1699,9 @@ def get_system_prompt(
         .first()
     )
     parts = [BASE_SYSTEM, f"---\n{_current_season_prompt_context(db)}"]
+    terminology = coach_terminology_context(db)
+    if terminology:
+        parts.append(f"---\n{terminology}")
     if profile:
         coaching_context = _coaching_context_for_prompt(
             profile,
@@ -1387,6 +1785,9 @@ def get_season_plan_system_prompt(db: DBSession, macro_id: int = None) -> str:
     """Build the system prompt for a season planning thread — includes macro/meso context."""
     from datetime import date as date_type
     parts = [SEASON_PLAN_BASE, f"---\n{_current_season_prompt_context(db)}"]
+    terminology = coach_terminology_context(db)
+    if terminology:
+        parts.append(f"---\n{terminology}")
 
     # Coaching philosophy
     profile = (
@@ -1479,6 +1880,9 @@ def get_athlete_plan_system_prompt(db: DBSession) -> str:
     """Build the system prompt for an athlete planning thread."""
     from datetime import date as date_type, timedelta
     parts = [ATHLETE_PLAN_BASE, f"---\n{_current_season_prompt_context(db)}"]
+    terminology = coach_terminology_context(db)
+    if terminology:
+        parts.append(f"---\n{terminology}")
 
     # Coaching philosophy
     profile = (
@@ -3668,6 +4072,7 @@ Return only JSON. Use null for fields where data is genuinely insufficient."""
     )
 
     profile_data = json.loads(_strip_json(response.content[0].text))
+
     change_summary = profile_data.pop("change_summary", None)
 
     version = models.SwimmerProfileVersion(
@@ -4573,6 +4978,15 @@ def characterise_session_entry(
     """Generate per-swimmer characterisation after a session register is submitted."""
     swimmer_ctx = build_swimmer_context(swimmer, db)
 
+    from backend.services.cycle_codes import cycle_context
+    cycle = cycle_context(session)
+    cycle_line = "Not linked to a planned cycle"
+    if cycle:
+        hierarchy = " > ".join(filter(None, [
+            cycle.get("macrocycle_name"), cycle.get("mesocycle_name"), cycle.get("microcycle_label"),
+        ]))
+        cycle_line = f"{cycle.get('code') or 'linked'} | {hierarchy} | phase: {cycle.get('phase_type') or 'unspecified'}"
+
     session_desc = session.title or f"Session on {session.date}"
     group_content = ""
     if session.planned_content and entry.group_done:
@@ -4583,6 +4997,7 @@ def characterise_session_entry(
     prompt = f"""{swimmer_ctx}
 
 SESSION: {session_desc} ({session.date})
+Cycle position: {cycle_line}
 Coach intent: {session.coach_intent or 'Not specified'}
 Energy system focus: {session.energy_system_focus or 'Not specified'}
 Group done: {entry.group_done or 'Not specified'}
@@ -4947,6 +5362,129 @@ def _build_wizard_times_summary(swimmer: models.Swimmer, db: DBSession) -> str:
     return "\n".join(lines)
 
 
+def build_foundation_interview_context(swimmer: models.Swimmer, db: DBSession) -> dict:
+    """Return compact live evidence for a tailored foundation interview."""
+    versions = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(models.SwimmerProfileVersion.swimmer_id == swimmer.id)
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .all()
+    )
+    latest_profiles = {}
+    for version in versions:
+        if version.profile_type not in latest_profiles:
+            latest_profiles[version.profile_type] = {
+                "data": version.data,
+                "change_summary": version.change_summary,
+                "created_at": version.created_at.isoformat() if version.created_at else None,
+            }
+    profile_types = {version.profile_type for version in versions}
+    status = build_profile_status(swimmer, profile_types)
+    observations = (
+        db.query(models.SwimmerObservation)
+        .filter(models.SwimmerObservation.swimmer_id == swimmer.id)
+        .order_by(models.SwimmerObservation.date.desc(), models.SwimmerObservation.created_at.desc())
+        .limit(12)
+        .all()
+    )
+    session_entries = (
+        db.query(models.SessionEntry, models.Session)
+        .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+        .filter(
+            models.SessionEntry.swimmer_id == swimmer.id,
+            models.SessionEntry.attended.is_(True),
+            models.SessionEntry.coach_observation.isnot(None),
+        )
+        .order_by(models.Session.date.desc())
+        .limit(8)
+        .all()
+    )
+    histories = (
+        db.query(models.TrainingHistoryNarrative)
+        .filter(models.TrainingHistoryNarrative.swimmer_id == swimmer.id)
+        .order_by(models.TrainingHistoryNarrative.created_at.desc())
+        .limit(3)
+        .all()
+    )
+    return {
+        "as_of": date.today().isoformat(),
+        "swimmer": {
+            "id": swimmer.id,
+            "name": swimmer.name,
+            "dob": swimmer.dob.isoformat() if swimmer.dob else None,
+            "age_group": models.get_age_group(swimmer.dob),
+            "gender": swimmer.gender,
+            "squad": swimmer.squad,
+            "target_events": swimmer.target_events or [],
+            "strengths": swimmer.strengths,
+            "development_areas": swimmer.weaknesses,
+            "profile_notes": swimmer.profile_notes,
+        },
+        "foundation": {
+            "physical": swimmer.physical_profile or {},
+            "psychological": swimmer.psychological_profile or {},
+            "coverage": status,
+        },
+        "living_profiles": latest_profiles,
+        "times_summary": _build_wizard_times_summary(swimmer, db),
+        "recent_observations": [
+            {
+                "date": row.date.isoformat() if row.date else None,
+                "type": row.obs_type,
+                "event": row.event,
+                "content": row.content,
+            }
+            for row in observations
+        ],
+        "recent_session_observations": [
+            {
+                "date": session.date.isoformat(),
+                "session": session.title,
+                "cycle_code": session.cycle_code,
+                "energy_focus": session.energy_system_focus,
+                "group_done": entry.group_done,
+                "observation": entry.coach_observation,
+            }
+            for entry, session in session_entries
+        ],
+        "training_history": [
+            {"source": row.source, "narrative": row.narrative}
+            for row in histories
+        ],
+    }
+
+
+_QUESTION_STOPWORDS = {
+    "a", "about", "and", "are", "as", "at", "be", "before", "do", "does",
+    "for", "from", "how", "i", "in", "is", "it", "of", "on", "or", "that",
+    "the", "their", "them", "they", "this", "to", "what", "when", "which",
+    "with", "you", "your",
+}
+
+
+def _question_terms(value: str) -> set[str]:
+    return {
+        token for token in re.findall(r"[a-z0-9]+", value.casefold())
+        if len(token) > 2 and token not in _QUESTION_STOPWORDS
+    }
+
+
+def _repeats_prior_question(reply: str, prior_questions: list[str]) -> bool:
+    new_questions = re.findall(r"[^?]*\?", reply or "")
+    for question in new_questions:
+        new_terms = _question_terms(question)
+        if len(new_terms) < 3:
+            continue
+        for prior in prior_questions:
+            prior_terms = _question_terms(prior)
+            if len(prior_terms) < 3:
+                continue
+            overlap = len(new_terms & prior_terms) / min(len(new_terms), len(prior_terms))
+            if overlap >= 0.72:
+                return True
+    return False
+
+
 def wizard_chat(
     swimmer: models.Swimmer,
     messages: list[dict],
@@ -4956,40 +5494,41 @@ def wizard_chat(
     Stateless wizard chat. Takes full message history, returns next AI message.
     If messages is empty, generates the opening question.
     """
-    times_summary = _build_wizard_times_summary(swimmer, db)
-    age_context = _swimmer_age_context(swimmer) or ""
-    target_events = ", ".join(
-        f"{e['event']} ({e.get('course','?')})" if isinstance(e, dict) else str(e)
-        for e in (swimmer.target_events or [])
-    ) or "not set"
-    existing_profile_types = {
-        row[0]
-        for row in (
-            db.query(models.SwimmerProfileVersion.profile_type)
-            .filter(models.SwimmerProfileVersion.swimmer_id == swimmer.id)
-            .distinct()
-            .all()
-        )
-    }
-    foundation_status = build_profile_status(swimmer, existing_profile_types)
+    context = build_foundation_interview_context(swimmer, db)
+    foundation_status = context["foundation"]["coverage"]
     completed_areas = ", ".join(
         area["label"] for area in foundation_status["areas"] if area["complete"]
     ) or "none"
     missing_areas = ", ".join(foundation_status["missing_areas"]) or "none"
 
-    swimmer_intro = f"""SWIMMER: {swimmer.name}
-Gender: {swimmer.gender or '?'} | Squad: {swimmer.squad or '?'} | Target events: {target_events}
-{age_context}
+    prior_questions = []
+    for message in messages:
+        if message.get("role") != "assistant":
+            continue
+        for sentence in re.findall(r"[^?]*\?", str(message.get("content") or "")):
+            cleaned = " ".join(sentence.split()).strip()
+            if cleaned:
+                prior_questions.append(cleaned[-320:])
 
-FOUNDATION PROGRESS:
+    swimmer_intro = f"""SWIMMER-SPECIFIC EVIDENCE:
+{json.dumps(context, ensure_ascii=False)}
+
+STORED FOUNDATION PROGRESS BEFORE THIS INTERVIEW:
 Already covered: {completed_areas}
 Still missing: {missing_areas}
-If an area is already covered, preserve it and focus the interview on missing areas unless the coach explicitly wants to revise it.
+Substantive coach answers in the current conversation also count as covered even though they are not yet stored.
 
-TIMES DATA:
-{times_summary}
+QUESTIONS ALREADY ASKED IN THIS INTERVIEW:
+{json.dumps(prior_questions[-12:], ensure_ascii=False)}
 
-Existing profile notes: {swimmer.profile_notes or 'None'}"""
+INTERVIEW CONTROL:
+- Before replying, privately build a nine-area coverage ledger from stored evidence plus the conversation.
+- Do not ask a question that is semantically equivalent to anything in QUESTIONS ALREADY ASKED.
+- Select the next missing or ambiguous area; if the coach just gave a broad answer, ask one concrete follow-up before moving on.
+- Make the question recognisably about {swimmer.name}: anchor it to one supplied target event, time trend, coach observation, profile fact or prior answer when relevant evidence exists.
+- Never use another swimmer's pattern as a template and never infer psychological traits from times.
+- Ask one question at a time. State briefly why this particular missing detail matters for coaching {swimmer.name}.
+- If all nine areas are covered, stop interviewing, summarise the remaining uncertainty, and invite the coach to save."""
 
     system = f"{WIZARD_SYSTEM}\n\n---\n{swimmer_intro}"
 
@@ -5004,7 +5543,23 @@ Existing profile notes: {swimmer.profile_notes or 'None'}"""
         system=system,
         messages=api_messages,
     )
-    return response.content[0].text.strip()
+    reply = response.content[0].text.strip()
+    if prior_questions and _repeats_prior_question(reply, prior_questions):
+        correction = get_client().messages.create(
+            model=MODEL,
+            max_tokens=800,
+            system=system,
+            messages=[
+                *api_messages,
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": (
+                    "That draft repeats an earlier question. Choose a different missing or ambiguous "
+                    "foundation area, anchor it to different evidence for this swimmer, and ask one question only."
+                )},
+            ],
+        )
+        reply = correction.content[0].text.strip()
+    return reply
 
 
 FOUNDATION_DRAFT_FIELDS = {
@@ -5028,7 +5583,11 @@ def draft_foundation_from_existing_evidence(
     swimmer: models.Swimmer,
     db: DBSession,
 ) -> dict:
-    """Draft the nine foundation fields from stored evidence without saving anything."""
+    """Copy directly matching stored profile fields into a review-only foundation draft.
+
+    This deliberately performs no model call. It carries forward existing text
+    without asking an AI to reinterpret broad summaries as narrower athlete facts.
+    """
     versions = (
         db.query(models.SwimmerProfileVersion)
         .filter(models.SwimmerProfileVersion.swimmer_id == swimmer.id)
@@ -5063,25 +5622,6 @@ def draft_foundation_from_existing_evidence(
     existing_psychological = (
         swimmer.psychological_profile if isinstance(swimmer.psychological_profile, dict) else {}
     )
-    profile_evidence = "\n\n".join(
-        f"{profile_type.upper()} PROFILE ({version.created_at}):\n"
-        f"{json.dumps(version.data or {}, ensure_ascii=False)[:5000]}"
-        for profile_type, version in latest_profiles.items()
-        if profile_type != "wizard"
-    ) or "None"
-    observation_evidence = "\n".join(
-        f"- [{obs.date or 'undated'} | {obs.obs_type}] {obs.content[:1400]}"
-        for obs in observations
-    )[:10000] or "None"
-    note_evidence = "\n".join(
-        f"- {note.title}: {note.body[:1800]}"
-        for note in coaching_notes
-    )[:5000] or "None"
-    history_evidence = "\n".join(
-        f"- [{history.source}] {history.narrative[:1600]}"
-        for history in histories
-    )[:5000] or "None"
-
     if not any((
         existing_physical,
         existing_psychological,
@@ -5095,104 +5635,111 @@ def draft_foundation_from_existing_evidence(
     )):
         raise ValueError("No existing profile evidence is available to carry over")
 
-    prompt = f"""Prepare a review-only draft of a swimmer's nine-area coaching foundation.
+    # Each destination accepts only explicitly matching structured fields. The
+    # priority order chooses the most specific source and avoids blending broad
+    # biological summaries or untyped notes into claims they may not support.
+    carryover_map = {
+        ("physical", "aerobic_base"): (
+            ("training", "aerobic", "Training profile · Aerobic"),
+        ),
+        ("physical", "sprint_tendency"): (
+            ("performance_analysis", "aerobic_vs_sprint_bias", "Performance analysis · Aerobic/sprint bias"),
+            ("training", "speed", "Training profile · Speed"),
+        ),
+        ("physical", "race_pattern"): (
+            ("race", "pacing_tendency", "Race profile · Pacing tendency"),
+            ("race", "split_pattern", "Race profile · Split pattern"),
+            ("technical", "race_execution", "Technical profile · Race execution"),
+        ),
+        ("physical", "fatigue_profile"): (
+            ("race", "fatigue_profile", "Race profile · Fatigue profile"),
+            ("training", "fatigue_markers", "Training profile · Fatigue markers"),
+            ("training", "recovery", "Training profile · Recovery"),
+        ),
+        ("physical", "training_response"): (
+            ("training", "predictive_notes", "Training profile · Predictive notes"),
+            ("training", "__change_summary__", "Training profile · Summary"),
+        ),
+        ("psychological", "competition_response"): (
+            ("race", "pressure_response", "Race profile · Pressure response"),
+        ),
+        ("psychological", "coachability"): (
+            ("technical", "coachability", "Technical profile · Coachability"),
+            ("technical", "drill_response", "Technical profile · Drill response"),
+        ),
+    }
+    multi_source_fields = {
+        ("physical", "race_pattern"),
+        ("psychological", "coachability"),
+    }
 
-SWIMMER: {swimmer.name}
-Target events: {json.dumps(swimmer.target_events or [], ensure_ascii=False)}
-General profile notes: {swimmer.profile_notes or 'None'}
-Stored strengths: {swimmer.strengths or 'None'}
-Stored weaknesses: {swimmer.weaknesses or 'None'}
-
-ALREADY CONFIRMED FOUNDATION VALUES:
-Physical: {json.dumps(existing_physical, ensure_ascii=False)}
-Psychological: {json.dumps(existing_psychological, ensure_ascii=False)}
-
-LATEST LIVING PROFILES:
-{profile_evidence}
-
-COACH OBSERVATIONS:
-{observation_evidence}
-
-ACTIVE COACHING NOTES:
-{note_evidence}
-
-TRAINING/RACING HISTORY:
-{history_evidence}
-
-Return JSON only, using exactly this shape:
-{{
-  "physical": {{
-    "aerobic_base": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "sprint_tendency": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "race_pattern": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "fatigue_profile": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "training_response": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}}
-  }},
-  "psychological": {{
-    "motivation_style": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "competition_response": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "response_to_hard_training": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}},
-    "coachability": {{"value": <string or null>, "evidence": <brief source explanation>, "confidence": <"confirmed"|"supported"|"missing">}}
-  }}
-}}
-
-Rules:
-- This is a draft for coach confirmation, not a database update.
-- Copy already-confirmed foundation values verbatim and mark them "confirmed".
-- Mark "supported" only when the stored evidence explicitly supports the statement.
-- Do not turn age-stage generalisations, race times alone, or absence of data into athlete facts.
-- Do not fill psychological fields from stereotypes or physiological inference.
-- If evidence is inadequate, use value null, confidence "missing", and say what the coach should clarify.
-- Keep each proposed value concise, specific, and useful for planning.
-"""
-
-    response = get_client().messages.create(
-        model=FAST_MODEL,
-        max_tokens=1800,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = json.loads(_strip_json(response.content[0].text))
+    def source_text(profile_type: str, key: str) -> Optional[str]:
+        version = latest_profiles.get(profile_type)
+        if not version:
+            return None
+        value = version.change_summary if key == "__change_summary__" else (version.data or {}).get(key)
+        if not isinstance(value, str) or not value.strip():
+            return None
+        return value.strip()
 
     result = {"physical": {}, "psychological": {}}
     existing_by_section = {
         "physical": existing_physical,
         "psychological": existing_psychological,
     }
-    allowed_confidence = {"confirmed", "supported", "missing"}
     for section, fields in FOUNDATION_DRAFT_FIELDS.items():
-        proposed_section = raw.get(section) if isinstance(raw, dict) else {}
-        if not isinstance(proposed_section, dict):
-            proposed_section = {}
         for field in fields:
-            existing_value = existing_by_section[section].get(field)
-            proposed = proposed_section.get(field)
-            if not isinstance(proposed, dict):
-                proposed = {"value": proposed, "evidence": "", "confidence": "supported"}
-            value = proposed.get("value")
-            value = str(value).strip()[:2500] if value is not None else None
-            if not value:
-                value = None
-            confidence = str(proposed.get("confidence") or "missing").lower()
-            if confidence not in allowed_confidence:
-                confidence = "supported" if value else "missing"
-            evidence = str(proposed.get("evidence") or "").strip()[:500]
-            if existing_value is not None and str(existing_value).strip():
+            accepted_keys = (field, *FOUNDATION_KEY_ALIASES.get(field, ()))
+            existing_value = next(
+                (
+                    existing_by_section[section].get(key)
+                    for key in accepted_keys
+                    if existing_by_section[section].get(key) is not None
+                    and str(existing_by_section[section].get(key)).strip()
+                ),
+                None,
+            )
+            if existing_value is not None:
                 value = str(existing_value).strip()[:2500]
-                confidence = "confirmed"
                 evidence = "Already saved in the confirmed foundation profile."
-            if value is None:
-                confidence = "missing"
+                confidence = "confirmed"
+            else:
+                matches = []
+                for profile_type, source_key, label in carryover_map.get((section, field), ()):
+                    if (
+                        (section, field) == ("physical", "race_pattern")
+                        and matches
+                        and profile_type != "race"
+                    ):
+                        break
+                    text = source_text(profile_type, source_key)
+                    if text and all(text != existing_text for _, existing_text in matches):
+                        matches.append((label, text))
+                    if matches and (section, field) not in multi_source_fields:
+                        break
+                if matches:
+                    if len(matches) == 1:
+                        value = matches[0][1][:2500]
+                    else:
+                        value = "\n\n".join(f"{label}: {text}" for label, text in matches)[:2500]
+                    sources = "; ".join(label for label, _ in matches)
+                    evidence = f"Copied directly from {sources}. No new interpretation was generated."
+                    confidence = "supported"
+                else:
+                    value = None
+                    evidence = "No directly matching stored profile field; coach input is needed."
+                    confidence = "missing"
             result[section][field] = {
                 "value": value,
-                "evidence": evidence or (
-                    "Existing evidence supports this draft."
-                    if value else "No clear stored evidence; coach input is needed."
-                ),
+                "evidence": evidence,
                 "confidence": confidence,
             }
 
+    result["uses_ai"] = False
+    result["method"] = "direct_profile_carryover"
+    living_profile_keys = {key for key, _ in LIVING_PROFILE_TYPES}
     result["source_counts"] = {
-        "living_profiles": len([key for key in latest_profiles if key != "wizard"]),
+        "living_profiles": len([key for key in latest_profiles if key in living_profile_keys]),
         "observations": len(observations),
         "coaching_notes": len(coaching_notes),
         "history_narratives": len(histories),
@@ -5210,62 +5757,43 @@ def save_wizard_profile(
     Synthesise the wizard conversation into physical_profile + psychological_profile JSON
     and save a SwimmerProfileVersion with type "wizard".
     """
-    times_summary = _build_wizard_times_summary(swimmer, db)
-    age_context = _swimmer_age_context(swimmer) or ""
-    target_events = ", ".join(
-        f"{e['event']} ({e.get('course','?')})" if isinstance(e, dict) else str(e)
-        for e in (swimmer.target_events or [])
-    ) or "not set"
-
+    context = build_foundation_interview_context(swimmer, db)
     conversation_text = "\n".join(
         f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
         for m in messages
     )
-    existing_context = ""
-    if preserve_existing:
-        existing_context = f"""
+    prompt = f"""Synthesize the coach-confirmed foundation evidence from this swimmer interview.
 
-CURRENT STORED PROFILE:
-Physical: {json.dumps(swimmer.physical_profile or {}, indent=2)}
-Psychological: {json.dumps(swimmer.psychological_profile or {}, indent=2)}
-
-This is an incremental update. For every field not clearly changed or added by the
-conversation, return null. Do not infer a change from the current times data alone.
-"""
-
-    prompt = f"""You have just completed a profiling interview with a coach about their swimmer. Synthesise everything into a structured profile.
-
-SWIMMER: {swimmer.name} | Gender: {swimmer.gender or '?'} | Target events: {target_events}
-{age_context}
-
-TIMES DATA:
-{times_summary}
+LIVE SWIMMER CONTEXT:
+{json.dumps(context, ensure_ascii=False)}
 
 PROFILING CONVERSATION:
 {conversation_text}
-{existing_context}
 
-Return a JSON object with exactly these two keys:
-
-"physical": {{
-  "aerobic_base": "short description — e.g. 'Strong aerobic base; holds threshold pace well across long sets'",
-  "sprint_tendency": "alactic/top-speed quality — e.g. 'Good 15m burst but speed drops sharply after 25m'",
-  "race_pattern": "split tendency and race execution — e.g. 'Consistent positive splitter; fades in 3rd 50 of 200'",
-  "fatigue_profile": "how they fatigue intra-session and across the week",
-  "training_response": "what training types work / don't work for this swimmer",
-  "key_limiters": "1-2 physiological factors currently limiting performance",
-  "strengths": "1-2 physiological strengths to build on"
+Return JSON with exactly the nine foundation fields below:
+{{
+  "physical": {{
+    "aerobic_base": "concise coach-supported description or null",
+    "sprint_tendency": "concise coach-supported description or null",
+    "race_pattern": "concise coach-supported description or null",
+    "fatigue_profile": "concise coach-supported description or null",
+    "training_response": "concise coach-supported description or null"
+  }},
+  "psychological": {{
+    "motivation_style": "concise coach-supported description or null",
+    "competition_response": "concise coach-supported description or null",
+    "response_to_hard_training": "concise coach-supported description or null",
+    "coachability": "concise coach-supported description or null"
+  }}
 }}
 
-"psychological": {{
-  "motivation_style": "intrinsic/extrinsic, competition-driven/training-driven etc",
-  "competition_response": "how they respond under race pressure",
-  "response_to_hard_training": "how they handle tough sessions — digs in, backs off, needs encouragement etc",
-  "coachability": "how they take feedback, willingness to change",
-  "notes": "anything else relevant to how to coach this athlete"
-}}
-
-Base everything on what the coach said in the conversation. Where the conversation didn't cover something, write null.
+Rules:
+- The coach's answers are the authority for new or changed foundation facts.
+- Current confirmed foundation values are context, not fields to rewrite. Return null unless the conversation clearly adds to or corrects them.
+- Times and living profiles can frame physical evidence but cannot establish psychological traits.
+- Do not turn an AI question, suggestion or assumption into an athlete fact.
+- Where evidence is insufficient, return null.
+- Preserve specific observable detail and avoid generic coaching language.
 Return only JSON."""
 
     response = get_client().messages.create(
@@ -5276,6 +5804,23 @@ Return only JSON."""
 
     profile_data = json.loads(_strip_json(response.content[0].text))
 
+    def clean_section(section: str) -> dict:
+        raw = profile_data.get(section) if isinstance(profile_data, dict) else {}
+        if not isinstance(raw, dict):
+            return {}
+        cleaned = {}
+        for key in FOUNDATION_DRAFT_FIELDS[section]:
+            value = raw.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                cleaned[key] = text[:2500]
+        return cleaned
+
+    proposed_physical = clean_section("physical")
+    proposed_psychological = clean_section("psychological")
+
     def merge_non_null(existing: dict, proposed: dict) -> dict:
         merged = dict(existing or {})
         for key, value in (proposed or {}).items():
@@ -5284,14 +5829,14 @@ Return only JSON."""
         return merged
 
     if preserve_existing:
-        physical = merge_non_null(swimmer.physical_profile, profile_data.get("physical"))
+        physical = merge_non_null(swimmer.physical_profile, proposed_physical)
         psychological = merge_non_null(
             swimmer.psychological_profile,
-            profile_data.get("psychological"),
+            proposed_psychological,
         )
     else:
-        physical = profile_data.get("physical", {})
-        psychological = profile_data.get("psychological", {})
+        physical = proposed_physical
+        psychological = proposed_psychological
 
     swimmer.physical_profile = physical
     swimmer.psychological_profile = psychological
@@ -5302,8 +5847,8 @@ Return only JSON."""
         profile_type="wizard",
         data=stored_profile,
         change_summary=(
-            "Profile updated from a confirmed coach conversation."
-            if preserve_existing else "Profile built via profiling wizard."
+            f"Foundation saved from the API interview; "
+            f"{len(proposed_physical) + len(proposed_psychological)} reviewed field(s) added or updated."
         ),
         obs_count=len(messages),
     )

@@ -16,6 +16,7 @@ from backend import models
 from backend.services.claude_service import get_client, MODEL, PLANNING_EFFORT, response_text
 from backend.services.availability import availability_ranges
 from backend.services.planning_engine import compact_context, refresh_macro
+from backend.services.terminology import coach_terminology_context, coach_zone_label
 
 router = APIRouter()
 
@@ -31,15 +32,16 @@ def _get_coaching_philosophy(db: DBSession) -> str:
     profile = db.query(models.CoachingProfile).filter(
         models.CoachingProfile.is_current == True
     ).first()
-    if not profile:
-        return ""
     parts = []
-    if profile.ethos:
+    if profile and profile.ethos:
         parts.append(f"Coaching philosophy: {profile.ethos[:300]}")
-    if profile.current_focus:
+    if profile and profile.current_focus:
         parts.append(f"Current training focus: {profile.current_focus[:200]}")
-    if profile.squad_state:
+    if profile and profile.squad_state:
         parts.append(f"Squad state: {profile.squad_state[:200]}")
+    terminology = coach_terminology_context(db)
+    if terminology:
+        parts.append(terminology)
     return "\n".join(parts)
 
 
@@ -597,10 +599,11 @@ Design the session now. Output valid JSON only."""
 
     # Extract reasoning before it goes into the draft
     reasoning = draft.pop("reasoning", "")
-    reply = _build_reply(draft, reasoning, target_date)
+    reply = _build_reply(draft, reasoning, target_date, db)
 
     if brief:
-        reply = f"**Session Plan — {draft.get('title', 'Session')}**\n\n*{draft.get('energy_system_focus', '').title()} focus*\n\n{draft.get('coach_intent', '')}"
+        focus_label = coach_zone_label(db, draft.get("energy_system_focus", ""))
+        reply = f"**Session Plan — {draft.get('title', 'Session')}**\n\n*{focus_label} focus*\n\n{draft.get('coach_intent', '')}"
 
     if target_date:
         draft["date"] = target_date.isoformat()
@@ -656,7 +659,7 @@ def plan_session(
     }
 
 
-def _build_reply(draft: dict, reasoning: str, target_date: Optional[date]) -> str:
+def _build_reply(draft: dict, reasoning: str, target_date: Optional[date], db: DBSession) -> str:
     """Turn the structured draft into a readable chat reply."""
     title = draft.get("title", "Session")
     focus = draft.get("energy_system_focus", "")
@@ -665,7 +668,7 @@ def _build_reply(draft: dict, reasoning: str, target_date: Optional[date]) -> st
 
     lines = [f"**{title}**{date_str}"]
     if focus:
-        lines.append(f"*{focus.title()} focus*")
+        lines.append(f"*{coach_zone_label(db, focus)} focus*")
     if reasoning:
         lines.append(f"\n{reasoning}")
     if intent:

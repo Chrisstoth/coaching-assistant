@@ -4,6 +4,7 @@ import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
 import VoiceInput from '../components/VoiceInput'
 import ObservationsTab from '../components/ObservationsTab'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 const TABS = ['Overview', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Context']
 
@@ -172,7 +173,7 @@ function BlockStatusCard({ status }) {
   )
 }
 
-function ProfileProgressCard({ status, onOpenWizard }) {
+function ProfileProgressCard({ status, physicalProfile, psychologicalProfile, onOpenWizard }) {
   if (!status) return null
   const complete = status.state === 'complete'
   const started = status.state === 'in_progress'
@@ -182,6 +183,10 @@ function ProfileProgressCard({ status, onOpenWizard }) {
     ? 'border-amber-700/50 bg-amber-900/10'
     : 'border-pool-700 bg-pool-800'
   const accent = complete ? 'text-green-300' : started ? 'text-amber-300' : 'text-pool-300'
+  const foundationSections = [
+    ['Physical', physicalProfile],
+    ['Psychological', psychologicalProfile],
+  ].filter(([, values]) => values && Object.values(values).some(value => String(value || '').trim()))
 
   return (
     <section className={`rounded-xl border p-4 space-y-4 ${tone}`}>
@@ -223,6 +228,27 @@ function ProfileProgressCard({ status, onOpenWizard }) {
         </div>
       )}
 
+      {foundationSections.length > 0 && (
+        <details className="bg-pool-900/35 border border-pool-700 rounded-xl p-3" open={complete}>
+          <summary className="text-xs font-semibold text-pool-200 cursor-pointer">View confirmed foundation</summary>
+          <div className="space-y-3 mt-3">
+            {foundationSections.map(([label, values]) => (
+              <div key={label}>
+                <p className="text-[10px] uppercase tracking-wide text-pool-500 mb-1.5">{label}</p>
+                <div className="space-y-2">
+                  {Object.entries(values).filter(([, value]) => String(value || '').trim()).map(([key, value]) => (
+                    <div key={key}>
+                      <p className="text-[11px] font-semibold text-pool-300 capitalize">{key.replace(/_/g, ' ')}</p>
+                      <p className="text-xs text-pool-400 leading-relaxed mt-0.5 whitespace-pre-line">{String(value)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
+      )}
+
       <button
         onClick={onOpenWizard}
         className="w-full bg-accent-600 hover:bg-accent-500 rounded-lg py-2.5 text-sm font-semibold transition-colors"
@@ -252,6 +278,7 @@ function ProfileProgressCard({ status, onOpenWizard }) {
 }
 
 export default function SwimmerDetail() {
+  const { energy } = useSessionPresentation()
   const { id } = useParams()
   const navigate = useNavigate()
   const [swimmer, setSwimmer] = useState(null)
@@ -291,12 +318,16 @@ export default function SwimmerDetail() {
   const [attendingIds, setAttendingIds] = useState(new Set())
   const [exceptions, setExceptions] = useState([])
   const [excForm, setExcForm] = useState({ reason: 'holiday', date_from: '', date_to: '', notes: '' })
+  const [editingExceptionId, setEditingExceptionId] = useState(null)
+  const [savingException, setSavingException] = useState(false)
+  const [exceptionError, setExceptionError] = useState('')
   const [savingSlots, setSavingSlots] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editForm, setEditForm] = useState(null)
   const [savingEdit, setSavingEdit] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [editingEvents, setEditingEvents] = useState(false)
   const [eventsForm, setEventsForm] = useState([])
   const [newEvent, setNewEvent] = useState({ event: '', course: 'SCM' })
@@ -382,14 +413,46 @@ export default function SwimmerDetail() {
 
   const addException = async () => {
     if (!excForm.date_from || !excForm.date_to) return
-    const exc = await api.addException(id, excForm)
-    setExceptions((prev) => [...prev, exc])
+    setSavingException(true)
+    setExceptionError('')
+    try {
+      if (editingExceptionId) {
+        const updated = await api.updateException(id, editingExceptionId, excForm)
+        setExceptions((prev) => prev.map((item) => item.id === updated.id ? updated : item))
+      } else {
+        const exc = await api.addException(id, excForm)
+        setExceptions((prev) => [...prev, exc])
+      }
+      setEditingExceptionId(null)
+      setExcForm({ reason: 'holiday', date_from: '', date_to: '', notes: '' })
+    } catch (error) {
+      setExceptionError(error?.message || 'Could not save this availability period.')
+    } finally {
+      setSavingException(false)
+    }
+  }
+
+  const editException = (exception) => {
+    setEditingExceptionId(exception.id)
+    setExceptionError('')
+    setExcForm({
+      reason: exception.reason,
+      date_from: exception.date_from,
+      date_to: exception.date_to,
+      notes: exception.notes || '',
+    })
+  }
+
+  const cancelExceptionEdit = () => {
+    setEditingExceptionId(null)
+    setExceptionError('')
     setExcForm({ reason: 'holiday', date_from: '', date_to: '', notes: '' })
   }
 
   const removeException = async (excId) => {
     await api.deleteException(id, excId)
     setExceptions((prev) => prev.filter((e) => e.id !== excId))
+    if (editingExceptionId === excId) cancelExceptionEdit()
   }
 
   const saveSwimmerEdit = async () => {
@@ -407,11 +470,12 @@ export default function SwimmerDetail() {
 
   const deleteSwimmer = async () => {
     setDeleting(true)
+    setDeleteError('')
     try {
       await api.deleteSwimmer(id)
-      window.location.href = '/swimmers'
+      window.location.replace('/swimmers')
     } catch (e) {
-      alert(`Error deleting: ${e.message}`)
+      setDeleteError(e?.message || 'The swimmer could not be removed. Please try again.')
       setDeleting(false)
     }
   }
@@ -493,6 +557,8 @@ export default function SwimmerDetail() {
 
             <ProfileProgressCard
               status={swimmer.profile_status}
+              physicalProfile={swimmer.physical_profile}
+              psychologicalProfile={swimmer.psychological_profile}
               onOpenWizard={() => navigate(`/swimmers/${id}/profile-wizard`)}
             />
 
@@ -1189,7 +1255,7 @@ export default function SwimmerDetail() {
                           <div key={b.id} className="flex items-center justify-between bg-pool-700/40 rounded-lg px-3 py-2">
                             <div>
                               <span className="text-sm font-medium">{b.distance}m {b.stroke}</span>
-                              <span className="text-xs text-pool-400 ml-2 capitalize">{b.effort}</span>
+                              <span className="text-xs text-pool-400 ml-2">{energy(b.effort).label}</span>
                             </div>
                             <div className="text-right">
                               <span className="text-sm font-mono text-indigo-300">{display}</span>
@@ -1860,17 +1926,28 @@ export default function SwimmerDetail() {
               <p className="text-pool-400 text-xs">Holiday, competition, taper rest or another planned period when this swimmer won't train.</p>
 
               {exceptions.map((e) => (
-                <div key={e.id} className="bg-pool-800 rounded-xl p-3 flex justify-between items-center">
+                <div key={e.id} className={`bg-pool-800 rounded-xl p-3 flex justify-between items-center border ${editingExceptionId === e.id ? 'border-accent-500' : 'border-transparent'}`}>
                   <div>
                     <p className="text-sm font-medium capitalize">{e.reason.replace('_', ' ')}</p>
                     <p className="text-pool-400 text-xs">{e.date_from} → {e.date_to}</p>
                     {e.notes && <p className="text-pool-400 text-xs">{e.notes}</p>}
                   </div>
-                  <button onClick={() => removeException(e.id)} className="text-red-400 text-xs ml-3">Remove</button>
+                  <div className="flex items-center gap-3 ml-3">
+                    <button onClick={() => editException(e)} className="text-accent-400 text-xs">Edit</button>
+                    <button onClick={() => removeException(e.id)} className="text-red-400 text-xs">Remove</button>
+                  </div>
                 </div>
               ))}
 
-              <div className="bg-pool-800 rounded-xl p-3 space-y-2">
+              <div className={`bg-pool-800 rounded-xl p-3 space-y-2 border ${editingExceptionId ? 'border-accent-500' : 'border-transparent'}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-pool-300">
+                    {editingExceptionId ? 'Edit availability period' : 'Add availability period'}
+                  </p>
+                  {editingExceptionId && (
+                    <button onClick={cancelExceptionEdit} className="text-xs text-pool-400">Cancel edit</button>
+                  )}
+                </div>
                 <select
                   value={excForm.reason}
                   onChange={(e) => setExcForm({ ...excForm, reason: e.target.value })}
@@ -1896,11 +1973,12 @@ export default function SwimmerDetail() {
                 />
                 <button
                   onClick={addException}
-                  disabled={!excForm.date_from || !excForm.date_to}
+                  disabled={savingException || !excForm.date_from || !excForm.date_to}
                   className="w-full bg-pool-600 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold"
                 >
-                  Add Exception
+                  {savingException ? 'Saving…' : editingExceptionId ? 'Save Changes' : 'Add Availability'}
                 </button>
+                {exceptionError && <p className="text-xs text-red-300">{exceptionError}</p>}
               </div>
             </section>
           </div>
@@ -2116,7 +2194,7 @@ export default function SwimmerDetail() {
               </div>
 
               <button
-                onClick={() => setShowDeleteConfirm(true)}
+                onClick={() => { setDeleteError(''); setShowDeleteConfirm(true) }}
                 className="w-full bg-red-900 hover:bg-red-800 rounded-lg py-2.5 font-semibold text-sm text-red-100"
               >
                 Remove Swimmer
@@ -2134,9 +2212,14 @@ export default function SwimmerDetail() {
             <p className="text-pool-400 text-sm">
               Are you sure you want to remove <span className="font-semibold text-white">{swimmer.name}</span>? This cannot be undone.
             </p>
+            {deleteError && (
+              <p className="bg-red-950/50 border border-red-800 rounded-lg p-3 text-sm text-red-200">
+                {deleteError}
+              </p>
+            )}
             <div className="flex gap-2 pt-4">
               <button
-                onClick={() => setShowDeleteConfirm(false)}
+                onClick={() => { setShowDeleteConfirm(false); setDeleteError('') }}
                 className="flex-1 bg-pool-700 rounded-lg py-2.5 font-semibold text-sm"
               >
                 Cancel

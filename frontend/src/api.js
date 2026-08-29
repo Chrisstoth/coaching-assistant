@@ -72,6 +72,8 @@ export const api = {
   createSwimmer: (data) => request('POST', '/swimmers', data),
   updateSwimmer: (id, data) => request('PUT', `/swimmers/${id}`, data),
   deleteSwimmer: (id) => request('DELETE', `/swimmers/${id}`),
+  previewFoundationProfileImport: (data) => request('POST', '/swimmers/profile-foundations/import/preview', data),
+  confirmFoundationProfileImport: (data) => request('POST', '/swimmers/profile-foundations/import/confirm', data),
   getSwimmerTimes: (id, params = {}) => {
     const qs = new URLSearchParams(params).toString()
     return request('GET', `/swimmers/${id}/times${qs ? '?' + qs : ''}`)
@@ -187,10 +189,12 @@ export const api = {
     if (context?.sessionId) fd.append('expected_session_id', context.sessionId)
     return request('POST', '/sessions/import/excel', fd, true)
   },
-  confirmExcelImport: (draft, targetSessionId = null) => request('POST', '/sessions/import/excel/confirm', {
+  confirmExcelImport: (draft, targetSessionId = null, generatePredictions = false) => request('POST', '/sessions/import/excel/confirm', {
     draft,
     target_session_id: targetSessionId,
+    generate_predictions: generatePredictions,
   }),
+  generateSessionIntelligence: (sessionId, data = {}) => request('POST', `/sessions/${sessionId}/intelligence`, data),
   importExcelBulk: (files) => {
     const fd = new FormData()
     files.forEach((f) => fd.append('files', f))
@@ -207,6 +211,12 @@ export const api = {
   // Meets
   getMeets: () => request('GET', '/meets'),
   createMeet: (data) => request('POST', '/meets', data),
+  previewMeetExcelImport: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request('POST', '/meets/import/excel', fd, true)
+  },
+  confirmMeetExcelImport: (rows) => request('POST', '/meets/import/excel/confirm', { rows }),
   getMeet: (id) => request('GET', `/meets/${id}`),
   updateMeet: (id, data) => request('PUT', `/meets/${id}`, data),
   deleteMeet: (id) => request('DELETE', `/meets/${id}`),
@@ -334,6 +344,11 @@ export const api = {
   coachingChat: (message) => request('POST', '/coaching-context/chat', { message }),
   finaliseCoachingProfile: (title) => request('POST', '/coaching-context/finalise', { title }),
 
+  // Session print, club branding and coach terminology
+  getSessionPresentation: () => request('GET', '/session-presentation'),
+  updateSessionPresentation: (data) => request('PUT', '/session-presentation', data),
+  checkEnergyEquivalencies: (data) => request('POST', '/session-presentation/check-equivalencies', data),
+
   // AI
   askPhysiology: (swimmerId, question) =>
     request('POST', `/ai/physiology/${swimmerId}`, { question }),
@@ -402,6 +417,7 @@ export const api = {
   setSwimmerSlots: (swimmerId, slotIds) => request('PUT', `/schedule/swimmers/${swimmerId}`, slotIds),
   getSwimmerExceptions: (swimmerId) => request('GET', `/schedule/swimmers/${swimmerId}/exceptions`),
   addException: (swimmerId, data) => request('POST', `/schedule/swimmers/${swimmerId}/exceptions`, data),
+  updateException: (swimmerId, excId, data) => request('PUT', `/schedule/swimmers/${swimmerId}/exceptions/${excId}`, data),
   deleteException: (swimmerId, excId) => request('DELETE', `/schedule/swimmers/${swimmerId}/exceptions/${excId}`),
   getExpectedAttendance: (date, squad) => {
     const qs = squad ? `?squad=${squad}` : ''

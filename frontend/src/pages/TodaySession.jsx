@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, weeklySessionQueue } from '../sessionProximity'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 function timeLabel(item) {
   const start = item?.start_time || item?.time
@@ -19,14 +20,16 @@ function planGroups(session) {
 }
 
 function WeeklyPlanCard({ plan }) {
+  const { energy } = useSessionPresentation()
   const focus = plan.session_type || plan.energy_focus || plan.focus
+  const focusLabel = energy(focus).label
   const planStatus = plan._microcycle?.status
   return (
     <div className="bg-teal-900/20 border border-teal-700/40 rounded-xl p-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-semibold text-teal-300 uppercase tracking-wide">Weekly plan</p>
+        <p className="text-xs font-semibold text-teal-300 uppercase tracking-wide">Weekly plan{plan.cycle_code ? ` · ${plan.cycle_code}` : ''}</p>
         <span className="text-[11px] text-teal-200 capitalize">
-          {[focus, planStatus === 'draft' ? 'draft' : null].filter(Boolean).join(' · ')}
+          {[focusLabel, planStatus === 'draft' ? 'draft' : null].filter(Boolean).join(' · ')}
         </span>
       </div>
       {plan.key_emphasis && <p className="text-sm text-pool-200 mt-1.5">{plan.key_emphasis}</p>}
@@ -206,7 +209,10 @@ export default function TodaySession() {
         <button onClick={() => navigate('/')} className="text-pool-400 text-2xl" aria-label="Back home">‹</button>
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-semibold text-accent-400 uppercase tracking-wider">Session desk</p>
-          <h1 className="text-lg font-bold truncate">{session.title || session.label || 'Session'}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-lg font-bold truncate">{session.title || session.label || 'Session'}</h1>
+            {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{session.cycle_code}</span>}
+          </div>
           <p className="text-xs text-pool-400 mt-0.5">
             {[session.date, timeLabel(session), session.squad, session.course].filter(Boolean).join(' · ')}
           </p>

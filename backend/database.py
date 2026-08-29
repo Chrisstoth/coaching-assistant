@@ -73,6 +73,10 @@ def _apply_migrations():
             add_col("sessions", "pool_slot_id", "INTEGER")
             add_col("sessions", "cancel_reason", "TEXT")
             add_col("sessions", "course", "VARCHAR")
+            add_col("sessions", "energy_analysis", "JSON")
+            add_col("sessions", "microcycle_id", "INTEGER")
+            add_col("sessions", "session_sequence", "INTEGER")
+            add_col("sessions", "cycle_code", "VARCHAR")
 
         if "session_groups" in insp.get_table_names():
             add_col("session_groups", "volume_breakdown", "JSON")
@@ -113,6 +117,12 @@ def _apply_migrations():
             add_col("training_macros", "season_id", "INTEGER")
             add_col("training_macros", "primary_meet_id", "INTEGER")
             add_col("training_macros", "sequence_index", "INTEGER DEFAULT 0")
+
+        if "season_blocks" in insp.get_table_names():
+            add_col("season_blocks", "sequence_index", "INTEGER DEFAULT 0")
+
+        if "microcycles" in insp.get_table_names():
+            add_col("microcycles", "sequence_index", "INTEGER DEFAULT 0")
 
         if "planning_pathways" in insp.get_table_names():
             add_col("planning_pathways", "qualification_standard_set_id", "INTEGER")

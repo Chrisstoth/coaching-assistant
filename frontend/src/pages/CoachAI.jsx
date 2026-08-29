@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
+import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
+import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 function useWhisperVoice(onResult) {
   const [recording, setRecording] = useState(false)
@@ -137,6 +139,14 @@ export default function CoachAI() {
       setInput(prev => prev ? `${prev} ${transcript}` : transcript)
     }, [])
   )
+
+  useEffect(() => {
+    if (!registerSaved) return undefined
+    const returnHome = window.setTimeout(() => {
+      navigate('/', { replace: true })
+    }, 1400)
+    return () => window.clearTimeout(returnHome)
+  }, [navigate, registerSaved])
 
   const switchToThread = (threadId) => {
     setActiveThreadId(threadId)
@@ -625,6 +635,7 @@ export default function CoachAI() {
 
   return (
     <div className="flex flex-col h-full">
+      {registerSaved && <RegisterSavedOverlay />}
 
       {/* Header */}
       <div className="px-4 pt-4 pb-2 shrink-0 border-b border-pool-600">
@@ -921,19 +932,12 @@ export default function CoachAI() {
           <RegisterCard
             data={registerData}
             onDismiss={() => setRegisterData(null)}
-            onSaved={(sessionId, fbPrompt) => {
+            onSaved={(_sessionId, fbPrompt) => {
               setRegisterSaved(true)
               setRegisterData(null)
               if (fbPrompt) setFeedbackPrompt(fbPrompt)
-              navigate(`/sessions/${sessionId}/register`)
             }}
           />
-        )}
-
-        {registerSaved && !registerData && (
-          <div className="border border-green-700/50 bg-green-900/20 rounded-xl px-4 py-3">
-            <p className="text-xs text-green-300 font-semibold">Register saved.</p>
-          </div>
         )}
 
         <SessionCancellationDialog
@@ -1228,6 +1232,7 @@ export default function CoachAI() {
 const ENERGY_OPTIONS = ['aerobic', 'threshold', 'vo2max', 'speed_endurance', 'sprint', 'recovery', 'mixed']
 
 function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
+  const { settings: presentation, energy } = useSessionPresentation()
   const [data, setData] = useState(() => ({
     ...draft,
     groups: (draft.groups || []).map(g => ({
@@ -1298,7 +1303,11 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
             className="w-full bg-pool-700 border border-pool-600 rounded-xl px-3 py-2 text-sm focus:outline-none focus:border-teal-500"
           >
             <option value="">— select —</option>
-            {ENERGY_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            {[...new Set([
+              ...presentation.terminology_levels.map(level => level.canonical_zone),
+              data.energy_system_focus,
+              ...ENERGY_OPTIONS,
+            ].filter(Boolean))].map(option => <option key={option} value={option}>{energy(option).label}</option>)}
           </select>
         </div>
       </div>

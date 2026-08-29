@@ -1,10 +1,13 @@
 from typing import Optional, Union
 import base64
 import difflib
+import io
+import re
 from datetime import datetime, date as date_type
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
+from openpyxl import load_workbook
 
 from backend.database import get_db
 from backend import models
@@ -56,6 +59,167 @@ class MeetSessionIn(BaseModel):
     notes: Optional[str] = None
 
 
+class MeetImportRow(BaseModel):
+    row_number: Optional[int] = None
+    name: str
+    date: date_type
+    date_to: Optional[date_type] = None
+    location: Optional[str] = None
+    course: Optional[str] = None
+    level: Optional[str] = None
+    warm_up_time: Optional[str] = None
+    notes: Optional[str] = None
+    include: bool = True
+
+
+class MeetImportConfirm(BaseModel):
+    rows: list[MeetImportRow] = Field(default_factory=list)
+
+
+_MEET_IMPORT_HEADERS = {
+    "date": {"date start", "start date", "date from", "from"},
+    "date_to": {"date end", "end date", "date to", "to"},
+    "name": {"competition", "competition name", "gala", "gala name", "meet", "meet name"},
+    "location": {"venue", "location", "pool"},
+}
+
+
+def _normalise_import_header(value) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
+
+
+def _clean_import_text(value) -> Optional[str]:
+    if value is None:
+        return None
+    cleaned = re.sub(r"\s+", " ", str(value)).strip()
+    return cleaned or None
+
+
+def _parse_import_date(value) -> Optional[date_type]:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date_type):
+        return value
+    text = str(value).strip()
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _existing_meet_key(name: str, start_date: date_type) -> tuple[str, date_type]:
+    return (re.sub(r"\s+", " ", name).strip().casefold(), start_date)
+
+
+def _extract_meet_workbook(content: bytes, db: DBSession) -> dict:
+    try:
+        workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="The workbook could not be opened as an .xlsx file") from exc
+
+    worksheet = workbook.active
+    header_row = None
+    columns = {}
+    for row_number in range(1, min(worksheet.max_row, 20) + 1):
+        found = {}
+        for column_number in range(1, worksheet.max_column + 1):
+            header = _normalise_import_header(worksheet.cell(row_number, column_number).value)
+            for field, aliases in _MEET_IMPORT_HEADERS.items():
+                if header in aliases:
+                    found[field] = column_number
+                    break
+        if {"date", "name"}.issubset(found):
+            header_row = row_number
+            columns = found
+            break
+
+    if header_row is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not find the required Competition and Date Start columns",
+        )
+
+    existing = {
+        _existing_meet_key(meet.name, meet.date): meet.id
+        for meet in db.query(models.Meet).filter(models.Meet.date.is_not(None)).all()
+    }
+    upload_keys = set()
+    rows = []
+    for row_number in range(header_row + 1, worksheet.max_row + 1):
+        raw_name = worksheet.cell(row_number, columns["name"]).value
+        raw_start = worksheet.cell(row_number, columns["date"]).value
+        raw_end = worksheet.cell(row_number, columns["date_to"]).value if columns.get("date_to") else None
+        raw_location = worksheet.cell(row_number, columns["location"]).value if columns.get("location") else None
+
+        if all(value in (None, "") for value in (raw_name, raw_start, raw_end, raw_location)):
+            continue
+
+        name = _clean_import_text(raw_name)
+        start_date = _parse_import_date(raw_start)
+        end_date = _parse_import_date(raw_end) if raw_end not in (None, "") else start_date
+        location = _clean_import_text(raw_location)
+        course = "SCM" if name and re.search(r"\(\s*25m\s*\)", name, re.IGNORECASE) else (
+            "LCM" if name and re.search(r"\(\s*50m\s*\)", name, re.IGNORECASE) else None
+        )
+        errors = []
+        warnings = []
+        if not name:
+            errors.append("Competition name is missing")
+        if not start_date:
+            errors.append("Start date is missing or invalid")
+        if raw_end not in (None, "") and not end_date:
+            errors.append("End date is invalid")
+        if start_date and end_date and end_date < start_date:
+            errors.append("End date is before the start date")
+
+        duplicate_id = None
+        if name and start_date:
+            key = _existing_meet_key(name, start_date)
+            duplicate_id = existing.get(key)
+            if duplicate_id:
+                warnings.append("Already exists and will be skipped")
+            elif key in upload_keys:
+                warnings.append("Repeated in this workbook and will be skipped")
+            else:
+                upload_keys.add(key)
+
+        can_import = not errors and not warnings
+        rows.append({
+            "row_number": row_number,
+            "name": name or "",
+            "date": start_date.isoformat() if start_date else None,
+            "date_to": end_date.isoformat() if end_date else None,
+            "location": location,
+            "course": course,
+            "level": None,
+            "warm_up_time": None,
+            "notes": None,
+            "can_import": can_import,
+            "existing_meet_id": duplicate_id,
+            "errors": errors,
+            "warnings": warnings,
+        })
+
+    if not rows:
+        raise HTTPException(status_code=400, detail="No competition rows were found below the headings")
+
+    return {
+        "filename": None,
+        "sheet_name": worksheet.title,
+        "rows": rows,
+        "summary": {
+            "total": len(rows),
+            "ready": sum(1 for row in rows if row["can_import"]),
+            "duplicates": sum(1 for row in rows if row["warnings"]),
+            "invalid": sum(1 for row in rows if row["errors"]),
+        },
+    }
+
+
 @router.get("")
 def list_meets(db: DBSession = Depends(get_db)):
     meets = db.query(models.Meet).order_by(models.Meet.date).all()
@@ -75,6 +239,69 @@ def create_meet(body: MeetCreate, db: DBSession = Depends(get_db)):
     db.commit()
     db.refresh(meet)
     return _meet_summary(meet, db)
+
+
+@router.post("/import/excel")
+async def preview_meet_excel(file: UploadFile = File(...), db: DBSession = Depends(get_db)):
+    if not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=400, detail="Please upload an .xlsx workbook")
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Workbook is too large (maximum 5 MB)")
+    preview = _extract_meet_workbook(content, db)
+    preview["filename"] = file.filename
+    return preview
+
+
+@router.post("/import/excel/confirm")
+def confirm_meet_excel(body: MeetImportConfirm, db: DBSession = Depends(get_db)):
+    created = []
+    skipped = []
+    seen = set()
+    for row in body.rows:
+        if not row.include:
+            continue
+        name = _clean_import_text(row.name)
+        if not name:
+            skipped.append({"row_number": row.row_number, "reason": "Competition name is missing"})
+            continue
+        end_date = row.date_to or row.date
+        if end_date < row.date:
+            skipped.append({"row_number": row.row_number, "reason": "End date is before the start date"})
+            continue
+        key = _existing_meet_key(name, row.date)
+        same_day = db.query(models.Meet).filter(models.Meet.date == row.date).all()
+        duplicate = next((meet for meet in same_day if _existing_meet_key(meet.name, meet.date) == key), None)
+        if duplicate or key in seen:
+            skipped.append({
+                "row_number": row.row_number,
+                "reason": "Already exists" if duplicate else "Repeated in import",
+                "existing_meet_id": duplicate.id if duplicate else None,
+            })
+            continue
+        seen.add(key)
+        course = row.course.upper() if row.course and row.course.upper() in {"SCM", "LCM"} else None
+        level = row.level.lower() if row.level and row.level.lower() in LEVELS else None
+        meet = models.Meet(
+            name=name,
+            date=row.date,
+            date_to=end_date,
+            location=_clean_import_text(row.location),
+            course=course,
+            level=level,
+            warm_up_time=_clean_import_text(row.warm_up_time),
+            notes=_clean_import_text(row.notes),
+        )
+        db.add(meet)
+        db.flush()
+        created.append({"id": meet.id, "name": meet.name, "date": meet.date.isoformat()})
+    db.commit()
+    return {
+        "created": created,
+        "skipped": skipped,
+        "created_count": len(created),
+        "skipped_count": len(skipped),
+    }
 
 
 @router.get("/{meet_id}")

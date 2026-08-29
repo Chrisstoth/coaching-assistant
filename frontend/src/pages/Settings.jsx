@@ -26,6 +26,16 @@ const SECTIONS = [
           </svg>
         ),
       },
+      {
+        to: '/settings/session-presentation',
+        label: 'Session Print & Terminology',
+        description: 'Add your club logo, choose your intensity language, and map it to LaneWatch training zones.',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6.72 13.829c-.24.03-.48.062-.72.096m.72-.096a42.415 42.415 0 0 1 10.56 0m-10.56 0L6.34 18m10.94-4.171c.24.03.48.062.72.096m-.72-.096.38 4.171m.34-4.075V10.5A2.25 2.25 0 0 0 15.75 8.25h-7.5A2.25 2.25 0 0 0 6 10.5v3.425m12 0h.75A2.25 2.25 0 0 0 21 11.675v-1.5A2.25 2.25 0 0 0 18.75 7.925H18m-12 6H5.25A2.25 2.25 0 0 1 3 11.675v-1.5a2.25 2.25 0 0 1 2.25-2.25H6m9-1.5V3.75A.75.75 0 0 0 14.25 3h-4.5a.75.75 0 0 0-.75.75v2.675" />
+          </svg>
+        ),
+      },
     ],
   },
   {

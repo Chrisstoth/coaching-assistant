@@ -25,7 +25,9 @@ import Login from './pages/Login'
 import ProfileWizard from './pages/ProfileWizard'
 import AssistantInbox from './pages/AssistantInbox'
 import TodaySession from './pages/TodaySession'
+import SessionPresentationSettings from './pages/SessionPresentationSettings'
 import { LaneWatchAIButton, LaneWatchWordmark } from './components/LaneWatchBrand'
+import { SessionPresentationProvider } from './components/SessionPresentationProvider'
 
 function RequireAuth({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />
@@ -218,9 +220,11 @@ export default function App() {
   const backendStatus = useBackendStatus()
   const offlineSync = useOfflineSync()
   return (
+    <SessionPresentationProvider>
     <div className="flex flex-col min-h-screen max-w-lg mx-auto">
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/sessions/:id/print" element={<RequireAuth><SessionPrint /></RequireAuth>} />
         <Route path="*" element={
           <RequireAuth>
             <AppHeader />
@@ -237,7 +241,6 @@ export default function App() {
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
-          <Route path="/sessions/:id/print" element={<SessionPrint />} />
           <Route path="/sessions/:id/register" element={<Register />} />
           <Route path="/meets" element={<Meets />} />
           <Route path="/meets/:id" element={<MeetDetail />} />
@@ -250,6 +253,7 @@ export default function App() {
           <Route path="/season" element={<SeasonPlan />} />
                 <Route path="/assistant" element={<AssistantInbox />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/settings/session-presentation" element={<SessionPresentationSettings />} />
               </Routes>
             </main>
             <BottomNav />
@@ -257,6 +261,7 @@ export default function App() {
         } />
       </Routes>
     </div>
+    </SessionPresentationProvider>
   )
 }
 

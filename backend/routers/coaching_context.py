@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend.database import get_db
 from backend import models
 from backend.services.claude_service import get_client, MODEL
+from backend.services.terminology import coach_terminology_context
 
 router = APIRouter()
 
@@ -124,10 +125,11 @@ def chat(body: dict = Body(...), db: DBSession = Depends(get_db)):
 
     # If this is an update conversation, prepend the current profile as context
     current = _current_profile(db)
-    system = SYSTEM_PROMPT
+    terminology = coach_terminology_context(db)
+    system = SYSTEM_PROMPT + (f"\n\n{terminology}" if terminology else "")
     if current and len(pending) == 1:
         # First message in what may be an update conversation
-        system = SYSTEM_PROMPT + f"""
+        system = SYSTEM_PROMPT + (f"\n\n{terminology}" if terminology else "") + f"""
 
 EXISTING COACHING CONTEXT (being updated):
 {current.summary}
@@ -276,6 +278,8 @@ def _profile_out(p: models.CoachingProfile, full: bool = False) -> dict:
 def get_current_coaching_context(db: DBSession) -> str:
     """Return the current coaching profile summary for use in AI prompts."""
     p = _current_profile(db)
-    if not p:
-        return ""
-    return f"COACHING CONTEXT:\n{p.summary}"
+    sections = [f"COACHING CONTEXT:\n{p.summary}"] if p else []
+    terminology = coach_terminology_context(db)
+    if terminology:
+        sections.append(terminology)
+    return "\n\n".join(sections)

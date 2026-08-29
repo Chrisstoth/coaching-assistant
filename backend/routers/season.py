@@ -8,6 +8,14 @@ import json, os
 
 from backend.database import get_db
 from backend import models
+from backend.services.cycle_codes import (
+    code_for,
+    ensure_cycle_sequences,
+    materialize_microcycle,
+    next_block_sequence,
+    next_macro_sequence,
+    next_micro_sequence,
+)
 
 router = APIRouter()
 
@@ -20,6 +28,7 @@ VOLUME_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_ra
 
 class BlockIn(BaseModel):
     macro_id: Optional[int] = None
+    sequence_index: Optional[int] = Field(default=None, ge=1)
     name: str
     squad: Optional[str] = None
     phase_type: Optional[str] = None
@@ -32,6 +41,7 @@ class BlockIn(BaseModel):
 
 class BlockUpdate(BaseModel):
     macro_id: Optional[int] = None
+    sequence_index: Optional[int] = Field(default=None, ge=1)
     name: Optional[str] = None
     squad: Optional[str] = None
     phase_type: Optional[str] = None
@@ -45,7 +55,7 @@ class BlockUpdate(BaseModel):
 class MacroIn(BaseModel):
     season_id: Optional[int] = None
     primary_meet_id: Optional[int] = None
-    sequence_index: int = 0
+    sequence_index: int = Field(default=0, ge=0)
     name: str
     squad: Optional[str] = None
     date_from: date
@@ -58,7 +68,7 @@ class MacroIn(BaseModel):
 class MacroUpdate(BaseModel):
     season_id: Optional[int] = None
     primary_meet_id: Optional[int] = None
-    sequence_index: Optional[int] = None
+    sequence_index: Optional[int] = Field(default=None, ge=1)
     name: Optional[str] = None
     squad: Optional[str] = None
     date_from: Optional[date] = None
@@ -70,6 +80,7 @@ class MacroUpdate(BaseModel):
 class MicrocycleIn(BaseModel):
     macro_id: Optional[int] = None
     block_id: Optional[int] = None
+    sequence_index: Optional[int] = Field(default=None, ge=1)
     squad: Optional[str] = None
     week_start: date
     week_end: Optional[date] = None
@@ -87,6 +98,7 @@ class MicrocycleIn(BaseModel):
 class MicrocycleUpdate(BaseModel):
     macro_id: Optional[int] = None
     block_id: Optional[int] = None
+    sequence_index: Optional[int] = Field(default=None, ge=1)
     squad: Optional[str] = None
     week_start: Optional[date] = None
     week_end: Optional[date] = None
@@ -111,7 +123,12 @@ def _block_out(b: models.SeasonBlock, today: date) -> dict:
     days_in = max(0, (today - b.date_from).days)
     week_in = min(total_weeks, days_in // 7 + 1) if b.date_from <= today <= b.date_to else None
     return {
-        "id": b.id, "macro_id": b.macro_id, "name": b.name, "squad": b.squad, "phase_type": b.phase_type,
+        "id": b.id, "macro_id": b.macro_id, "sequence_index": b.sequence_index,
+        "cycle_prefix": (
+            f"{b.macro.sequence_index}.{b.sequence_index}"
+            if b.macro and b.macro.sequence_index and b.sequence_index else None
+        ),
+        "name": b.name, "squad": b.squad, "phase_type": b.phase_type,
         "date_from": b.date_from.isoformat(), "date_to": b.date_to.isoformat(),
         "emphasis": b.emphasis, "group_intents": b.group_intents, "notes": b.notes,
         "created_at": b.created_at,
@@ -123,15 +140,25 @@ def _block_out(b: models.SeasonBlock, today: date) -> dict:
 
 
 def _micro_out(m: models.Microcycle) -> dict:
+    sessions = []
+    for index, raw in enumerate(m.sessions or [], 1):
+        if not isinstance(raw, dict):
+            sessions.append(raw)
+            continue
+        item = dict(raw)
+        item.setdefault("cycle_code", code_for(m, index))
+        sessions.append(item)
     return {
         "id": m.id, "macro_id": m.macro_id, "block_id": m.block_id,
+        "sequence_index": m.sequence_index,
+        "cycle_prefix": code_for(m, 1).rsplit(".", 1)[0] if code_for(m, 1) else None,
         "squad": m.squad, "week_start": m.week_start.isoformat(),
         "week_end": m.week_end.isoformat(), "label": m.label,
         "meso_position_note": m.meso_position_note,
         "progression_note": m.progression_note,
         "recovery_placement": m.recovery_placement,
         "next_week_direction": m.next_week_direction,
-        "coach_flags": m.coach_flags or [], "sessions": m.sessions or [],
+        "coach_flags": m.coach_flags or [], "sessions": sessions,
         "status": m.status, "notes": m.notes, "created_at": m.created_at,
     }
 
@@ -142,6 +169,8 @@ def _micro_out(m: models.Microcycle) -> dict:
 
 @router.get("/macros")
 def get_macros(db: Session = Depends(get_db)):
+    if ensure_cycle_sequences(db):
+        db.commit()
     today = date.today()
     macros = db.query(models.TrainingMacro).order_by(models.TrainingMacro.date_from).all()
     result = []
@@ -149,7 +178,8 @@ def get_macros(db: Session = Depends(get_db)):
         mesos = db.query(models.SeasonBlock).filter(models.SeasonBlock.macro_id == m.id).order_by(models.SeasonBlock.date_from).all()
         result.append({
             "id": m.id, "season_id": m.season_id, "primary_meet_id": m.primary_meet_id,
-            "sequence_index": m.sequence_index, "name": m.name, "squad": m.squad,
+            "sequence_index": m.sequence_index, "cycle_prefix": str(m.sequence_index),
+            "name": m.name, "squad": m.squad,
             "date_from": m.date_from.isoformat(), "date_to": m.date_to.isoformat(),
             "narrative": m.narrative, "group_definitions": m.group_definitions,
             "created_at": m.created_at,
@@ -166,7 +196,7 @@ def create_macro(data: MacroIn, db: Session = Depends(get_db)):
     macro = models.TrainingMacro(
         season_id=data.season_id,
         primary_meet_id=data.primary_meet_id,
-        sequence_index=data.sequence_index,
+        sequence_index=(data.sequence_index if data.sequence_index > 0 else next_macro_sequence(db, data.season_id, data.squad)),
         name=data.name,
         squad=data.squad,
         date_from=data.date_from,
@@ -177,10 +207,11 @@ def create_macro(data: MacroIn, db: Session = Depends(get_db)):
     db.add(macro)
     db.flush()
 
-    for meso_data in data.mesos:
+    for meso_index, meso_data in enumerate(data.mesos, 1):
         _ensure_date_order(meso_data.date_from, meso_data.date_to, "Meso")
         meso = models.SeasonBlock(
             macro_id=macro.id,
+            sequence_index=meso_data.sequence_index or meso_index,
             name=meso_data.name,
             squad=meso_data.squad or data.squad,
             phase_type=meso_data.phase_type,
@@ -198,7 +229,8 @@ def create_macro(data: MacroIn, db: Session = Depends(get_db)):
     mesos = db.query(models.SeasonBlock).filter(models.SeasonBlock.macro_id == macro.id).all()
     return {
         "id": macro.id, "season_id": macro.season_id, "primary_meet_id": macro.primary_meet_id,
-        "sequence_index": macro.sequence_index, "name": macro.name, "squad": macro.squad,
+        "sequence_index": macro.sequence_index, "cycle_prefix": str(macro.sequence_index),
+        "name": macro.name, "squad": macro.squad,
         "date_from": macro.date_from.isoformat(), "date_to": macro.date_to.isoformat(),
         "narrative": macro.narrative, "group_definitions": macro.group_definitions,
         "mesos": [_block_out(b, today) for b in mesos],
@@ -236,6 +268,8 @@ def delete_macro(macro_id: int, db: Session = Depends(get_db)):
 
 @router.get("/blocks")
 def get_blocks(db: Session = Depends(get_db)):
+    if ensure_cycle_sequences(db):
+        db.commit()
     blocks = db.query(models.SeasonBlock).order_by(models.SeasonBlock.date_from).all()
     today = date.today()
     return [_block_out(b, today) for b in blocks]
@@ -243,7 +277,9 @@ def get_blocks(db: Session = Depends(get_db)):
 @router.post("/blocks", status_code=201)
 def create_block(data: BlockIn, db: Session = Depends(get_db)):
     _ensure_date_order(data.date_from, data.date_to, "Meso")
-    block = models.SeasonBlock(**data.model_dump())
+    payload = data.model_dump()
+    payload["sequence_index"] = data.sequence_index or next_block_sequence(db, data.macro_id)
+    block = models.SeasonBlock(**payload)
     db.add(block)
     db.commit()
     db.refresh(block)
@@ -285,6 +321,8 @@ def get_microcycles(
     date_to: Optional[date] = None,
     db: Session = Depends(get_db),
 ):
+    if ensure_cycle_sequences(db):
+        db.commit()
     q = db.query(models.Microcycle)
     if macro_id is not None:
         q = q.filter(models.Microcycle.macro_id == macro_id)
@@ -314,8 +352,12 @@ def create_microcycle(data: MicrocycleIn, db: Session = Depends(get_db)):
         if data.week_start > block.date_to or week_end < block.date_from:
             raise HTTPException(422, "Microcycle must overlap its meso block")
     payload = data.model_dump(exclude={"week_end"})
+    payload["sequence_index"] = data.sequence_index or next_micro_sequence(db, data.block_id)
     micro = models.Microcycle(**payload, week_end=week_end)
     db.add(micro)
+    db.flush()
+    if micro.status in {"confirmed", "completed"}:
+        materialize_microcycle(micro, db)
     db.commit()
     db.refresh(micro)
     return _micro_out(micro)
@@ -332,6 +374,8 @@ def update_microcycle(micro_id: int, data: MicrocycleUpdate, db: Session = Depen
     _ensure_date_order(next_start, next_end, "Microcycle")
     for key, value in changes.items():
         setattr(micro, key, value)
+    if micro.status in {"confirmed", "completed"} and ({"status", "sessions"} & set(changes)):
+        materialize_microcycle(micro, db)
     db.commit()
     db.refresh(micro)
     return _micro_out(micro)
