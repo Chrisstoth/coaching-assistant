@@ -119,7 +119,7 @@ export const api = {
   getConversation: (id) => request('GET', `/swimmers/${id}/profile/conversation`),
 
   // Session planner
-  planSession: (data) => request('POST', '/sessions/plan', data),
+  planSession: (data, options = {}) => request('POST', '/sessions/plan', data, false, options),
 
   // Sessions
   getSessions: (params = {}) => {

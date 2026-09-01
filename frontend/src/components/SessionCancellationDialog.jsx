@@ -59,8 +59,14 @@ export default function SessionCancellationDialog({ session, onClose, onCancelle
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-pool-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-3" role="dialog" aria-modal="true" aria-labelledby="cancel-session-title">
-      <div className="w-full max-w-md bg-pool-800 border border-red-800/60 rounded-2xl p-4 shadow-2xl">
+    <div
+      className="fixed inset-0 z-[70] bg-pool-950/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-3"
+      style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 0.75rem)' }}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="cancel-session-title"
+    >
+      <div className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] overflow-y-auto bg-pool-800 border border-red-800/60 rounded-2xl p-4 shadow-2xl">
         <div className="flex items-start gap-3">
           <div className="w-9 h-9 rounded-full bg-red-900/40 border border-red-700/50 text-red-300 flex items-center justify-center font-bold shrink-0">!</div>
           <div>

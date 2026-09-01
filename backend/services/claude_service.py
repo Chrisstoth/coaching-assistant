@@ -253,6 +253,7 @@ Rules:
         model=FAST_MODEL,
         operation="analyse_session_energy",
         max_tokens=1400,
+        timeout=30.0,
         messages=[{"role": "user", "content": prompt}],
     )
     parsed = json.loads(_strip_json(response.content[0].text))
@@ -5168,7 +5169,7 @@ Return as JSON: {{
 # Session planner
 # ---------------------------------------------------------------------------
 
-def _build_swimmer_brief(swimmer: models.Swimmer, db: DBSession) -> str:
+def _build_swimmer_brief(swimmer: models.Swimmer, db: DBSession, target_date=None) -> str:
     """Lightweight per-swimmer summary for pre-session planning."""
     from datetime import date as date_type
     from sqlalchemy import or_
@@ -5178,18 +5179,18 @@ def _build_swimmer_brief(swimmer: models.Swimmer, db: DBSession) -> str:
     if swimmer.status != 'active':
         lines.append(f"  ⚠ Status: {swimmer.status.upper()}")
 
-    today = date_type.today()
+    planning_date = target_date or date_type.today()
     active_load = (
-        db.query(models.LoadEvent)
+        db.query(models.SwimmerLoadEvent)
         .filter(
-            models.LoadEvent.swimmer_id == swimmer.id,
-            models.LoadEvent.date_from <= today,
-            or_(models.LoadEvent.date_to == None, models.LoadEvent.date_to >= today),
+            models.SwimmerLoadEvent.swimmer_id == swimmer.id,
+            models.SwimmerLoadEvent.date_from <= planning_date,
+            or_(models.SwimmerLoadEvent.date_to == None, models.SwimmerLoadEvent.date_to >= planning_date),
         )
         .all()
     )
     for ev in active_load:
-        lines.append(f"  ⚠ {ev.event_type}: {ev.notes or ''}")
+        lines.append(f"  ⚠ {ev.event_type}: {ev.description or ''}")
 
     age_ctx = _swimmer_age_context(swimmer)
     if age_ctx:
@@ -5217,11 +5218,18 @@ def plan_and_analyse_session(
     - Per-swimmer group suggestions and notes
     - Expected physiological effects
     """
+    planning_date = None
+    if date_str:
+        try:
+            planning_date = date.fromisoformat(date_str)
+        except ValueError:
+            pass
+
     swimmer_briefs = []
     for sw_info in expected_swimmers:
         swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == sw_info["id"]).first()
         if swimmer:
-            swimmer_briefs.append(_build_swimmer_brief(swimmer, db))
+            swimmer_briefs.append(_build_swimmer_brief(swimmer, db, planning_date))
 
     swimmers_block = "\n\n".join(swimmer_briefs) if swimmer_briefs else "No specific swimmers loaded."
 
@@ -5243,6 +5251,7 @@ Parse this session and return a JSON object with this exact structure:
 {{
   "parsed": {{
     "title": "concise session title",
+    "coach_intent": "one sentence describing the purpose of the session",
     "energy_focus": "aerobic|threshold|speed|recovery|mixed",
     "warm_up": "warm up description, or null",
     "cool_down": "cool down description, or null",
@@ -5265,16 +5274,21 @@ Parse this session and return a JSON object with this exact structure:
 }}
 
 Rules:
-- If only one or two groups are described, derive the other groups with appropriate progressive modifications.
+- The coach may provide a rough idea rather than a written programme. Fill in sensible distances,
+  repetitions, recoveries and send-offs so the result is usable, and state material assumptions.
+- Warm-up and cool-down are optional. Use null when the session is intentionally one continuous or
+  progressive main set; do not force classic section headings onto it.
+- Return only the meaningful groups the coach described or that the expected swimmers genuinely need,
+  with a maximum of three. Do not manufacture extra groups just to fill the schema.
 - If no expected swimmers, return per_swimmer as an empty array.
 - Do not include markdown in set descriptions — plain text only.
 - Keep set descriptions concise but complete (e.g. "6x400 on 5:30, threshold pace").
 """
 
     response = get_client().messages.create(
-        model=MODEL,
-        effort=PLANNING_EFFORT,
-        max_tokens=2500,
+        model=FAST_MODEL,
+        max_tokens=1800,
+        timeout=35.0,
         system=get_system_prompt(db),
         messages=[{"role": "user", "content": prompt}],
     )
@@ -5286,7 +5300,30 @@ Rules:
             raw = raw[4:]
         raw = raw.rstrip("`").strip()
 
-    return json.loads(raw)
+    result = json.loads(raw)
+    if not isinstance(result, dict) or not isinstance(result.get("parsed"), dict):
+        raise ValueError("The session planner returned an invalid plan.")
+
+    parsed = result["parsed"]
+    cleaned_groups = {}
+    for key, group in list((parsed.get("groups") or {}).items())[:3]:
+        if not isinstance(group, dict):
+            continue
+        sets = group.get("sets") or []
+        if isinstance(sets, str):
+            sets = [line.strip() for line in sets.splitlines() if line.strip()]
+        else:
+            sets = [str(line).strip() for line in sets if str(line).strip()]
+        if sets:
+            cleaned_groups[str(key)] = {
+                "label": str(group.get("label") or f"Group {key}").strip(),
+                "sets": sets,
+            }
+    if not cleaned_groups:
+        cleaned_groups["1"] = {"label": "Session", "sets": [session_text]}
+    parsed["groups"] = cleaned_groups
+    result["per_swimmer"] = result.get("per_swimmer") if isinstance(result.get("per_swimmer"), list) else []
+    return result
 
 
 # ---------------------------------------------------------------------------

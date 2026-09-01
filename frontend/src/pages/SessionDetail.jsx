@@ -143,6 +143,23 @@ export default function SessionDetail() {
   if (id === 'new') return <NewSession />
   if (!session) return <div className="p-4 text-pool-400">Loading...</div>
 
+  const hasPlan = Boolean(
+    session.coach_intent
+    || session.planned_content
+    || session.groups?.some(group => (
+      group?.description
+      || group?.sets?.raw
+      || group?.sets?.items?.length
+      || Object.values(group?.volume_breakdown || {}).some(value => Number(value) > 0)
+    )),
+  )
+  const importTarget = new URLSearchParams({
+    tab: 'excel',
+    date: session.date,
+    session: String(session.id),
+  })
+  if (session.pool_slot_id) importTarget.set('slot', String(session.pool_slot_id))
+
   const goBack = () => {
     if (location.key && location.key !== 'default') navigate(-1)
     else navigate(location.state?.backTo || '/sessions', { replace: true })
@@ -180,6 +197,21 @@ export default function SessionDetail() {
           <p className="text-xs text-pool-300 mt-1">
             {[session.cycle_context.macrocycle_name, session.cycle_context.mesocycle_name, session.cycle_context.microcycle_label].filter(Boolean).join(' · ')}
           </p>
+        </div>
+      )}
+
+      {!hasPlan && (
+        <div className="bg-accent-600/10 border border-accent-500/40 rounded-xl p-4 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-pool-100">No session plan attached yet</p>
+            <p className="text-xs text-pool-400 mt-1">Import the workbook into this calendar session before opening the register.</p>
+          </div>
+          <Link
+            to={`/import?${importTarget.toString()}`}
+            className="shrink-0 bg-accent-600 hover:bg-accent-500 text-white rounded-lg px-3 py-2 text-xs font-semibold"
+          >
+            Import plan
+          </Link>
         </div>
       )}
 

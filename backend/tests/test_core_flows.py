@@ -1849,6 +1849,121 @@ class CoreFlowTests(unittest.TestCase):
                     db.delete(slot)
                 db.commit()
 
+    def test_excel_session_without_a_classic_section_heading_still_previews(self):
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet["A1"] = "Monday 24th August PM"
+        sheet["E2"] = "19:15 - 20:15"
+        sheet["A7"] = 3
+        sheet["B7"] = "x"
+        sheet["C7"] = 400
+        sheet["D7"] = "as"
+        sheet["E7"] = "Progressive aerobic into threshold"
+        sheet["G7"] = datetime.strptime("00:05:30", "%H:%M:%S").time()
+        sheet["H7"] = 14
+        sheet["I7"] = 1200
+        workbook_bytes = io.BytesIO()
+        workbook.save(workbook_bytes)
+
+        preview = self.client.post(
+            "/sessions/import/excel",
+            headers=self.headers,
+            data={"ai_check": "false"},
+            files={"file": (
+                "260824 progressive.xlsx", workbook_bytes.getvalue(),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )},
+        )
+
+        self.assertEqual(preview.status_code, 200, preview.text)
+        payload = preview.json()
+        self.assertIn("3 x 400", payload["draft"]["groups"]["1"]["sets"])
+        self.assertEqual(payload["metadata"]["calculated_metres"], 1200)
+        self.assertTrue(any(
+            "first recognisable set row" in warning for warning in payload["warnings"]
+        ))
+
+    def test_session_planner_uses_timetable_availability_and_attaches_zone_analysis(self):
+        with SessionLocal() as db:
+            available = models.Swimmer(name="Planner Available", active=True, status="active")
+            away = models.Swimmer(name="Planner Away", active=True, status="active")
+            slot = models.PoolSlot(
+                day_of_week=0, time="19:15", squad="Planner Squad", active=True,
+            )
+            db.add_all([available, away, slot])
+            db.flush()
+            db.add_all([
+                models.SwimmerSlot(swimmer_id=available.id, pool_slot_id=slot.id),
+                models.SwimmerSlot(swimmer_id=away.id, pool_slot_id=slot.id),
+                models.SwimmerException(
+                    swimmer_id=away.id, reason="holiday",
+                    date_from=date(2026, 8, 24), date_to=date(2026, 8, 24),
+                ),
+            ])
+            db.commit()
+            created_ids = {"swimmers": [available.id, away.id], "slot": slot.id}
+
+        planned = {
+            "parsed": {
+                "title": "Progressive threshold",
+                "coach_intent": "Build repeatable threshold pace.",
+                "energy_focus": "threshold",
+                "warm_up": None,
+                "cool_down": None,
+                "total_volume_m": "~1200m",
+                "groups": {"1": {"label": "Whole squad", "sets": ["3x400 on 5:30 progressive"]}},
+            },
+            "plan_alignment": "Fits the current block.",
+            "per_swimmer": [],
+            "expected_effects": "Build pace control.",
+        }
+        analysis = {
+            "energy_system_focus": "threshold",
+            "primary_emphasis": "Threshold pace control",
+            "density": "high",
+            "total_metres": 1200,
+            "group_breakdowns": {"1": {
+                "total_metres": 1200,
+                "zones": {"aerobic": 200, "threshold": 1000},
+            }},
+            "assumptions": [],
+        }
+        try:
+            with patch(
+                "backend.routers.sessions.claude_service.plan_and_analyse_session",
+                return_value=planned,
+            ) as planner, patch(
+                "backend.routers.sessions.claude_service.analyse_session_energy",
+                return_value=analysis,
+            ):
+                response = self.client.post(
+                    "/sessions/plan",
+                    headers=self.headers,
+                    json={
+                        "date": "2026-08-24", "squad": "Planner Squad",
+                        "text": "One long progressive threshold main set, about 1200m.",
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            expected = planner.call_args.kwargs["expected_swimmers"]
+            self.assertEqual([row["name"] for row in expected], ["Planner Available"])
+            self.assertEqual(response.json()["energy_analysis"]["total_metres"], 1200)
+            self.assertEqual(response.json()["parsed"]["groups"]["1"]["volume_breakdown"]["threshold"], 1000)
+        finally:
+            with SessionLocal() as db:
+                db.query(models.SwimmerException).filter(
+                    models.SwimmerException.swimmer_id.in_(created_ids["swimmers"])
+                ).delete(synchronize_session=False)
+                db.query(models.SwimmerSlot).filter(
+                    models.SwimmerSlot.swimmer_id.in_(created_ids["swimmers"])
+                ).delete(synchronize_session=False)
+                db.query(models.PoolSlot).filter(models.PoolSlot.id == created_ids["slot"]).delete()
+                db.query(models.Swimmer).filter(models.Swimmer.id.in_(created_ids["swimmers"])).delete(
+                    synchronize_session=False
+                )
+                db.commit()
+
     def test_planning_agent_persists_event_links_and_pathway_state(self):
         swimmer = self.client.post(
             "/swimmers", headers=self.headers,

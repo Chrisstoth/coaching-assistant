@@ -690,6 +690,18 @@ def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
     return items, raw_lines
 
 
+def _looks_like_template_set_row(values: list) -> bool:
+    """Identify a set row without relying on a named Warm Up/Main Set heading."""
+    if len(values) < 3:
+        return False
+    repetitions = pd.to_numeric(values[0], errors="coerce")
+    distance = pd.to_numeric(values[2], errors="coerce")
+    if pd.isna(repetitions) or pd.isna(distance) or repetitions <= 0 or distance <= 0:
+        return False
+    marker = _cell_text(values[1]).lower()
+    return marker == "x" or any(_cell_text(value) for value in values[3:10])
+
+
 def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
     """Extract a reviewable session draft without writing to the database."""
     try:
@@ -722,10 +734,12 @@ def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
         )
 
     start_time = end_time = venue = coach = week_key = None
-    aims, set_header_row = [], None
+    aims, set_header_row, first_set_row = [], None, None
     planned_metres = planned_duration = None
     for row_number in range(1, min(ws.max_row, 20) + 1):
         row_values = [ws.cell(row_number, col).value for col in range(1, 11)]
+        if first_set_row is None and _looks_like_template_set_row(row_values):
+            first_set_row = row_number
         row_texts = [_cell_text(value) for value in row_values]
         joined = " | ".join(value for value in row_texts if value)
         time_match = re.search(r"\b(\d{1,2}:\d{2})\s*[-–—]\s*(\d{1,2}:\d{2})\b", joined)
@@ -749,9 +763,23 @@ def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
                 planned_metres = int(numeric_total)
             planned_duration = _excel_clock(ws.cell(row_number, 10).value, duration=True)
 
+    if set_header_row is None and first_set_row is None:
+        for row_number in range(21, ws.max_row + 1):
+            row_values = [ws.cell(row_number, col).value for col in range(1, 11)]
+            if _looks_like_template_set_row(row_values):
+                first_set_row = row_number
+                break
+    if set_header_row is None and first_set_row is None:
+        raise ValueError("No recognisable set rows were found in the workbook.")
     if set_header_row is None:
-        raise ValueError("The session set table was not found (expected a Warm Up or Session heading).")
-    items, raw_lines = _template_set_items(ws, set_header_row + 1)
+        set_start_row = first_set_row
+        warnings.append(
+            "No Warm Up, Main Set, or Session heading was found; "
+            "the plan was extracted from the first recognisable set row."
+        )
+    else:
+        set_start_row = set_header_row + 1
+    items, raw_lines = _template_set_items(ws, set_start_row)
     if not any(item["type"] == "set" for item in items):
         raise ValueError("No recognisable set rows were found in the workbook.")
 

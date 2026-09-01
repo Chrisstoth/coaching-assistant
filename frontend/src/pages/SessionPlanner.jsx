@@ -31,13 +31,19 @@ export default function SessionPlanner() {
     setError(null)
     setResult(null)
     setSaved(null)
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 70000)
     try {
-      const data = await api.planSession({ text, date })
+      const data = await api.planSession({ text, date }, { signal: controller.signal })
       setResult(data)
     } catch (e) {
-      setError(e.message)
+      setError(e.name === 'AbortError'
+        ? 'The planner took too long to respond. Please try again; your session idea is still in the box.'
+        : e.message)
+    } finally {
+      window.clearTimeout(timeout)
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   const saveAsSession = async () => {
@@ -45,12 +51,30 @@ export default function SessionPlanner() {
     setSaving(true)
     try {
       const parsed = result.parsed
+      const groupEntries = Object.entries(parsed.groups || {})
+      const groups = Object.fromEntries(groupEntries.map(([num, group], index) => {
+        const lines = []
+        if (index === 0 && parsed.warm_up) lines.push(`Warm up: ${parsed.warm_up}`)
+        lines.push(...(Array.isArray(group.sets) ? group.sets : [group.sets]).filter(Boolean))
+        if (index === groupEntries.length - 1 && parsed.cool_down) lines.push(`Cool down: ${parsed.cool_down}`)
+        return [num, {
+          description: group.label || `Group ${num}`,
+          sets: lines.join('\n'),
+          volume_breakdown: group.volume_breakdown || {},
+        }]
+      }))
+      const individualMods = Object.fromEntries(
+        (result.per_swimmer || []).filter(row => row.name && row.note).map(row => [row.name, row.note]),
+      )
       const session = await api.createSession({
         date,
         title: parsed.title,
-        energy_system_focus: parsed.energy_focus,
-        coach_intent: result.plan_alignment,
-        groups: parsed.groups,
+        energy_system_focus: result.energy_analysis?.energy_system_focus || parsed.energy_focus,
+        energy_analysis: result.energy_analysis || null,
+        coach_intent: parsed.coach_intent || result.plan_alignment,
+        coach_notes: [result.plan_alignment, result.expected_effects].filter(Boolean).join('\n\n'),
+        groups,
+        individual_mods: individualMods,
         status: 'planned',
       })
       setSaved(session)
@@ -70,7 +94,8 @@ export default function SessionPlanner() {
           date,
           energy_system_focus: parsed.energy_focus,
           groups: parsed.groups || {},
-          coach_intent: result.plan_alignment,
+          coach_intent: parsed.coach_intent || result.plan_alignment,
+          energy_analysis: result.energy_analysis,
         },
         settings: presentation,
         recommendations: result.per_swimmer || [],
@@ -122,11 +147,14 @@ export default function SessionPlanner() {
             disabled={loading || !text.trim()}
             className="w-full bg-accent-600 hover:bg-accent-500 active:bg-accent-700 disabled:opacity-40 rounded-xl py-3 text-sm font-semibold transition-colors"
           >
-            {loading ? 'Analysing…' : 'Preview & Analyse'}
+            {loading ? 'Building plan & dose…' : 'Preview & Analyse'}
           </button>
 
           {error && (
             <p className="text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">{error}</p>
+          )}
+          {loading && (
+            <p className="text-xs text-pool-400 text-center">Turning your idea into a pool-ready plan, then estimating distance by work zone.</p>
           )}
         </div>
 
@@ -212,6 +240,15 @@ export default function SessionPlanner() {
                           </li>
                         ))}
                       </ul>
+                      {Object.values(grp.volume_breakdown || {}).some(value => Number(value) > 0) && (
+                        <div className="px-3 pb-3 flex flex-wrap gap-1.5">
+                          {Object.entries(grp.volume_breakdown).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (
+                            <span key={zone} className="text-[11px] bg-pool-800 border border-pool-600 text-pool-300 rounded-full px-2 py-0.5">
+                              {displayEnergy(zone).label} {Number(value)}m
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -224,6 +261,23 @@ export default function SessionPlanner() {
                 <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-1.5">Plan Alignment</p>
                 <p className="text-sm text-pool-200 leading-relaxed">{result.plan_alignment}</p>
               </div>
+            )}
+
+            {result.energy_analysis && (
+              <div className="bg-pool-700 border border-pool-600 rounded-xl p-3">
+                <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-1.5">Prescribed Dose</p>
+                <p className="text-sm text-pool-200 leading-relaxed">
+                  {result.energy_analysis.primary_emphasis || displayEnergy(result.energy_analysis.energy_system_focus).label}
+                  {result.energy_analysis.density ? ` · ${result.energy_analysis.density.replace('_', ' ')} density` : ''}
+                </p>
+                {result.energy_analysis.assumptions?.length > 0 && (
+                  <p className="text-xs text-pool-400 mt-1">Assumption: {result.energy_analysis.assumptions[0]}</p>
+                )}
+              </div>
+            )}
+
+            {result.analysis_warning && (
+              <p className="text-amber-300 text-xs bg-amber-900/20 border border-amber-800/40 rounded-xl px-3 py-2">{result.analysis_warning}</p>
             )}
 
             {/* Per swimmer */}

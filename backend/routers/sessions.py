@@ -1025,7 +1025,6 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
     Pulls expected swimmers from schedule for the given date/squad.
     """
     from backend.routers.coaching_context import get_current_coaching_context
-    from sqlalchemy import or_
     from datetime import date as date_type
 
     text = body.get("text", "").strip()
@@ -1041,39 +1040,30 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
         try:
             d = date_type.fromisoformat(date_str)
             day_of_week = d.weekday()  # 0=Mon … 6=Sun
-            day_names_map = {0: "monday", 1: "tuesday", 2: "wednesday", 3: "thursday",
-                             4: "friday", 5: "saturday", 6: "sunday"}
-            day_name = day_names_map[day_of_week]
-
             slots_q = db.query(models.PoolSlot).filter(
-                models.PoolSlot.day_of_week == day_of_week
+                models.PoolSlot.day_of_week == day_of_week,
+                models.PoolSlot.active == True,
             )
             if squad:
                 slots_q = slots_q.filter(models.PoolSlot.squad == squad)
             slots = slots_q.all()
 
-            swimmer_ids = set()
-            for slot in slots:
-                assignments = db.query(models.SwimmerSlot).filter(
-                    models.SwimmerSlot.slot_id == slot.id
+            slot_ids = [slot.id for slot in slots]
+            swimmer_ids = {
+                swimmer_id for swimmer_id, in db.query(models.SwimmerSlot.swimmer_id).filter(
+                    models.SwimmerSlot.pool_slot_id.in_(slot_ids)
                 ).all()
-                for a in assignments:
-                    # Check for exceptions on this date
-                    exc = db.query(models.SwimmerException).filter(
-                        models.SwimmerException.swimmer_id == a.swimmer_id,
-                        models.SwimmerException.date == d,
-                    ).first()
-                    if not exc:
-                        swimmer_ids.add(a.swimmer_id)
+            } if slot_ids else set()
+            swimmer_ids.difference_update(availability_on_date(db, swimmer_ids, d))
 
             if swimmer_ids:
                 swimmers = db.query(models.Swimmer).filter(
                     models.Swimmer.id.in_(swimmer_ids),
-                    models.Swimmer.status == 'active',
+                    models.Swimmer.active == True,
                 ).order_by(models.Swimmer.name).all()
                 expected_swimmers = [{"id": s.id, "name": s.name} for s in swimmers]
-        except Exception:
-            pass
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Date must use YYYY-MM-DD format")
 
     coaching_context = get_current_coaching_context(db)
 
@@ -1085,6 +1075,42 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
         coaching_context=coaching_context,
         db=db,
     )
+    parsed = result.get("parsed") or {}
+    planned_groups = {}
+    group_items = list((parsed.get("groups") or {}).items())
+    for index, (key, group) in enumerate(group_items):
+        lines = []
+        if index == 0 and parsed.get("warm_up"):
+            lines.append(f"Warm up: {parsed['warm_up']}")
+        lines.extend(group.get("sets") or [])
+        if index == len(group_items) - 1 and parsed.get("cool_down"):
+            lines.append(f"Cool down: {parsed['cool_down']}")
+        planned_groups[str(key)] = {
+            "description": group.get("label") or f"Group {key}",
+            "sets": "\n".join(lines),
+            "items": [],
+        }
+
+    draft = {
+        "date": date_str,
+        "title": parsed.get("title"),
+        "coach_intent": parsed.get("coach_intent") or result.get("plan_alignment"),
+        "groups": planned_groups,
+        "source": "ai_planner",
+    }
+    try:
+        analysis = claude_service.analyse_session_energy(draft, coach_terminology_context(db))
+        claude_service.apply_energy_analysis_to_draft(draft, analysis)
+        result["energy_analysis"] = analysis
+        parsed["energy_focus"] = analysis.get("energy_system_focus") or parsed.get("energy_focus")
+        if analysis.get("total_metres"):
+            parsed["total_volume_m"] = f"{analysis['total_metres']}m"
+        for key, group in (parsed.get("groups") or {}).items():
+            analysed = planned_groups.get(str(key)) or {}
+            group["volume_breakdown"] = analysed.get("volume_breakdown") or {}
+            group["total_metres"] = analysed.get("total_metres")
+    except Exception as exc:
+        result["analysis_warning"] = f"The plan was created, but its zone breakdown could not be estimated: {exc}"
     result["expected_swimmers"] = expected_swimmers
     return result
 

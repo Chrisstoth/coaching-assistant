@@ -57,10 +57,11 @@ function SessionActionSheet({ item, dayDate, onClose, onDeleted, onStart, onCanc
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-[70] flex flex-col justify-end" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60" />
       <div
-        className="relative bg-pool-800 rounded-t-2xl p-4 space-y-2 pb-8 max-w-lg mx-auto w-full"
+        className="relative bg-pool-800 rounded-t-2xl p-4 space-y-2 max-h-[calc(100dvh-1rem)] overflow-y-auto max-w-lg mx-auto w-full"
+        style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 2rem)' }}
         onClick={e => e.stopPropagation()}
       >
         <div className="w-10 h-1 bg-pool-600 rounded-full mx-auto mb-4" />
@@ -389,8 +390,11 @@ export default function Calendar() {
 
       {/* Cancel modal */}
       {cancelTarget && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end">
-          <div className="w-full max-w-lg mx-auto bg-pool-800 rounded-t-2xl p-5 space-y-4">
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-end">
+          <div
+            className="w-full max-w-lg max-h-[calc(100dvh-1rem)] overflow-y-auto mx-auto bg-pool-800 rounded-t-2xl p-5 space-y-4"
+            style={{ paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 1.25rem)' }}
+          >
             <div className="flex justify-between items-start">
               <div>
                 <p className="font-semibold">Cancel session</p>
