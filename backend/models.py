@@ -803,6 +803,33 @@ class CoachingConversation(Base):
     profile = relationship("CoachingProfile", back_populates="conversations")
 
 
+class CoachCheckInSettings(Base):
+    """Singleton preference controlling milestone check-in reminders."""
+    __tablename__ = "coach_checkin_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    mode = Column(String, nullable=False, default="scheduled")  # scheduled / monthly_reminder / off
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class CoachCheckIn(Base):
+    """A timestamped coaching reflection; it never overwrites the coach profile automatically."""
+    __tablename__ = "coach_checkins"
+
+    id = Column(Integer, primary_key=True, index=True)
+    milestone_key = Column(String, nullable=True, unique=True, index=True)
+    checkin_type = Column(String, nullable=False, default="adhoc")
+    scope_type = Column(String, nullable=True)  # season / macro / meso / meet
+    scope_id = Column(Integer, nullable=True)
+    title = Column(String, nullable=False)
+    due_date = Column(Date, nullable=True)
+    status = Column(String, nullable=False, default="in_progress")  # in_progress / completed / skipped
+    messages = Column(JSON, nullable=False, default=list)
+    summary = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
 class SessionPresentationSettings(Base):
     """Singleton club branding and coach-facing intensity terminology."""
     __tablename__ = "session_presentation_settings"

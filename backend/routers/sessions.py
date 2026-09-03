@@ -1030,23 +1030,41 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
     text = body.get("text", "").strip()
     date_str = body.get("date")
     squad = body.get("squad")
+    pool_slot_id = body.get("pool_slot_id")
 
     if not text:
         raise HTTPException(400, "Session text required")
 
     # Resolve expected swimmers from schedule
     expected_swimmers = []
+    selected_slot = None
     if date_str:
         try:
             d = date_type.fromisoformat(date_str)
             day_of_week = d.weekday()  # 0=Mon … 6=Sun
-            slots_q = db.query(models.PoolSlot).filter(
-                models.PoolSlot.day_of_week == day_of_week,
-                models.PoolSlot.active == True,
-            )
-            if squad:
-                slots_q = slots_q.filter(models.PoolSlot.squad == squad)
-            slots = slots_q.all()
+            if pool_slot_id is not None:
+                try:
+                    pool_slot_id = int(pool_slot_id)
+                except (TypeError, ValueError):
+                    raise HTTPException(400, "Pool slot ID must be a number")
+                selected_slot = db.query(models.PoolSlot).filter(
+                    models.PoolSlot.id == pool_slot_id,
+                    models.PoolSlot.active == True,
+                ).first()
+                if not selected_slot:
+                    raise HTTPException(404, "Timetable session not found")
+                if selected_slot.day_of_week != day_of_week:
+                    raise HTTPException(400, "Selected timetable session does not occur on this date")
+                slots = [selected_slot]
+                squad = selected_slot.squad
+            else:
+                slots_q = db.query(models.PoolSlot).filter(
+                    models.PoolSlot.day_of_week == day_of_week,
+                    models.PoolSlot.active == True,
+                )
+                if squad:
+                    slots_q = slots_q.filter(models.PoolSlot.squad == squad)
+                slots = slots_q.all()
 
             slot_ids = [slot.id for slot in slots]
             swimmer_ids = {
@@ -1112,7 +1130,34 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
     except Exception as exc:
         result["analysis_warning"] = f"The plan was created, but its zone breakdown could not be estimated: {exc}"
     result["expected_swimmers"] = expected_swimmers
+    result["pool_slot"] = ({
+        "id": selected_slot.id,
+        "label": selected_slot.label,
+        "time": selected_slot.time,
+        "end_time": selected_slot.end_time,
+        "squad": selected_slot.squad,
+        "course": selected_slot.course,
+    } if selected_slot else None)
     return result
+
+
+@router.post("/plan/photo/extract")
+async def extract_session_photo(
+    file: UploadFile = File(...),
+):
+    """Extract a photographed programme into an editable draft without saving it."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "The session photo is empty")
+    mime = file.content_type or "image/jpeg"
+    if not mime.startswith("image/"):
+        raise HTTPException(400, "Upload an image of the session")
+
+    draft = parse_whiteboard_photo(content, mime)
+    if not isinstance(draft, dict) or not (draft.get("groups") or draft.get("notes") or draft.get("title")):
+        raise HTTPException(422, "No session content could be read from the photo")
+    draft["groups"] = draft.get("groups") or {}
+    return {"draft": draft}
 
 
 # ---------------------------------------------------------------------------

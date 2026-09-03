@@ -489,6 +489,57 @@ function AssistantInboxPreview({ inbox }) {
   )
 }
 
+function CoachCheckInPrompts({ items, onStart, onSkip, busyKey }) {
+  if (!items.length) return null
+
+  const timing = (dueDate) => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    const due = new Date(`${dueDate}T00:00:00`)
+    const days = Math.round((due - today) / 86400000)
+    if (days === 0) return 'Due today'
+    if (days === 1) return 'Due tomorrow'
+    if (days > 1) return `Due in ${days} days`
+    return `${Math.abs(days)} day${Math.abs(days) === 1 ? '' : 's'} overdue`
+  }
+
+  return (
+    <section className="rounded-2xl border border-teal-700/50 bg-teal-950/35 overflow-hidden">
+      <div className="px-4 pt-4 pb-2 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wider text-teal-400">Coaching check-in</p>
+          <p className="text-sm text-teal-100 mt-1">A useful moment to step back and reflect.</p>
+        </div>
+        <Link to="/coach-checkins" className="text-xs text-teal-400 shrink-0">History</Link>
+      </div>
+      <div className="divide-y divide-teal-800/40">
+        {items.map(item => (
+          <div key={item.milestone_key} className="px-4 py-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-pool-100">{item.title}</p>
+                <p className="text-xs text-teal-400/80 mt-0.5">
+                  {item.status === 'in_progress'
+                    ? 'Started—ready to continue'
+                    : item.checkin_type === 'monthly' ? 'This month’s reminder' : timing(item.due_date)}
+                </p>
+              </div>
+              <button
+                onClick={() => onStart(item)}
+                disabled={busyKey === item.milestone_key}
+                className="rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 shrink-0"
+              >
+                {busyKey === item.milestone_key ? 'Opening…' : item.status === 'in_progress' ? 'Continue' : 'Check in'}
+              </button>
+            </div>
+            <button onClick={() => onSkip(item)} className="text-[11px] text-pool-500 hover:text-pool-300 mt-2">Not this time</button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function CoachingWatchpoints({ notes, onDismiss }) {
   const [open, setOpen] = useState(false)
   const [openNoteId, setOpenNoteId] = useState(null)
@@ -570,6 +621,8 @@ export default function Dashboard() {
   const [seasonNotice, setSeasonNotice] = useState('')
   const [busySessionKey, setBusySessionKey] = useState('')
   const [cancelTarget, setCancelTarget] = useState(null)
+  const [dueCheckIns, setDueCheckIns] = useState([])
+  const [busyCheckInKey, setBusyCheckInKey] = useState('')
 
   useEffect(() => {
     setLoading(true)
@@ -582,7 +635,8 @@ export default function Dashboard() {
       api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
       api.getCurrentPlanningSeason().catch(() => null),
       api.getSquadAvailability().catch(() => ({ items: [], current_count: 0, upcoming_count: 0 })),
-    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData]) => {
+      api.getDueCoachCheckIns().catch(() => ({ items: [] })),
+    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData, checkIns]) => {
       setCalendar(cal)
       setCoachingNotes(notes)
       setCoachingProfile(ctx)
@@ -591,6 +645,7 @@ export default function Dashboard() {
       setAssistantInbox(inbox)
       setCurrentSeason(season)
       setAvailability(availabilityData)
+      setDueCheckIns(checkIns.items || [])
       setLoading(false)
     })
   }, [])
@@ -598,6 +653,30 @@ export default function Dashboard() {
   const dismissNote = async (id) => {
     await api.updateCoachingNote(id, { active: false })
     setCoachingNotes(prev => prev.filter(n => n.id !== id))
+  }
+
+  const openCoachCheckIn = async (item) => {
+    setBusyCheckInKey(item.milestone_key)
+    try {
+      const row = item.id ? item : await api.startCoachCheckIn(item)
+      navigate(`/coach-checkins/${row.id}`)
+    } catch (error) {
+      alert(`Could not open check-in: ${error.message}`)
+      setBusyCheckInKey('')
+    }
+  }
+
+  const skipCoachCheckIn = async (item) => {
+    if (!window.confirm('Skip this check-in? It will stop appearing on Today.')) return
+    setBusyCheckInKey(item.milestone_key)
+    try {
+      const row = item.id ? item : await api.startCoachCheckIn(item)
+      await api.skipCoachCheckIn(row.id)
+      setDueCheckIns(previous => previous.filter(candidate => candidate.milestone_key !== item.milestone_key))
+    } catch (error) {
+      alert(`Could not skip check-in: ${error.message}`)
+    }
+    setBusyCheckInKey('')
   }
 
   const today = new Date()
@@ -696,6 +775,15 @@ export default function Dashboard() {
           onDismiss={dismissSession}
           onCancel={setCancelTarget}
           busyKey={busySessionKey}
+        />
+      )}
+
+      {!loading && (
+        <CoachCheckInPrompts
+          items={dueCheckIns}
+          onStart={openCoachCheckIn}
+          onSkip={skipCoachCheckIn}
+          busyKey={busyCheckInKey}
         />
       )}
 

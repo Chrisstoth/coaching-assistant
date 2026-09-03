@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node scripts/check-api-contract.mjs && node scripts/test-offline-queue.mjs && node scripts/check-chat-behaviour.mjs && node scripts/test-session-proximity.mjs && node scripts/test-calendar-dates.mjs && node scripts/test-session-import.mjs && node scripts/test-meet-import.mjs && node scripts/test-profile-import.mjs && node scripts/test-session-presentation.mjs",
+    "test": "node scripts/check-api-contract.mjs && node scripts/test-offline-queue.mjs && node scripts/check-chat-behaviour.mjs && node scripts/test-session-proximity.mjs && node scripts/test-calendar-dates.mjs && node scripts/test-session-planner-schedule.mjs && node scripts/test-coach-checkins.mjs && node scripts/test-session-import.mjs && node scripts/test-meet-import.mjs && node scripts/test-profile-import.mjs && node scripts/test-session-presentation.mjs",
     "preview": "vite preview",
     "serve": "vite build && vite preview --host --port 5173"
   },

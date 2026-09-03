@@ -10,15 +10,15 @@ from backend.services.terminology import coach_terminology_context
 
 router = APIRouter()
 
-SYSTEM_PROMPT = """You are an experienced swimming performance coach helping a fellow coach articulate and capture their coaching context and style.
+SYSTEM_PROMPT = """You are an experienced swimming performance coach helping a fellow coach articulate the durable context behind how they coach.
 
-Your role is to ask thoughtful questions across two areas:
+Treat this as a thoughtful baseline interview, not a season-planning conversation or a diary check-in. Explore:
 
-**Area 1 — Coaching philosophy and current state:**
-- Their philosophy and values: how they approach athlete development, what they prioritise long-term
-- Where their squad currently is: fitness, technique, cohesion, key individuals, gaps or challenges
-- Season targets and key competitions they're building towards
-- What the current training block focus is and why
+**Area 1 — Philosophy and coaching identity:**
+- Their philosophy and values: how they approach athlete development and what they prioritise long-term
+- What motivates them to coach, what good coaching means to them, and the experiences that shaped their approach
+- How they build trust, communicate, give feedback and handle challenge or uncertainty
+- The assumptions, tensions or growth edges they want to keep examining
 
 **Area 2 — How they actually coach (session style and preferences):**
 - How they typically structure a session: warm-up style, main set format, cool-down, typical duration
@@ -31,9 +31,11 @@ Your role is to ask thoughtful questions across two areas:
 
 Ask one or two questions at a time — don't overwhelm. Cover both areas across the conversation. Probe deeper when answers are vague. Be conversational, not clinical.
 
+Do not capture the current squad state, this season's targets, named meets or the current training block here. Those belong in the season/macro/meso planning records. If they arise, acknowledge them and steer back to the lasting belief or practice underneath.
+
 When you have a rich picture across both areas, say "I think I have a good understanding now — want me to synthesise this into a coaching context summary?"
 
-This document will be used as context for all AI-powered coaching decisions including writing sessions, reviewing training, and profiling swimmers — so the more specific the better."""
+This document will be used as stable background for AI-powered coaching decisions, so it should describe how this coach thinks and works rather than facts that expire."""
 
 
 def _get_pending_conversation(db: DBSession):
@@ -131,8 +133,8 @@ def chat(body: dict = Body(...), db: DBSession = Depends(get_db)):
         # First message in what may be an update conversation
         system = SYSTEM_PROMPT + (f"\n\n{terminology}" if terminology else "") + f"""
 
-EXISTING COACHING CONTEXT (being updated):
-{current.summary}
+EXISTING DURABLE COACHING CONTEXT (being reviewed):
+{_durable_profile_context(current)}
 
 The coach is now providing updates or additions to this context. Help them articulate what has changed or evolved."""
 
@@ -170,7 +172,7 @@ def finalise(body: dict = Body(...), db: DBSession = Depends(get_db)):
     )
 
     current = _current_profile(db)
-    prior_context = f"\nPRIOR CONTEXT:\n{current.summary}\n" if current else ""
+    prior_context = f"\nPRIOR DURABLE CONTEXT:\n{_durable_profile_context(current)}\n" if current else ""
 
     synthesis_prompt = f"""Based on the conversation below, write a rich coaching context document.
 
@@ -179,14 +181,11 @@ Structure it as follows (write in prose, not bullet points — this will be used
 **Coaching Philosophy & Ethos**
 [How the coach thinks about athlete development, what they value, how they approach coaching, what they prioritise long-term]
 
-**Squad State Right Now**
-[Where the group currently is — fitness, technique, cohesion, key individuals, gaps or challenges]
+**Motivations & Coaching Identity**
+[Why they coach, formative experiences, and what good coaching means to them]
 
-**Season Targets**
-[Key meets, performance goals, what the season is building towards]
-
-**Current Training Block Focus**
-[What they're training right now, why, and what adaptation they're seeking]
+**Communication & Relationships**
+[How they build trust, communicate expectations, give feedback and respond to challenge]
 
 **Session Style & Preferences**
 [How they structure sessions, preferred set formats, typical warm-up/cool-down approach, whether they lean towards volume or intensity, any signature sets or structures they return to. What Group 1/2/3 means to them. How they differentiate load across the squad.]
@@ -194,8 +193,10 @@ Structure it as follows (write in prose, not bullet points — this will be used
 **Intensity & Terminology**
 [What their intensity labels actually mean: what "aerobic", "threshold", "VO2", "speed" looks like in their sessions — pace, HR, effort, feel-based cues. How they communicate intensity to swimmers. Typical energy system balance across a training week.]
 
-**Key Coaching Priorities**
-[The 2-3 most important things the coach is focused on right now]
+**Decision-making & Growth Edges**
+[How they make and revise decisions, recurring tensions or biases, and questions they want to keep examining]
+
+Exclude current squad condition, season targets, named meets and current-block priorities. Those belong to their dated planning records, not this durable profile.
 
 ---
 {prior_context}
@@ -266,11 +267,11 @@ def _profile_out(p: models.CoachingProfile, full: bool = False) -> dict:
         out.update({
             "summary": p.summary,
             "ethos": p.ethos,
-            "squad_state": p.squad_state,
-            "targets": p.targets,
-            "current_focus": p.current_focus,
+            "motivations": _extract(p.summary, "Motivations & Coaching Identity"),
+            "communication_relationships": _extract(p.summary, "Communication & Relationships"),
             "session_style": _extract(p.summary, "Session Style & Preferences"),
             "intensity_terminology": _extract(p.summary, "Intensity & Terminology"),
+            "decision_growth": _extract(p.summary, "Decision-making & Growth Edges"),
         })
     return out
 
@@ -278,8 +279,35 @@ def _profile_out(p: models.CoachingProfile, full: bool = False) -> dict:
 def get_current_coaching_context(db: DBSession) -> str:
     """Return the current coaching profile summary for use in AI prompts."""
     p = _current_profile(db)
-    sections = [f"COACHING CONTEXT:\n{p.summary}"] if p else []
+    sections = [f"DURABLE COACHING CONTEXT:\n{_durable_profile_context(p)}"] if p else []
     terminology = coach_terminology_context(db)
     if terminology:
         sections.append(terminology)
     return "\n\n".join(sections)
+
+
+def _durable_profile_context(profile: Optional[models.CoachingProfile]) -> str:
+    """Exclude season and block facts from the coach's long-lived AI identity."""
+    if not profile:
+        return ""
+
+    import re
+
+    parts = []
+    if profile.ethos:
+        parts.append(f"Coaching Philosophy & Ethos: {profile.ethos.strip()}")
+    for heading in (
+        "Motivations & Coaching Identity",
+        "Communication & Relationships",
+        "Session Style & Preferences",
+        "Intensity & Terminology",
+        "Decision-making & Growth Edges",
+    ):
+        match = re.search(
+            rf"\*\*{re.escape(heading)}\*\*\s*(.*?)(?=\n\*\*|\Z)",
+            profile.summary or "",
+            re.DOTALL | re.IGNORECASE,
+        )
+        if match:
+            parts.append(f"{heading}: {match.group(1).strip()}")
+    return "\n".join(parts)

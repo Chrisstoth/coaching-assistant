@@ -1221,9 +1221,11 @@ class CoreFlowTests(unittest.TestCase):
         profile = SimpleNamespace(
             summary=(
                 long_text
+                + "\n**Motivations & Coaching Identity**\nHelping young people grow through the sport."
+                + "\n**Communication & Relationships**\nDirect, calm and curious."
                 + "\n**Session Style & Preferences**\nThree practical training groups."
                 + "\n**Intensity & Terminology**\nThreshold means controlled repeatability."
-                + "\n**Key Coaching Priorities**\nLong-term athlete development."
+                + "\n**Decision-making & Growth Edges**\nReview assumptions against observed response."
             ),
             ethos="Develop the athlete before chasing short-term results. " * 20,
             squad_state="The squad is rebuilding aerobic consistency. " * 20,
@@ -1232,9 +1234,109 @@ class CoreFlowTests(unittest.TestCase):
         )
         compact = _coaching_context_for_prompt(profile)
         self.assertLessEqual(len(compact), COACHING_CONTEXT_CHAR_LIMIT)
-        self.assertIn("Coaching philosophy", compact)
-        self.assertIn("Current focus", compact)
-        self.assertEqual(_coaching_context_for_prompt(profile, full=True), profile.summary)
+        self.assertIn("Coaching Philosophy & Ethos", compact)
+        self.assertIn("Session Style & Preferences", compact)
+        self.assertIn("Decision-making & Growth Edges", compact)
+        self.assertNotIn("Squad state", compact)
+        self.assertNotIn("Current focus", compact)
+        self.assertNotIn("Detailed coaching context", _coaching_context_for_prompt(profile, full=True))
+
+    def test_coach_checkins_follow_milestones_and_reminder_mode(self):
+        block_start = date(2031, 3, 1)
+        block_end = date(2031, 3, 28)
+        midpoint = date(2031, 3, 14)
+        with SessionLocal() as db:
+            macro = models.TrainingMacro(
+                name="Check-in test macro", date_from=block_start, date_to=date(2031, 6, 1),
+            )
+            db.add(macro)
+            db.flush()
+            block = models.SeasonBlock(
+                macro_id=macro.id, name="Check-in test meso", phase_type="build",
+                date_from=block_start, date_to=block_end,
+            )
+            db.add(block)
+            db.commit()
+            macro_id = macro.id
+            block_id = block.id
+
+        settings = self.client.get("/coach-checkins/settings", headers=self.headers)
+        self.assertEqual(settings.status_code, 200, settings.text)
+        self.assertEqual(settings.json()["mode"], "scheduled")
+
+        due = self.client.get(
+            "/coach-checkins/due", headers=self.headers, params={"as_of": midpoint.isoformat()},
+        )
+        self.assertEqual(due.status_code, 200, due.text)
+        milestone_key = f"meso_midpoint:meso:{block_id}"
+        target = next(item for item in due.json()["items"] if item["milestone_key"] == milestone_key)
+
+        started = self.client.post("/coach-checkins/start", headers=self.headers, json=target)
+        self.assertEqual(started.status_code, 201, started.text)
+        repeated = self.client.post("/coach-checkins/start", headers=self.headers, json=target)
+        self.assertEqual(repeated.status_code, 201, repeated.text)
+        self.assertEqual(repeated.json()["id"], started.json()["id"])
+
+        skipped = self.client.post(
+            f"/coach-checkins/{started.json()['id']}/skip", headers=self.headers,
+        )
+        self.assertEqual(skipped.status_code, 200, skipped.text)
+        after_skip = self.client.get(
+            "/coach-checkins/due", headers=self.headers, params={"as_of": midpoint.isoformat()},
+        )
+        self.assertNotIn(milestone_key, {item["milestone_key"] for item in after_skip.json()["items"]})
+
+        monthly = self.client.put(
+            "/coach-checkins/settings", headers=self.headers, json={"mode": "monthly_reminder"},
+        )
+        self.assertEqual(monthly.status_code, 200, monthly.text)
+        monthly_due = self.client.get(
+            "/coach-checkins/due", headers=self.headers, params={"as_of": midpoint.isoformat()},
+        )
+        self.assertEqual(monthly_due.json()["items"][0]["milestone_key"], "monthly:2031-03")
+
+        disabled = self.client.put(
+            "/coach-checkins/settings", headers=self.headers, json={"mode": "off"},
+        )
+        self.assertEqual(disabled.status_code, 200, disabled.text)
+        off_due = self.client.get(
+            "/coach-checkins/due", headers=self.headers, params={"as_of": midpoint.isoformat()},
+        )
+        self.assertEqual(off_due.json(), {"mode": "off", "items": []})
+
+        adhoc = self.client.post(
+            "/coach-checkins/start", headers=self.headers,
+            json={"checkin_type": "adhoc", "title": "A difficult coaching thought"},
+        )
+        self.assertEqual(adhoc.status_code, 201, adhoc.text)
+        adhoc_id = adhoc.json()["id"]
+        with patch("backend.routers.coach_checkins.get_client") as ai_client:
+            ai_client.return_value.messages.create.side_effect = [
+                SimpleNamespace(content=[SimpleNamespace(type="text", text="What makes that feel difficult?")]),
+                SimpleNamespace(content=[SimpleNamespace(type="text", text="The coach identified a useful next step.")]),
+            ]
+            reflected = self.client.post(
+                f"/coach-checkins/{adhoc_id}/chat", headers=self.headers,
+                json={"message": "I am uncertain whether my feedback is landing."},
+            )
+            self.assertEqual(reflected.status_code, 200, reflected.text)
+            self.assertEqual(reflected.json()["reply"], "What makes that feel difficult?")
+            completed = self.client.post(
+                f"/coach-checkins/{adhoc_id}/complete", headers=self.headers,
+            )
+        self.assertEqual(completed.status_code, 200, completed.text)
+        self.assertEqual(completed.json()["status"], "completed")
+        self.assertIn("useful next step", completed.json()["summary"])
+
+        with SessionLocal() as db:
+            db.query(models.CoachCheckIn).filter(
+                (models.CoachCheckIn.milestone_key.in_([milestone_key, "monthly:2031-03"]))
+                | (models.CoachCheckIn.id == adhoc_id)
+            ).delete(synchronize_session=False)
+            db.query(models.CoachCheckInSettings).delete()
+            db.query(models.SeasonBlock).filter(models.SeasonBlock.id == block_id).delete()
+            db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).delete()
+            db.commit()
 
     def test_season_session_and_register_flows(self):
         swimmer = self.client.post(
@@ -1887,21 +1989,31 @@ class CoreFlowTests(unittest.TestCase):
         with SessionLocal() as db:
             available = models.Swimmer(name="Planner Available", active=True, status="active")
             away = models.Swimmer(name="Planner Away", active=True, status="active")
+            morning_only = models.Swimmer(name="Planner Morning Only", active=True, status="active")
             slot = models.PoolSlot(
-                day_of_week=0, time="19:15", squad="Planner Squad", active=True,
+                day_of_week=0, time="19:15", end_time="20:45",
+                squad="Planner Squad", label="Monday PM", course="SCM", active=True,
             )
-            db.add_all([available, away, slot])
+            morning_slot = models.PoolSlot(
+                day_of_week=0, time="05:30", end_time="07:00",
+                squad="Planner Squad", label="Monday AM", active=True,
+            )
+            db.add_all([available, away, morning_only, slot, morning_slot])
             db.flush()
             db.add_all([
                 models.SwimmerSlot(swimmer_id=available.id, pool_slot_id=slot.id),
                 models.SwimmerSlot(swimmer_id=away.id, pool_slot_id=slot.id),
+                models.SwimmerSlot(swimmer_id=morning_only.id, pool_slot_id=morning_slot.id),
                 models.SwimmerException(
                     swimmer_id=away.id, reason="holiday",
                     date_from=date(2026, 8, 24), date_to=date(2026, 8, 24),
                 ),
             ])
             db.commit()
-            created_ids = {"swimmers": [available.id, away.id], "slot": slot.id}
+            created_ids = {
+                "swimmers": [available.id, away.id, morning_only.id],
+                "slots": [slot.id, morning_slot.id],
+            }
 
         planned = {
             "parsed": {
@@ -1941,6 +2053,7 @@ class CoreFlowTests(unittest.TestCase):
                     headers=self.headers,
                     json={
                         "date": "2026-08-24", "squad": "Planner Squad",
+                        "pool_slot_id": created_ids["slots"][0],
                         "text": "One long progressive threshold main set, about 1200m.",
                     },
                 )
@@ -1948,6 +2061,9 @@ class CoreFlowTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200, response.text)
             expected = planner.call_args.kwargs["expected_swimmers"]
             self.assertEqual([row["name"] for row in expected], ["Planner Available"])
+            self.assertEqual(planner.call_args.kwargs["session_text"], "One long progressive threshold main set, about 1200m.")
+            self.assertEqual(planner.call_args.kwargs["squad"], "Planner Squad")
+            self.assertEqual(response.json()["pool_slot"]["label"], "Monday PM")
             self.assertEqual(response.json()["energy_analysis"]["total_metres"], 1200)
             self.assertEqual(response.json()["parsed"]["groups"]["1"]["volume_breakdown"]["threshold"], 1000)
         finally:
@@ -1958,11 +2074,40 @@ class CoreFlowTests(unittest.TestCase):
                 db.query(models.SwimmerSlot).filter(
                     models.SwimmerSlot.swimmer_id.in_(created_ids["swimmers"])
                 ).delete(synchronize_session=False)
-                db.query(models.PoolSlot).filter(models.PoolSlot.id == created_ids["slot"]).delete()
+                db.query(models.PoolSlot).filter(models.PoolSlot.id.in_(created_ids["slots"])).delete(
+                    synchronize_session=False
+                )
                 db.query(models.Swimmer).filter(models.Swimmer.id.in_(created_ids["swimmers"])).delete(
                     synchronize_session=False
                 )
                 db.commit()
+
+    def test_session_planner_photo_returns_editable_draft_without_saving(self):
+        extracted = {
+            "title": "Threshold board",
+            "groups": {
+                "1": {
+                    "description": "Main group",
+                    "sets": "4x400 @ 5:30 threshold",
+                },
+            },
+            "notes": "Hold stroke count",
+            "energy_system_focus": "threshold",
+        }
+        with SessionLocal() as db:
+            session_count = db.query(models.Session).count()
+
+        with patch("backend.routers.sessions.parse_whiteboard_photo", return_value=extracted):
+            response = self.client.post(
+                "/sessions/plan/photo/extract",
+                headers=self.headers,
+                files={"file": ("session.jpg", b"image bytes", "image/jpeg")},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["draft"], extracted)
+        with SessionLocal() as db:
+            self.assertEqual(db.query(models.Session).count(), session_count)
 
     def test_planning_agent_persists_event_links_and_pathway_state(self):
         swimmer = self.client.post(

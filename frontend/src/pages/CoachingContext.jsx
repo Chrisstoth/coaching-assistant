@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../api'
 
 export default function CoachingContext() {
@@ -87,10 +88,14 @@ export default function CoachingContext() {
                   : 'bg-pool-700 text-pool-400'
               }`}
             >
-              {v === 'chat' ? 'Build' : v === 'current' ? 'Current' : 'History'}
+              {v === 'chat' ? 'Interview' : v === 'current' ? 'Current' : 'History'}
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="mx-4 mb-3 rounded-xl border border-pool-700/70 bg-pool-800/60 px-3 py-2.5 text-xs text-pool-400 leading-relaxed">
+        This is the lasting <span className="text-pool-200">how and why</span> behind your coaching. Put season and block detail in <Link to="/season" className="text-accent-400">Season Planning</Link>, or use a <Link to="/coach-checkins" className="text-teal-400">coach check-in</Link> to reflect on what is happening now.
       </div>
 
       {/* Chat view */}
@@ -109,8 +114,8 @@ export default function CoachingContext() {
               <div className="text-center py-10 space-y-3">
                 <p className="text-pool-400 text-sm">
                   {current
-                    ? "Add an update to your coaching context — what's changed?"
-                    : "Let's build your coaching context. I'll ask you some questions to understand your philosophy, where your squad is, and what you're working towards."}
+                    ? "Review the lasting parts of your coaching approach—what has genuinely evolved?"
+                    : "Let's build your coaching context through a short interview about your philosophy, motivations, communication and how you work."}
                 </p>
                 <button
                   onClick={() => send()}
@@ -121,8 +126,8 @@ export default function CoachingContext() {
                   onClick={async () => {
                     setSending(true)
                     setConversation([{ role: 'ai', message: current
-                      ? "What's changed or evolved since your last context update? Tell me about anything — training response, squad dynamics, your own thinking, targets that have shifted."
-                      : "Let's build your coaching context. Start wherever feels natural — your philosophy, where your squad currently is, or what you're building towards this season. What would you like to begin with?"
+                      ? "Looking beyond any one season or block, what has genuinely changed in how you think or work as a coach?"
+                      : "Let's start with the person behind the plan. What matters most to you as a coach, and what experiences shaped that?"
                     }])
                     setSending(false)
                   }}
@@ -178,7 +183,7 @@ export default function CoachingContext() {
             <div className="px-4 pb-2 space-y-2 shrink-0 bg-pool-900 pt-3 border-t border-pool-700">
               <p className="text-xs text-pool-400">Give this context snapshot a title:</p>
               <input
-                placeholder="e.g. Season Start 2025-26, Post-Christmas Block…"
+                placeholder="e.g. My coaching baseline, Reviewed September 2026…"
                 value={titleInput}
                 onChange={e => setTitleInput(e.target.value)}
                 className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
@@ -258,11 +263,11 @@ export default function CoachingContext() {
 
               {[
                 { label: 'Philosophy & Ethos', content: current.ethos },
-                { label: 'Squad State Right Now', content: current.squad_state },
-                { label: 'Season Targets', content: current.targets },
-                { label: 'Current Training Block Focus', content: current.current_focus },
+                { label: 'Motivations & Coaching Identity', content: current.motivations },
+                { label: 'Communication & Relationships', content: current.communication_relationships },
                 { label: 'Session Style & Preferences', content: current.session_style },
                 { label: 'Intensity & Terminology', content: current.intensity_terminology },
+                { label: 'Decision-making & Growth Edges', content: current.decision_growth },
               ].map(({ label, content }) => content && (
                 <div key={label} className="bg-pool-800 rounded-xl p-4">
                   <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-2">{label}</p>
@@ -317,11 +322,11 @@ export default function CoachingContext() {
           </div>
           {[
             { label: 'Philosophy & Ethos', content: selectedProfile.ethos },
-            { label: 'Squad State Right Now', content: selectedProfile.squad_state },
-            { label: 'Season Targets', content: selectedProfile.targets },
-            { label: 'Current Training Block Focus', content: selectedProfile.current_focus },
+            { label: 'Motivations & Coaching Identity', content: selectedProfile.motivations },
+            { label: 'Communication & Relationships', content: selectedProfile.communication_relationships },
             { label: 'Session Style & Preferences', content: selectedProfile.session_style },
             { label: 'Intensity & Terminology', content: selectedProfile.intensity_terminology },
+            { label: 'Decision-making & Growth Edges', content: selectedProfile.decision_growth },
           ].map(({ label, content }) => content && (
             <div key={label} className="bg-pool-800 rounded-xl p-4">
               <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-2">{label}</p>

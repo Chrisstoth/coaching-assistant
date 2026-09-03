@@ -26,6 +26,8 @@ import ProfileWizard from './pages/ProfileWizard'
 import AssistantInbox from './pages/AssistantInbox'
 import TodaySession from './pages/TodaySession'
 import SessionPresentationSettings from './pages/SessionPresentationSettings'
+import CoachCheckIns from './pages/CoachCheckIns'
+import CoachCheckIn from './pages/CoachCheckIn'
 import { LaneWatchAIButton, LaneWatchWordmark } from './components/LaneWatchBrand'
 import { SessionPresentationProvider } from './components/SessionPresentationProvider'
 
@@ -247,6 +249,8 @@ export default function App() {
           <Route path="/schedule" element={<Schedule />} />
           <Route path="/import" element={<Import />} />
           <Route path="/context" element={<CoachingContext />} />
+          <Route path="/coach-checkins" element={<CoachCheckIns />} />
+          <Route path="/coach-checkins/:id" element={<CoachCheckIn />} />
           <Route path="/ai" element={<CoachAI />} />
           <Route path="/plan" element={<PlanHub />} />
           <Route path="/session-planner" element={<SessionPlanner />} />

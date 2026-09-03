@@ -159,6 +159,17 @@ export default function Register() {
     })))
   }
 
+  const toggleAttendance = (entry) => {
+    const attended = !entry.attended
+    update(entry.swimmer_id, 'attended', attended)
+
+    if (attended && groupCount > 1) {
+      setExpandedId(entry.swimmer_id)
+    } else if (!attended && expandedId === entry.swimmer_id) {
+      setExpandedId(null)
+    }
+  }
+
   const chooseGroupCount = async (count) => {
     setSavingGroupCount(true)
     try {
@@ -366,7 +377,7 @@ export default function Register() {
               </button>
 
               <button
-                onClick={() => update(entry.swimmer_id, 'attended', !entry.attended)}
+                onClick={() => toggleAttendance(entry)}
                 className={`min-w-14 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
                   entry.attended
                     ? 'bg-green-600 text-white'
@@ -381,21 +392,26 @@ export default function Register() {
             {entry.attended && expandedId === entry.swimmer_id && (
               <div className="space-y-2 mt-2 pl-1">
                 {/* Group selector */}
-                {groupCount > 1 && <div className="flex gap-2">
-                  {groupNumbers.map((g) => (
-                    <button
-                      key={g}
-                      onClick={() => update(entry.swimmer_id, 'group_done', g)}
-                      className={`flex-1 rounded-lg py-2 text-sm font-semibold transition-colors ${
-                        entry.group_done === g
-                          ? 'bg-accent-600 text-white'
-                          : 'bg-pool-700 text-pool-400'
-                      }`}
-                    >
-                      G{g}
-                    </button>
-                  ))}
-                </div>}
+                {groupCount > 1 && (
+                  <div>
+                    <p className="text-[11px] font-medium text-pool-400 mb-1.5">Which group is this swimmer in?</p>
+                    <div className="flex gap-2">
+                      {groupNumbers.map((g) => (
+                        <button
+                          key={g}
+                          onClick={() => update(entry.swimmer_id, 'group_done', g)}
+                          className={`flex-1 rounded-lg py-2 text-sm font-semibold transition-colors ${
+                            entry.group_done === g
+                              ? 'bg-accent-600 text-white'
+                              : 'bg-pool-700 text-pool-400'
+                          }`}
+                        >
+                          G{g}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Sub-group selector — only shown when the selected group has multiple sub-groups */}
                 {groupCount > 1 && entry.group_done && subGroupsByGroup[entry.group_done] && (

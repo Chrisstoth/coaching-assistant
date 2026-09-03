@@ -1620,41 +1620,34 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
 
 
 def _coaching_context_for_prompt(profile: models.CoachingProfile, *, full: bool = False) -> str:
-    """Return a compact operational context while retaining the full stored profile."""
-    if not profile or not profile.summary:
+    """Return only durable coaching identity; dated planning facts live elsewhere."""
+    if not profile:
         return ""
-    if full or len(profile.summary) <= COACHING_CONTEXT_CHAR_LIMIT:
-        return profile.summary
 
     sections = []
-    labelled_fields = (
-        ("Coaching philosophy", profile.ethos, 700),
-        ("Squad state", profile.squad_state, 600),
-        ("Season targets", profile.targets, 500),
-        ("Current focus", profile.current_focus, 650),
-    )
-    for label, value, limit in labelled_fields:
-        if value:
-            sections.append(f"{label}: {value.strip()[:limit]}")
+    if profile.ethos:
+        ethos_limit = 1800 if full else 900
+        sections.append(f"Coaching Philosophy & Ethos: {profile.ethos.strip()[:ethos_limit]}")
 
-    # These operational sections do not have dedicated database columns.
-    for heading, limit in (
-        ("Session Style & Preferences", 450),
-        ("Intensity & Terminology", 450),
-        ("Key Coaching Priorities", 350),
+    # The remaining durable sections are held in the versioned summary.
+    for heading, compact_limit in (
+        ("Motivations & Coaching Identity", 550),
+        ("Communication & Relationships", 550),
+        ("Session Style & Preferences", 650),
+        ("Intensity & Terminology", 650),
+        ("Decision-making & Growth Edges", 500),
     ):
         match = re.search(
             rf"\*\*{re.escape(heading)}\*\*\s*(.*?)(?=\n\*\*|\Z)",
-            profile.summary,
+            profile.summary or "",
             re.DOTALL | re.IGNORECASE,
         )
         if match:
+            limit = 1800 if full else compact_limit
             sections.append(f"{heading}: {match.group(1).strip()[:limit]}")
 
-    compact = "\n".join(sections).strip()
-    if not compact:
-        compact = profile.summary[:COACHING_CONTEXT_CHAR_LIMIT]
-    return compact[:COACHING_CONTEXT_CHAR_LIMIT]
+    durable = "\n".join(sections).strip()
+    return durable if full else durable[:COACHING_CONTEXT_CHAR_LIMIT]
 
 
 def _current_season_prompt_context(db: DBSession) -> str:
@@ -5276,6 +5269,8 @@ Parse this session and return a JSON object with this exact structure:
 Rules:
 - The coach may provide a rough idea rather than a written programme. Fill in sensible distances,
   repetitions, recoveries and send-offs so the result is usable, and state material assumptions.
+- If the coach provides a complete programme, including text extracted from a photo, preserve its
+  distances, repetitions, recoveries and send-offs exactly; structure it without substituting content.
 - Warm-up and cool-down are optional. Use null when the session is intentionally one continuous or
   progressive main set; do not force classic section headings onto it.
 - Return only the meaningful groups the coach described or that the expected swimmers genuinely need,

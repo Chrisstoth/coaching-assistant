@@ -19,7 +19,7 @@ const SECTIONS = [
       {
         to: '/context',
         label: 'Coaching Context',
-        description: 'Tell the AI about your coaching philosophy, squad goals, and current training block. Used in every AI call.',
+        description: 'Keep the durable parts of how you coach—your philosophy, communication and preferred language.',
         icon: (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
@@ -83,10 +83,36 @@ const SECTIONS = [
 export default function Settings() {
   const [usage, setUsage] = useState(null)
   const [usageError, setUsageError] = useState('')
+  const [checkInMode, setCheckInMode] = useState(null)
+  const [checkInError, setCheckInError] = useState('')
+  const [savingCheckInMode, setSavingCheckInMode] = useState(false)
 
   useEffect(() => {
     api.getAIUsage(30).then(setUsage).catch(error => setUsageError(error.message))
+    api.getCoachCheckInSettings()
+      .then(result => setCheckInMode(result.mode))
+      .catch(error => setCheckInError(error.message))
   }, [])
+
+  const changeCheckInMode = async (mode) => {
+    if (mode === checkInMode || savingCheckInMode) return
+    if (mode === 'monthly_reminder' && checkInMode === 'scheduled' && !window.confirm(
+      'Turn off planning-milestone check-ins? LaneWatch will instead remind you once a month to start an ad-hoc reflection.'
+    )) return
+    if (mode === 'off' && !window.confirm(
+      'Turn off all automatic check-in prompts? Ad-hoc check-ins will stay available in Planning, but LaneWatch will not remind you.'
+    )) return
+
+    setSavingCheckInMode(true)
+    setCheckInError('')
+    try {
+      const result = await api.updateCoachCheckInSettings(mode)
+      setCheckInMode(result.mode)
+    } catch (error) {
+      setCheckInError(error.message)
+    }
+    setSavingCheckInMode(false)
+  }
 
   const money = (value) => {
     if (value == null) return '—'
@@ -100,6 +126,62 @@ export default function Settings() {
         <h1 className="text-xl font-bold tracking-tight">Settings</h1>
         <p className="text-pool-400 text-sm mt-0.5">Configure LaneWatch AI</p>
       </header>
+
+      <section id="coach-checkins" className="space-y-2 scroll-mt-16">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-pool-500 pl-1">
+          Coaching check-ins
+        </h2>
+        <div className="bg-pool-800 border border-pool-700 rounded-xl p-4">
+          <p className="text-sm font-semibold text-pool-100">Automatic reflection prompts</p>
+          <p className="text-xs text-pool-400 mt-1 leading-relaxed">
+            Ad-hoc check-ins always remain available from Planning. This setting only controls what LaneWatch puts on Today.
+          </p>
+
+          <div className="mt-4 space-y-2">
+            {[
+              {
+                value: 'scheduled',
+                label: 'Planning milestones',
+                description: 'Prompt at season boundaries, mid- and end-meso, post-meet and macro end.',
+                badge: 'Recommended',
+              },
+              {
+                value: 'monthly_reminder',
+                label: 'Monthly reminder only',
+                description: 'No milestone prompts; a gentle monthly reminder to begin an ad-hoc check-in.',
+              },
+              {
+                value: 'off',
+                label: 'No reminders',
+                description: 'Nothing appears automatically. You can still start an ad-hoc check-in yourself.',
+              },
+            ].map(option => (
+              <button
+                type="button"
+                key={option.value}
+                onClick={() => changeCheckInMode(option.value)}
+                disabled={checkInMode == null || savingCheckInMode}
+                className={`w-full text-left rounded-xl border p-3 transition-colors disabled:opacity-60 ${
+                  checkInMode === option.value
+                    ? 'border-teal-600 bg-teal-900/30'
+                    : 'border-pool-700 bg-pool-900/30 hover:border-pool-600'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-4 h-4 rounded-full border grid place-items-center ${checkInMode === option.value ? 'border-teal-400' : 'border-pool-500'}`}>
+                    {checkInMode === option.value && <span className="w-2 h-2 rounded-full bg-teal-400" />}
+                  </span>
+                  <span className="text-sm font-medium text-pool-100">{option.label}</span>
+                  {option.badge && <span className="text-[9px] uppercase tracking-wide text-teal-300 bg-teal-900/60 rounded-full px-2 py-0.5">{option.badge}</span>}
+                </div>
+                <p className="text-xs text-pool-500 mt-1 ml-6 leading-relaxed">{option.description}</p>
+              </button>
+            ))}
+          </div>
+          {savingCheckInMode && <p className="text-xs text-pool-500 mt-3">Saving…</p>}
+          {checkInError && <p className="text-xs text-red-300 mt-3">Could not update check-ins: {checkInError}</p>}
+        </div>
+      </section>
 
       {SECTIONS.map(({ heading, items }) => (
         <section key={heading} className="space-y-2">

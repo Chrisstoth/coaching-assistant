@@ -120,6 +120,11 @@ export const api = {
 
   // Session planner
   planSession: (data, options = {}) => request('POST', '/sessions/plan', data, false, options),
+  extractSessionPhoto: (file, options = {}) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return request('POST', '/sessions/plan/photo/extract', fd, true, options)
+  },
 
   // Sessions
   getSessions: (params = {}) => {
@@ -343,6 +348,17 @@ export const api = {
   clearCoachingConversation: () => request('DELETE', '/coaching-context/conversation'),
   coachingChat: (message) => request('POST', '/coaching-context/chat', { message }),
   finaliseCoachingProfile: (title) => request('POST', '/coaching-context/finalise', { title }),
+
+  // Reflective coach check-ins
+  getCoachCheckInSettings: () => request('GET', '/coach-checkins/settings'),
+  updateCoachCheckInSettings: (mode) => request('PUT', '/coach-checkins/settings', { mode }),
+  getDueCoachCheckIns: () => request('GET', '/coach-checkins/due'),
+  getCoachCheckIns: (limit = 30) => request('GET', `/coach-checkins?limit=${limit}`),
+  startCoachCheckIn: (data) => request('POST', '/coach-checkins/start', data),
+  getCoachCheckIn: (id) => request('GET', `/coach-checkins/${id}`),
+  chatCoachCheckIn: (id, message) => request('POST', `/coach-checkins/${id}/chat`, { message }),
+  completeCoachCheckIn: (id) => request('POST', `/coach-checkins/${id}/complete`),
+  skipCoachCheckIn: (id) => request('POST', `/coach-checkins/${id}/skip`),
 
   // Session print, club branding and coach terminology
   getSessionPresentation: () => request('GET', '/session-presentation'),

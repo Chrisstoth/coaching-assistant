@@ -193,6 +193,24 @@ export default function PlanHub() {
         </div>
       </button>
 
+      <Link
+        to="/coach-checkins"
+        className="flex items-start gap-3 rounded-2xl border border-pool-700 bg-pool-800 p-4 active:bg-pool-700 transition-colors"
+      >
+        <span className="p-2 bg-pool-700 rounded-xl text-teal-300 shrink-0">
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6V6a6 6 0 0 0-12 0v6.75a6 6 0 0 0 6 6Zm0 0v3m-3 0h6" />
+          </svg>
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-pool-100">Coach check-in</p>
+          <p className="text-sm text-pool-400 mt-0.5">Talk through a thought, worry or change in your coaching—whenever it is useful.</p>
+        </div>
+        <svg className="w-5 h-5 text-pool-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+        </svg>
+      </Link>
+
       {/* Quick actions */}
       <div className="grid grid-cols-2 gap-3">
         <Link
