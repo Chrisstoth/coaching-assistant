@@ -209,6 +209,119 @@ function QualificationPanel({ meetId }) {
   )
 }
 
+function MeetResultsPanel({ meetId, meet }) {
+  const [data, setData] = useState(null)
+  const [times, setTimes] = useState({})
+  const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [errors, setErrors] = useState([])
+
+  const rowKey = (row) => `${row.swimmer_id}::${row.canonical_event}`
+
+  const load = async () => {
+    const result = await api.getMeetResults(meetId)
+    setData(result)
+    setTimes(Object.fromEntries(result.rows.map(row => [rowKey(row), row.recorded_time || ''])))
+  }
+
+  useEffect(() => { load().catch(() => {}) }, [meetId])
+
+  const save = async () => {
+    setSaving(true)
+    setErrors([])
+    try {
+      const result = await api.saveMeetResults(meetId, data.rows.map(row => ({
+        swimmer_id: row.swimmer_id,
+        event: row.event,
+        round: row.round || null,
+        time: times[rowKey(row)] || '',
+      })))
+      setErrors(result.errors || [])
+      setData({ meet: result.meet, rows: result.rows, recorded_count: result.recorded_count })
+      setTimes(Object.fromEntries(result.rows.map(row => [rowKey(row), row.recorded_time || ''])))
+    } catch (e) { alert(`Could not save results: ${e.message}`) }
+    setSaving(false)
+  }
+
+  if (!data || !data.rows.length) return null
+
+  const meetIsOver = meet.date && new Date((meet.date_to || meet.date) + 'T23:59:59') < new Date()
+  const bySwimmer = data.rows.reduce((acc, row) => {
+    (acc[row.swimmer_name] = acc[row.swimmer_name] || []).push(row)
+    return acc
+  }, {})
+
+  return (
+    <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-pool-200">Results</h2>
+          <p className="text-xs text-pool-400 mt-0.5">
+            {data.recorded_count > 0
+              ? `${data.recorded_count} of ${data.rows.length} swims recorded`
+              : meetIsOver ? 'No results recorded yet' : `${data.rows.length} swims entered`}
+          </p>
+        </div>
+        <button onClick={() => setOpen(!open)} className="text-xs text-accent-400 shrink-0">
+          {open ? 'Close' : data.recorded_count > 0 ? 'Edit results' : 'Add results'}
+        </button>
+      </div>
+
+      {open && (
+        <div className="space-y-3">
+          <p className="text-[11px] text-pool-500">
+            Enter times as 1:02.45 or 62.45. Saved times go into each swimmer&apos;s times history.
+            Clearing a box removes that result.
+          </p>
+          {Object.entries(bySwimmer).map(([name, rows]) => (
+            <div key={name} className="border border-pool-700/60 rounded-lg p-3 space-y-2">
+              <p className="text-xs font-semibold text-pool-300">{name}</p>
+              {rows.map(row => (
+                <div key={rowKey(row)} className="flex items-center gap-2">
+                  <span className="flex-1 text-xs text-pool-400 min-w-0 truncate">
+                    {row.event}
+                    {row.target_time && <span className="text-pool-600"> · target {row.target_time}</span>}
+                  </span>
+                  <input
+                    inputMode="decimal"
+                    placeholder="—"
+                    value={times[rowKey(row)] ?? ''}
+                    onChange={e => setTimes({ ...times, [rowKey(row)]: e.target.value })}
+                    className="w-24 bg-pool-700 rounded-lg px-2 py-1.5 text-sm text-right tabular-nums border border-pool-600 focus:border-accent-500 focus:outline-none"
+                  />
+                </div>
+              ))}
+            </div>
+          ))}
+          {errors.length > 0 && (
+            <div className="rounded-lg bg-amber-900/20 border border-amber-800/40 px-3 py-2 space-y-1">
+              {errors.map((message, index) => (
+                <p key={index} className="text-[11px] text-amber-300">{message}</p>
+              ))}
+            </div>
+          )}
+          <button onClick={save} disabled={saving}
+            className="w-full bg-accent-600 disabled:opacity-40 rounded-xl py-2.5 text-sm font-semibold">
+            {saving ? 'Saving…' : 'Save results'}
+          </button>
+        </div>
+      )}
+
+      {!open && data.recorded_count > 0 && (
+        <div className="divide-y divide-pool-700/40">
+          {data.rows.filter(row => row.recorded_time).slice(0, 8).map(row => (
+            <div key={rowKey(row)} className="flex items-center justify-between py-1.5">
+              <span className="text-xs text-pool-300 min-w-0 truncate">{row.swimmer_name} · {row.event}</span>
+              <span className="text-sm text-pool-100 tabular-nums shrink-0 ml-2">{row.recorded_time}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+
 export default function MeetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -228,6 +341,9 @@ export default function MeetDetail() {
   const [combining, setCombining] = useState(false)
   const [raceAnalysis, setRaceAnalysis] = useState(null)
   const [analysingMeet, setAnalysingMeet] = useState(false)
+  const [editingDetails, setEditingDetails] = useState(false)
+  const [detailsForm, setDetailsForm] = useState(null)
+  const [savingDetails, setSavingDetails] = useState(false)
   const [showTimetableForm, setShowTimetableForm] = useState(false)
   const [editingMeetSession, setEditingMeetSession] = useState(null)
   const [timetableSaving, setTimetableSaving] = useState(false)
@@ -296,6 +412,40 @@ export default function MeetDetail() {
   const removeTarget = async (targetId) => {
     await api.deleteMeetTarget(id, targetId)
     load()
+  }
+
+  const openDetailsForm = () => {
+    setDetailsForm({
+      name: meet.name || '',
+      date: meet.date || '',
+      date_to: meet.date_to || '',
+      location: meet.location || '',
+      course: meet.course || '',
+      level: meet.level || '',
+      warm_up_time: meet.warm_up_time || '',
+      notes: meet.notes || '',
+    })
+    setEditingDetails(true)
+  }
+
+  const saveDetails = async () => {
+    if (!detailsForm.name.trim()) return
+    setSavingDetails(true)
+    try {
+      const updated = await api.updateMeet(id, {
+        name: detailsForm.name.trim(),
+        date: detailsForm.date || null,
+        date_to: detailsForm.date_to || null,
+        location: detailsForm.location.trim() || null,
+        course: detailsForm.course || null,
+        level: detailsForm.level || null,
+        warm_up_time: detailsForm.warm_up_time || null,
+        notes: detailsForm.notes.trim() || null,
+      })
+      setMeet(updated)
+      setEditingDetails(false)
+    } catch (e) { alert(`Could not save the meet details: ${e.message}`) }
+    setSavingDetails(false)
   }
 
   const deleteMeet = async () => {
@@ -426,7 +576,15 @@ export default function MeetDetail() {
       <div className="flex items-start gap-3 pt-2">
         <Link to="/meets" className="text-pool-400 text-2xl mt-0.5">‹</Link>
         <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold leading-tight">{meet.name}</h1>
+          <div className="flex items-start justify-between gap-2">
+            <h1 className="text-lg font-bold leading-tight">{meet.name}</h1>
+            <button
+              onClick={editingDetails ? () => setEditingDetails(false) : openDetailsForm}
+              className="text-xs text-accent-400 shrink-0 px-1 py-0.5"
+            >
+              {editingDetails ? 'Cancel' : 'Edit'}
+            </button>
+          </div>
           <p className="text-pool-400 text-xs mt-0.5">
             {fmtDateRange(meet.date, meet.date_to)}
             {meet.location ? ` · ${meet.location}` : ''}
@@ -456,7 +614,78 @@ export default function MeetDetail() {
         </div>
       </div>
 
-      {meet.notes && (
+      {editingDetails && detailsForm && (
+        <div className="bg-pool-800 rounded-xl p-4 space-y-3">
+          <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide">Meet details</p>
+          <input
+            placeholder="Meet name *"
+            value={detailsForm.name}
+            onChange={e => setDetailsForm({ ...detailsForm, name: e.target.value })}
+            className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+          />
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <p className="text-xs text-pool-400 mb-1">Start date</p>
+              <input type="date" value={detailsForm.date}
+                onChange={e => setDetailsForm({ ...detailsForm, date: e.target.value })}
+                className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none" />
+            </div>
+            <div className="flex-1">
+              <p className="text-xs text-pool-400 mb-1">End date</p>
+              <input type="date" value={detailsForm.date_to}
+                onChange={e => setDetailsForm({ ...detailsForm, date_to: e.target.value })}
+                className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none" />
+            </div>
+          </div>
+          <input
+            placeholder="Location"
+            value={detailsForm.location}
+            onChange={e => setDetailsForm({ ...detailsForm, location: e.target.value })}
+            className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+          />
+          <div>
+            <p className="text-xs text-pool-400 mb-1">Pool course</p>
+            <div className="flex gap-2">
+              <div className="flex rounded-xl overflow-hidden border border-pool-600 text-sm font-semibold flex-1">
+                {['SCM', 'LCM'].map(c => (
+                  <button key={c}
+                    onClick={() => setDetailsForm({ ...detailsForm, course: detailsForm.course === c ? '' : c })}
+                    className={`flex-1 py-2.5 ${detailsForm.course === c ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-400'}`}>
+                    {c === 'SCM' ? 'SC' : 'LC'}
+                  </button>
+                ))}
+              </div>
+              <select value={detailsForm.level}
+                onChange={e => setDetailsForm({ ...detailsForm, level: e.target.value })}
+                className="flex-1 bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none">
+                <option value="">Level</option>
+                {Object.entries(LEVEL_LABELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 items-center">
+            <input type="time" value={detailsForm.warm_up_time}
+              onChange={e => setDetailsForm({ ...detailsForm, warm_up_time: e.target.value })}
+              className="w-32 bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none" />
+            <span className="text-pool-400 text-sm">warm-up start</span>
+          </div>
+          <textarea placeholder="Notes (optional)" value={detailsForm.notes} rows={2}
+            onChange={e => setDetailsForm({ ...detailsForm, notes: e.target.value })}
+            className="w-full bg-pool-700 rounded-lg px-3 py-2.5 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none resize-none" />
+          <div className="flex gap-2">
+            <button onClick={() => setEditingDetails(false)}
+              className="flex-1 bg-pool-700 rounded-xl py-2.5 text-sm font-semibold text-pool-300">Cancel</button>
+            <button onClick={saveDetails} disabled={savingDetails || !detailsForm.name.trim()}
+              className="flex-1 bg-accent-600 disabled:opacity-40 rounded-xl py-2.5 text-sm font-semibold">
+              {savingDetails ? 'Saving…' : 'Save details'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!editingDetails && <MeetResultsPanel meetId={id} meet={meet} />}
+
+      {meet.notes && !editingDetails && (
         <div className="bg-pool-800 rounded-xl p-4">
           <p className="text-xs text-pool-400 mb-1">Notes</p>
           <p className="text-sm text-pool-200">{meet.notes}</p>

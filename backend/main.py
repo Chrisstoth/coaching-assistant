@@ -1,10 +1,15 @@
+import asyncio
+import contextlib
+import os
+
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from backend.database import init_db
-from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes
-from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins
+from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes, session_debriefs
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs
+from backend.services.ai_operations import recover_interrupted_operations, run_operation_worker
 from backend.auth_dep import verify_token
 
 
@@ -151,6 +156,23 @@ def _migrate_threads():
             db.commit()
 
 
+def _migrate_coach_checkins():
+    """Add the profile-proposal columns to coach_checkins if missing."""
+    from sqlalchemy import text, inspect as sa_inspect
+    from backend.database import engine, _portable_column_type
+    insp = sa_inspect(engine)
+    if "coach_checkins" not in insp.get_table_names():
+        return
+    cols = [c["name"] for c in insp.get_columns("coach_checkins")]
+    with engine.connect() as conn:
+        if "proposals" not in cols:
+            conn.execute(text("ALTER TABLE coach_checkins ADD COLUMN proposals JSON"))
+        if "applied_at" not in cols:
+            column_type = _portable_column_type("DATETIME", conn.dialect.name)
+            conn.execute(text(f"ALTER TABLE coach_checkins ADD COLUMN applied_at {column_type}"))
+        conn.commit()
+
+
 def _backfill_cycle_coordinates():
     """Populate sequence numbers and unambiguous historical session links."""
     from sqlalchemy.orm import Session as OrmSession
@@ -162,6 +184,57 @@ def _backfill_cycle_coordinates():
         db.commit()
 
 
+def _ensure_register_uniqueness():
+    """Merge legacy duplicate register rows, then enforce one row per swimmer/session."""
+    from sqlalchemy import func, text
+    from sqlalchemy.orm import Session as OrmSession
+    from backend.database import engine
+    from backend import models
+
+    specifications = (
+        (models.SessionEntry, (
+            "attended", "group_planned", "sub_group_planned", "group_done",
+            "sub_group_done", "sets_completed", "coach_observation",
+            "ai_characterisation", "ai_expected_response",
+        )),
+        (models.SwimmerSessionLoad, (
+            "session_date", "group_number", "sub_group_label", "volume_breakdown",
+        )),
+        (models.SwimmerObservation, (
+            "obs_type", "date", "content", "energy_zone", "ai_summary",
+        )),
+    )
+    with OrmSession(engine) as db:
+        for model, fields in specifications:
+            duplicates = db.query(model.session_id, model.swimmer_id).filter(
+                model.session_id.isnot(None),
+            ).group_by(model.session_id, model.swimmer_id).having(func.count(model.id) > 1).all()
+            for session_id, swimmer_id in duplicates:
+                rows = db.query(model).filter(
+                    model.session_id == session_id,
+                    model.swimmer_id == swimmer_id,
+                ).order_by(model.id.desc()).all()
+                keeper = rows[0]
+                for older in rows[1:]:
+                    for field in fields:
+                        if getattr(keeper, field, None) is None and getattr(older, field, None) is not None:
+                            setattr(keeper, field, getattr(older, field))
+                    db.delete(older)
+        db.commit()
+
+    indexes = (
+        ("uq_session_entry_session_swimmer", "session_entries"),
+        ("uq_session_load_session_swimmer", "swimmer_session_loads"),
+        ("uq_session_observation_session_swimmer", "swimmer_observations"),
+    )
+    with engine.connect() as conn:
+        for name, table in indexes:
+            conn.execute(text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {name} ON {table} (session_id, swimmer_id)"
+            ))
+        conn.commit()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
@@ -170,8 +243,20 @@ async def lifespan(app: FastAPI):
     _migrate_session_entries()
     _migrate_planning_cohorts()
     _migrate_threads()
+    _migrate_coach_checkins()
     _backfill_cycle_coordinates()
-    yield
+    _ensure_register_uniqueness()
+    operation_worker = None
+    if os.getenv("AI_OPERATION_WORKER_ENABLED", "true").lower() not in {"0", "false", "no"}:
+        recover_interrupted_operations()
+        operation_worker = asyncio.create_task(run_operation_worker())
+    try:
+        yield
+    finally:
+        if operation_worker:
+            operation_worker.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await operation_worker
 
 
 app = FastAPI(
@@ -211,6 +296,8 @@ app.include_router(planning_agent.router, prefix="/planning-agent", tags=["Plann
 app.include_router(qualification_standards.router, prefix="/qualification-standards", tags=["Qualification Standards"], dependencies=_auth)
 app.include_router(session_presentation.router, prefix="/session-presentation", tags=["Session Presentation"], dependencies=_auth)
 app.include_router(coach_checkins.router, prefix="/coach-checkins", tags=["Coach Check-ins"], dependencies=_auth)
+app.include_router(ai_operations.router, prefix="/ai-operations", tags=["AI Operations"], dependencies=_auth)
+app.include_router(session_debriefs.router, prefix="/session-debriefs", tags=["Session Debriefs"], dependencies=_auth)
 
 
 @app.get("/health")

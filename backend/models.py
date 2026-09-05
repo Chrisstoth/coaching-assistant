@@ -1,5 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Float, Boolean, Text, DateTime, Date, ForeignKey, JSON, LargeBinary
+    Column, Integer, String, Float, Boolean, Text, DateTime, Date, ForeignKey, JSON, LargeBinary,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -149,7 +150,8 @@ class SwimTime(Base):
 
     splits = Column(JSON, nullable=True)                 # [split1, split2, ...] seconds
     age_at_swim = Column(Float, nullable=True)
-    source = Column(String, default="csv")              # csv / manual
+    source = Column(String, default="csv")              # csv / manual / meet_results
+    meet_id = Column(Integer, ForeignKey("meets.id"), nullable=True, index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -193,6 +195,9 @@ class Session(Base):
     # How many distinct programmes were actually run. Null means the coach has
     # not confirmed it yet; 1 means the whole squad completed the same work.
     register_group_count = Column(Integer, nullable=True)
+    register_revision = Column(String, nullable=True, index=True)
+    register_client_saved_at = Column(DateTime(timezone=True), nullable=True)
+    register_saved_at = Column(DateTime(timezone=True), nullable=True)
 
     # Stable link into the season-planning hierarchy. ``cycle_code`` is the
     # human-facing coordinate (for example 1.2.1.2); database relationships
@@ -251,6 +256,7 @@ class SessionSubGroup(Base):
 
 class SwimmerSessionLoad(Base):
     __tablename__ = "swimmer_session_loads"
+    __table_args__ = (UniqueConstraint("session_id", "swimmer_id", name="uq_session_load_session_swimmer"),)
 
     id = Column(Integer, primary_key=True, index=True)
     swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
@@ -264,6 +270,7 @@ class SwimmerSessionLoad(Base):
 
 class SessionEntry(Base):
     __tablename__ = "session_entries"
+    __table_args__ = (UniqueConstraint("session_id", "swimmer_id", name="uq_session_entry_session_swimmer"),)
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
@@ -298,6 +305,7 @@ class Meet(Base):
     level = Column(String, nullable=True)            # club / regional / national / international
     warm_up_time = Column(String, nullable=True)     # "07:30"
     notes = Column(Text, nullable=True)
+    results_prompt_dismissed_at = Column(DateTime(timezone=True), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -554,6 +562,7 @@ class SwimmerObservation(Base):
     These accumulate over time and are the raw material the AI uses to model the swimmer.
     """
     __tablename__ = "swimmer_observations"
+    __table_args__ = (UniqueConstraint("session_id", "swimmer_id", name="uq_session_observation_session_swimmer"),)
 
     id = Column(Integer, primary_key=True, index=True)
     swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
@@ -723,6 +732,29 @@ class AIUsageLog(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
 
 
+class AIOperation(Base):
+    """Persistent background AI work with visible lifecycle and safe retry metadata."""
+    __tablename__ = "ai_operations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    operation_type = Column(String, nullable=False, index=True)
+    title = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="queued", index=True)
+    entity_type = Column(String, nullable=True)
+    entity_id = Column(Integer, nullable=True, index=True)
+    payload = Column(JSON, nullable=False, default=dict)
+    idempotency_key = Column(String, nullable=True, unique=True, index=True)
+    result_summary = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    max_attempts = Column(Integer, nullable=False, default=3)
+    available_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class SkillOutput(Base):
     """Saved output from a specialist AI skill run — enables history view and audit."""
     __tablename__ = "skill_outputs"
@@ -826,8 +858,39 @@ class CoachCheckIn(Base):
     status = Column(String, nullable=False, default="in_progress")  # in_progress / completed / skipped
     messages = Column(JSON, nullable=False, default=list)
     summary = Column(Text, nullable=True)
+    # Proposed edits to the coaching profile, awaiting the coach's decision.
+    # A reflection is provisional until confirmed, so nothing reaches the
+    # profile that shapes every prompt without the coach accepting it.
+    proposals = Column(JSON, nullable=False, default=list)
+    applied_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     completed_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class SessionDebrief(Base):
+    """
+    A spoken post-session debrief.
+
+    The coach talks, the assistant interviews them against what the system already
+    knows, and the result is a set of *proposed* records. Nothing reaches a
+    swimmer's history until the coach confirms it, because conversation is
+    provisional — a coach revises mid-sentence and a naive extractor would file
+    every version of the story.
+    """
+    __tablename__ = "session_debriefs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=True, index=True)
+    date = Column(Date, nullable=False)
+    title = Column(String, nullable=True)
+    # in_progress -> processing -> ready -> committed
+    status = Column(String, nullable=False, default="in_progress", index=True)
+    messages = Column(JSON, nullable=False, default=list)
+    summary = Column(Text, nullable=True)
+    proposals = Column(JSON, nullable=False, default=list)
+    committed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class SessionPresentationSettings(Base):

@@ -489,6 +489,84 @@ function AssistantInboxPreview({ inbox }) {
   )
 }
 
+function SessionDebriefPrompts({ items }) {
+  if (!items.length) return null
+
+  return (
+    <section className="rounded-2xl border border-teal-700/50 bg-teal-950/35 overflow-hidden">
+      <div className="px-4 pt-4 pb-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-teal-400">Session debrief</p>
+        <p className="text-sm text-teal-100 mt-1">Talk it through while it&apos;s fresh.</p>
+      </div>
+      <div className="divide-y divide-teal-800/40">
+        {items.map(item => (
+          <div key={item.session_id} className="px-4 py-3 flex items-start gap-3">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-pool-100 truncate">{item.title}</p>
+              <p className="text-xs text-teal-400/80 mt-0.5">
+                {item.days_since === 0 ? 'Today' : item.days_since === 1 ? 'Yesterday' : `${item.days_since} days ago`}
+                {` · ${item.attended} swimmer${item.attended === 1 ? '' : 's'}`}
+              </p>
+            </div>
+            <Link
+              to={`/debrief?session=${item.session_id}`}
+              className="rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white shrink-0"
+            >
+              Debrief
+            </Link>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+
+function MeetResultsPrompts({ items, onDismiss, busyKey }) {
+  if (!items.length) return null
+
+  const timing = (days) => (days === 1 ? 'Finished yesterday' : `Finished ${days} days ago`)
+
+  return (
+    <section className="rounded-2xl border border-indigo-700/50 bg-indigo-950/35 overflow-hidden">
+      <div className="px-4 pt-4 pb-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-indigo-400">Gala results</p>
+        <p className="text-sm text-indigo-100 mt-1">Add the times while they are still fresh.</p>
+      </div>
+      <div className="divide-y divide-indigo-800/40">
+        {items.map(item => (
+          <div key={item.meet_id} className="px-4 py-3">
+            <div className="flex items-start gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-pool-100 truncate">{item.name}</p>
+                <p className="text-xs text-indigo-400/80 mt-0.5">
+                  {timing(item.days_since)}
+                  {item.location ? ` · ${item.location}` : ''}
+                  {item.swimmer_count ? ` · ${item.swimmer_count} swimmer${item.swimmer_count === 1 ? '' : 's'}` : ''}
+                </p>
+              </div>
+              <Link
+                to={`/meets/${item.meet_id}`}
+                className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shrink-0"
+              >
+                Add results
+              </Link>
+            </div>
+            <button
+              onClick={() => onDismiss(item)}
+              disabled={busyKey === item.meet_id}
+              className="text-[11px] text-pool-500 hover:text-pool-300 mt-2 disabled:opacity-50"
+            >
+              {busyKey === item.meet_id ? 'Dismissing…' : 'Not now'}
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+
 function CoachCheckInPrompts({ items, onStart, onSkip, busyKey }) {
   if (!items.length) return null
 
@@ -614,7 +692,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [coachingNotes, setCoachingNotes] = useState([])
   const [coachingProfile, setCoachingProfile] = useState(null)
-  const [meetCountdowns, setMeetCountdowns] = useState({ group_targets: [], upcoming_meets: [] })
+  const [meetCountdowns, setMeetCountdowns] = useState({ group_targets: [], upcoming_meets: [], awaiting_results: [] })
   const [assistantInbox, setAssistantInbox] = useState({ items: [], counts: {} })
   const [currentSeason, setCurrentSeason] = useState(null)
   const [availability, setAvailability] = useState({ items: [], current_count: 0, upcoming_count: 0 })
@@ -623,6 +701,8 @@ export default function Dashboard() {
   const [cancelTarget, setCancelTarget] = useState(null)
   const [dueCheckIns, setDueCheckIns] = useState([])
   const [busyCheckInKey, setBusyCheckInKey] = useState('')
+  const [busyResultsMeetId, setBusyResultsMeetId] = useState('')
+  const [awaitingDebrief, setAwaitingDebrief] = useState([])
 
   useEffect(() => {
     setLoading(true)
@@ -631,12 +711,13 @@ export default function Dashboard() {
       api.getCoachingNotes().catch(() => []),
       api.getAIContextStatus().catch(() => null),
       api.getSquadPulse().catch(() => []),
-      api.getMeetCountdowns().catch(() => ({ group_targets: [], upcoming_meets: [] })),
+      api.getMeetCountdowns().catch(() => ({ group_targets: [], upcoming_meets: [], awaiting_results: [] })),
       api.getAssistantInbox({ limit: 3 }).catch(() => ({ items: [], counts: {} })),
       api.getCurrentPlanningSeason().catch(() => null),
       api.getSquadAvailability().catch(() => ({ items: [], current_count: 0, upcoming_count: 0 })),
       api.getDueCoachCheckIns().catch(() => ({ items: [] })),
-    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData, checkIns]) => {
+      api.getSessionsAwaitingDebrief().catch(() => ({ items: [] })),
+    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData, checkIns, debriefs]) => {
       setCalendar(cal)
       setCoachingNotes(notes)
       setCoachingProfile(ctx)
@@ -646,9 +727,24 @@ export default function Dashboard() {
       setCurrentSeason(season)
       setAvailability(availabilityData)
       setDueCheckIns(checkIns.items || [])
+      setAwaitingDebrief(debriefs.items || [])
       setLoading(false)
     })
   }, [])
+
+  const dismissResultsPrompt = async (item) => {
+    setBusyResultsMeetId(item.meet_id)
+    try {
+      await api.dismissMeetResultsPrompt(item.meet_id)
+      setMeetCountdowns(prev => ({
+        ...prev,
+        awaiting_results: (prev.awaiting_results || []).filter(row => row.meet_id !== item.meet_id),
+      }))
+    } catch (error) {
+      alert(`Could not dismiss that prompt: ${error.message}`)
+    }
+    setBusyResultsMeetId('')
+  }
 
   const dismissNote = async (id) => {
     await api.updateCoachingNote(id, { active: false })
@@ -775,6 +871,16 @@ export default function Dashboard() {
           onDismiss={dismissSession}
           onCancel={setCancelTarget}
           busyKey={busySessionKey}
+        />
+      )}
+
+      {!loading && <SessionDebriefPrompts items={awaitingDebrief} />}
+
+      {!loading && (
+        <MeetResultsPrompts
+          items={meetCountdowns.awaiting_results || []}
+          onDismiss={dismissResultsPrompt}
+          busyKey={busyResultsMeetId}
         />
       )}
 

@@ -1,5 +1,6 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 import json
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Body
 from pydantic import BaseModel, Field
@@ -17,6 +18,7 @@ from backend.services.availability import availability_on_date
 from backend.services.openai_service import parse_whiteboard_photo
 from backend.services.cycle_codes import cycle_context, link_session
 from backend.services.terminology import coach_terminology_context
+from backend.services.ai_operations import enqueue_operation, operation_out
 
 router = APIRouter()
 
@@ -80,6 +82,9 @@ class RegisterSubmit(BaseModel):
     entries: list[RegisterEntry]
     run_ai: bool = True
     session_complete: bool = True
+    revision: Optional[str] = None
+    client_saved_at: Optional[datetime] = None
+    register_group_count: Optional[int] = Field(default=None, ge=1, le=3)
 
 
 class ExcelImportConfirm(BaseModel):
@@ -675,6 +680,33 @@ def generate_session_intelligence(
 # Register
 # ---------------------------------------------------------------------------
 
+def _register_receipt(session: models.Session, db: DBSession, *, operation=None, stale_ignored=False):
+    rows = db.query(models.SessionEntry, models.Swimmer).join(
+        models.Swimmer, models.Swimmer.id == models.SessionEntry.swimmer_id,
+    ).filter(models.SessionEntry.session_id == session.id).all()
+    entries = [{
+        "swimmer_id": entry.swimmer_id,
+        "swimmer_name": swimmer.name,
+        "attended": entry.attended,
+        "ai_characterisation": _decode_ai_json(entry.ai_characterisation),
+        "ai_expected_response": _decode_ai_json(entry.ai_expected_response),
+    } for entry, swimmer in rows]
+    return {
+        "saved": True,
+        "stale_ignored": stale_ignored,
+        "revision": session.register_revision,
+        "saved_at": session.register_saved_at,
+        "session_status": session.status,
+        "entries": entries,
+        "ai_operation": operation_out(operation) if operation else None,
+    }
+
+
+def _normalise_timestamp(value: Optional[datetime]) -> Optional[datetime]:
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
 @router.get("/{session_id}/register")
 def get_register(session_id: int, db: DBSession = Depends(get_db)):
     """Return all active swimmers with existing entries pre-populated."""
@@ -760,6 +792,27 @@ def submit_register(
     """Submit attendance + observations. Optionally triggers AI characterisation."""
     session = _get_or_404(session_id, db)
 
+    incoming_saved_at = _normalise_timestamp(body.client_saved_at) or datetime.now(timezone.utc)
+    existing_saved_at = _normalise_timestamp(session.register_client_saved_at)
+    operation_key = f"register:{session_id}:{body.revision}" if body.revision else None
+    existing_operation = db.query(models.AIOperation).filter(
+        models.AIOperation.idempotency_key == operation_key,
+    ).first() if operation_key else None
+
+    # A timed-out request may already have reached the server. Replaying the
+    # same revision returns its receipt without launching duplicate AI work.
+    if body.revision and session.register_revision == body.revision:
+        return _register_receipt(session, db, operation=existing_operation)
+
+    # Never allow a delayed offline request to overwrite a newer register.
+    if existing_saved_at and incoming_saved_at < existing_saved_at:
+        return _register_receipt(
+            session, db, operation=existing_operation, stale_ignored=True,
+        )
+
+    if body.register_group_count is not None:
+        session.register_group_count = body.register_group_count
+
     results = []
     for entry_data in body.entries:
         swimmer = db.query(models.Swimmer).filter(
@@ -834,51 +887,6 @@ def submit_register(
     ).all()
     entry_by_swimmer = {row.swimmer_id: row for row in entry_rows}
 
-    # Predictions are generated once in a batch and cached. At register time
-    # they remain hypotheses/questions; only the coach supplies observations.
-    if body.run_ai:
-        attended_ids = [row.swimmer_id for row in body.entries if row.attended]
-        try:
-            claude_service.generate_session_predictions(session, db, swimmer_ids=attended_ids)
-        except Exception as exc:
-            for result in results:
-                if result["swimmer_id"] in attended_ids:
-                    result["prediction_error"] = str(exc)
-
-    # Only interpret response after the coach explicitly finishes the session.
-    if body.run_ai and body.session_complete:
-        try:
-            assessments = claude_service.characterise_session_entries_batch(session, entry_rows, db)
-            for swimmer_id, assessment in assessments.items():
-                entry = entry_by_swimmer.get(swimmer_id)
-                if not entry:
-                    continue
-                encoded = json.dumps(assessment, ensure_ascii=False)
-                entry.ai_characterisation = encoded
-                db.query(models.AIAnalysis).filter(
-                    models.AIAnalysis.swimmer_id == swimmer_id,
-                    models.AIAnalysis.session_id == session_id,
-                    models.AIAnalysis.analysis_type == "session_response",
-                ).delete()
-                db.add(models.AIAnalysis(
-                    swimmer_id=swimmer_id,
-                    session_id=session_id,
-                    analysis_type="session_response",
-                    content=encoded,
-                    model_used=claude_service.FAST_MODEL,
-                ))
-                observation = db.query(models.SwimmerObservation).filter(
-                    models.SwimmerObservation.swimmer_id == swimmer_id,
-                    models.SwimmerObservation.session_id == session_id,
-                ).first()
-                if observation:
-                    observation.ai_summary = assessment.get("observed_response") or assessment.get("next_session_action")
-        except Exception as exc:
-            for result in results:
-                entry = entry_by_swimmer.get(result["swimmer_id"])
-                if entry and entry.attended and (entry.coach_observation or "").strip():
-                    result["assessment_error"] = str(exc)
-
     for result in results:
         entry = entry_by_swimmer.get(result["swimmer_id"])
         if entry:
@@ -943,8 +951,32 @@ def submit_register(
         session.status = "completed"
     elif session.status != "completed":
         session.status = "active"
+
+    revision = body.revision or str(uuid.uuid4())
+    session.register_revision = revision
+    session.register_client_saved_at = incoming_saved_at
+    session.register_saved_at = datetime.now(timezone.utc)
+    operation = None
+    if body.run_ai:
+        operation_type = "session_assessment" if body.session_complete else "session_predictions"
+        operation = enqueue_operation(
+            db,
+            operation_type=operation_type,
+            title=(
+                f"Assess completed session · {session.title or session.date}"
+                if body.session_complete
+                else f"Prepare swimmer predictions · {session.title or session.date}"
+            ),
+            entity_type="session",
+            entity_id=session.id,
+            payload={"register_revision": revision},
+            idempotency_key=f"register:{session.id}:{revision}",
+        )
     db.commit()
-    return results
+    db.refresh(session)
+    if operation:
+        db.refresh(operation)
+    return _register_receipt(session, db, operation=operation)
 
 
 # ---------------------------------------------------------------------------
@@ -1282,6 +1314,8 @@ def _session_detail(s: models.Session, db: DBSession) -> dict:
     return {
         **_session_summary(s),
         "coach_notes": s.coach_notes,
+        "register_revision": s.register_revision,
+        "register_saved_at": s.register_saved_at,
         "planned_content": s.planned_content,
         "individual_mods": s.individual_mods,
         "groups": [

@@ -28,6 +28,8 @@ import TodaySession from './pages/TodaySession'
 import SessionPresentationSettings from './pages/SessionPresentationSettings'
 import CoachCheckIns from './pages/CoachCheckIns'
 import CoachCheckIn from './pages/CoachCheckIn'
+import AIOperations from './pages/AIOperations'
+import SessionDebrief from './pages/SessionDebrief'
 import { LaneWatchAIButton, LaneWatchWordmark } from './components/LaneWatchBrand'
 import { SessionPresentationProvider } from './components/SessionPresentationProvider'
 
@@ -109,7 +111,7 @@ function useOfflineSync() {
     }
   }, [sync])
 
-  return state
+  return { ...state, retry: sync }
 }
 
 function OfflineSyncBanner({ state }) {
@@ -126,8 +128,11 @@ function OfflineSyncBanner({ state }) {
 
   return (
     <div className="fixed top-24 left-0 right-0 z-40 px-4">
-      <div className="max-w-lg mx-auto bg-amber-950/95 border border-amber-700/60 rounded-xl px-4 py-2.5 text-xs text-amber-200 shadow-lg">
-        {message}
+      <div className="max-w-lg mx-auto bg-amber-950/95 border border-amber-700/60 rounded-xl px-4 py-2.5 text-xs text-amber-200 shadow-lg flex items-center gap-3">
+        <span className="flex-1">{message}</span>
+        {state.online && state.pending > 0 && !state.syncing && (
+          <button onClick={state.retry} className="rounded-lg bg-amber-800/60 px-2.5 py-1.5 font-semibold text-amber-100 shrink-0">Retry now</button>
+        )}
       </div>
     </div>
   )
@@ -244,6 +249,8 @@ export default function App() {
           <Route path="/sessions" element={<Sessions />} />
           <Route path="/sessions/:id" element={<SessionDetail />} />
           <Route path="/sessions/:id/register" element={<Register />} />
+          <Route path="/debrief" element={<SessionDebrief />} />
+          <Route path="/debrief/:id" element={<SessionDebrief />} />
           <Route path="/meets" element={<Meets />} />
           <Route path="/meets/:id" element={<MeetDetail />} />
           <Route path="/schedule" element={<Schedule />} />
@@ -257,6 +264,7 @@ export default function App() {
           <Route path="/season" element={<SeasonPlan />} />
                 <Route path="/assistant" element={<AssistantInbox />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/ai-operations" element={<AIOperations />} />
                 <Route path="/settings/session-presentation" element={<SessionPresentationSettings />} />
               </Routes>
             </main>

@@ -191,6 +191,17 @@ export default function SessionDetail() {
         </button>
       </div>
 
+      <Link
+        to={`/debrief?session=${session.id}`}
+        className="flex items-center justify-between rounded-xl border border-teal-700/50 bg-teal-950/35 px-4 py-3 active:opacity-70"
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-semibold text-teal-100">Debrief this session</span>
+          <span className="block text-xs text-teal-400/80 mt-0.5">Talk it through — notes go to the swimmers</span>
+        </span>
+        <span className="text-xl shrink-0 ml-3" aria-hidden="true">🎤</span>
+      </Link>
+
       {session.cycle_context && (
         <div className="bg-teal-900/15 border border-teal-700/35 rounded-xl p-3">
           <p className="text-[10px] uppercase tracking-wide font-semibold text-teal-300">Cycle position · {session.cycle_code}</p>

@@ -3,7 +3,7 @@ import base64
 import difflib
 import io
 import re
-from datetime import datetime, date as date_type
+from datetime import datetime, date as date_type, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
@@ -12,7 +12,10 @@ from openpyxl import load_workbook
 from backend.database import get_db
 from backend import models
 from backend.services import openai_service
-from backend.services.event_normalizer import sync_meet_session_events, upsert_meet_entry, canonicalize_event
+from backend.services.event_normalizer import (
+    canonicalize_event, event_parts, sync_meet_session_events, upsert_meet_entry,
+)
+from backend.services.importer import parse_time_to_seconds
 
 router = APIRouter()
 
@@ -315,8 +318,10 @@ def update_meet(meet_id: int, body: dict = Body(...), db: DBSession = Depends(ge
     meet = _get_or_404(meet_id, db)
     allowed = {"name", "date", "date_to", "location", "course", "level", "warm_up_time", "notes"}
     for k, v in body.items():
-        if k in allowed:
-            setattr(meet, k, v)
+        if k not in allowed:
+            continue
+        # Dates arrive as ISO strings from the client and must be real dates.
+        setattr(meet, k, _parse_import_date(v) if k in {"date", "date_to"} else v)
     db.commit()
     return _meet_detail(meet, db)
 
@@ -665,6 +670,191 @@ async def combine_extractions(
 
 
 # ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
+
+class MeetResultRow(BaseModel):
+    swimmer_id: int
+    event: str
+    time: Optional[str] = None          # "1:02.45" / "62.45" — blank clears the result
+    round: Optional[str] = None         # Heat / Final / Semi
+    date: Optional[str] = None          # defaults to the meet start date
+
+
+class MeetResultsSubmit(BaseModel):
+    results: list[MeetResultRow]
+
+
+@router.get("/{meet_id}/results")
+def get_meet_results(meet_id: int, db: DBSession = Depends(get_db)):
+    """Every swim expected at this meet, pre-filled with any result already recorded."""
+    meet = _get_or_404(meet_id, db)
+    recorded = db.query(models.SwimTime).filter(models.SwimTime.meet_id == meet.id).all()
+    recorded_by_key = {
+        (row.swimmer_id, canonicalize_event(row.event), row.round or ""): row
+        for row in recorded
+    }
+
+    swimmer_ids = {row.swimmer_id for row in recorded}
+    entries = db.query(models.MeetEntry).filter(models.MeetEntry.meet_id == meet.id).all()
+    targets = db.query(models.MeetTarget).filter(models.MeetTarget.meet_id == meet.id).all()
+    swimmer_ids |= {entry.swimmer_id for entry in entries}
+    swimmer_ids |= {target.swimmer_id for target in targets}
+    swimmers = {
+        row.id: row for row in
+        db.query(models.Swimmer).filter(models.Swimmer.id.in_(swimmer_ids)).all()
+    } if swimmer_ids else {}
+
+    # Expected swims come from explicit entries first, then any target events
+    # that were never turned into entries.
+    expected: dict[tuple[int, str], dict] = {}
+    for entry in entries:
+        key = (entry.swimmer_id, entry.canonical_event)
+        expected.setdefault(key, {
+            "swimmer_id": entry.swimmer_id,
+            "event": entry.event_name,
+            "canonical_event": entry.canonical_event,
+            "entry_time": entry.entry_time,
+            "target_time": entry.target_time,
+        })
+    for target in targets:
+        for event in target.events or []:
+            key = (target.swimmer_id, canonicalize_event(event))
+            expected.setdefault(key, {
+                "swimmer_id": target.swimmer_id,
+                "event": event,
+                "canonical_event": canonicalize_event(event),
+                "entry_time": None,
+                "target_time": (target.target_times or {}).get(event),
+            })
+
+    rows = []
+    for (swimmer_id, canonical), row in expected.items():
+        swimmer = swimmers.get(swimmer_id)
+        if not swimmer:
+            continue
+        result = recorded_by_key.pop((swimmer_id, canonical, ""), None)
+        rows.append({
+            **row,
+            "swimmer_name": swimmer.name,
+            "squad": swimmer.squad,
+            "round": result.round if result else None,
+            "recorded_time": _time_display(result.time_seconds) if result else None,
+            "recorded_time_id": result.id if result else None,
+            "unexpected": False,
+        })
+
+    # Results recorded against swims that were never entered — keep them visible
+    # so a correction is possible rather than silently orphaned.
+    for (swimmer_id, canonical, round_name), result in recorded_by_key.items():
+        swimmer = swimmers.get(swimmer_id)
+        if not swimmer:
+            continue
+        rows.append({
+            "swimmer_id": swimmer_id,
+            "swimmer_name": swimmer.name,
+            "squad": swimmer.squad,
+            "event": result.event,
+            "canonical_event": canonical,
+            "entry_time": None,
+            "target_time": None,
+            "round": result.round,
+            "recorded_time": _time_display(result.time_seconds),
+            "recorded_time_id": result.id,
+            "unexpected": True,
+        })
+
+    rows.sort(key=lambda row: (row["swimmer_name"] or "", row["event"] or ""))
+    return {
+        "meet": _meet_summary(meet, db),
+        "rows": rows,
+        "recorded_count": sum(1 for row in rows if row["recorded_time"]),
+    }
+
+
+@router.post("/{meet_id}/results")
+def save_meet_results(meet_id: int, body: MeetResultsSubmit, db: DBSession = Depends(get_db)):
+    """Record race times against this meet and into each swimmer's times history."""
+    meet = _get_or_404(meet_id, db)
+    default_date = meet.date
+    saved, cleared, errors = 0, 0, []
+
+    for row in body.results:
+        swimmer = db.query(models.Swimmer).filter(models.Swimmer.id == row.swimmer_id).first()
+        if not swimmer:
+            errors.append(f"Swimmer {row.swimmer_id} not found")
+            continue
+
+        canonical = canonicalize_event(row.event)
+        existing = next(
+            (item for item in db.query(models.SwimTime).filter(
+                models.SwimTime.meet_id == meet.id,
+                models.SwimTime.swimmer_id == row.swimmer_id,
+            ).all()
+             if canonicalize_event(item.event) == canonical
+             and (item.round or "") == (row.round or "")),
+            None,
+        )
+
+        raw_time = (row.time or "").strip()
+        if not raw_time:
+            if existing:
+                db.delete(existing)
+                cleared += 1
+            continue
+
+        seconds = parse_time_to_seconds(raw_time)
+        if seconds is None or seconds <= 0:
+            errors.append(f"{swimmer.name} - {row.event}: could not read the time '{raw_time}'")
+            continue
+
+        swim_date = _parse_import_date(row.date) or default_date
+        distance, stroke = event_parts(row.event)
+        event_base = canonical.title()
+        event_label = f"{event_base} {meet.course}" if meet.course else event_base
+
+        if existing:
+            existing.time_seconds = seconds
+            existing.date = swim_date
+            existing.event = event_label
+            existing.stroke = stroke.title() if stroke else None
+            existing.distance = distance
+            existing.course = meet.course
+            existing.venue = meet.location
+            existing.level = meet.level
+            existing.meet = meet.name
+        else:
+            db.add(models.SwimTime(
+                swimmer_id=row.swimmer_id,
+                event=event_label,
+                stroke=stroke.title() if stroke else None,
+                course=meet.course,
+                distance=distance,
+                time_seconds=seconds,
+                date=swim_date,
+                meet=meet.name,
+                venue=meet.location,
+                level=meet.level,
+                round=row.round or None,
+                source="meet_results",
+                meet_id=meet.id,
+            ))
+        saved += 1
+
+    db.commit()
+    return {"saved": saved, "cleared": cleared, "errors": errors, **get_meet_results(meet_id, db)}
+
+
+@router.post("/{meet_id}/dismiss-results-prompt")
+def dismiss_results_prompt(meet_id: int, db: DBSession = Depends(get_db)):
+    """Hide this meet's 'add results' prompt from Today without recording anything."""
+    meet = _get_or_404(meet_id, db)
+    meet.results_prompt_dismissed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"dismissed": True, "meet_id": meet.id}
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -673,6 +863,15 @@ def _get_or_404(meet_id: int, db: DBSession) -> models.Meet:
     if not meet:
         raise HTTPException(status_code=404, detail="Meet not found")
     return meet
+
+
+def _time_display(seconds: Optional[float]) -> Optional[str]:
+    """Render stored seconds the way a coach reads a race time."""
+    if seconds is None:
+        return None
+    minutes = int(seconds // 60)
+    remainder = seconds % 60
+    return f"{minutes}:{remainder:05.2f}" if minutes else f"{remainder:.2f}"
 
 
 def _meet_summary(m: models.Meet, db: DBSession) -> dict:

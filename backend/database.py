@@ -77,6 +77,9 @@ def _apply_migrations():
             add_col("sessions", "microcycle_id", "INTEGER")
             add_col("sessions", "session_sequence", "INTEGER")
             add_col("sessions", "cycle_code", "VARCHAR")
+            add_col("sessions", "register_revision", "VARCHAR")
+            add_col("sessions", "register_client_saved_at", "TIMESTAMP WITH TIME ZONE")
+            add_col("sessions", "register_saved_at", "TIMESTAMP WITH TIME ZONE")
 
         if "session_groups" in insp.get_table_names():
             add_col("session_groups", "volume_breakdown", "JSON")
@@ -95,6 +98,14 @@ def _apply_migrations():
             add_col("meets", "level", "VARCHAR")
             add_col("meets", "warm_up_time", "VARCHAR")
             add_col("meets", "created_at", "DATETIME")
+            add_col("meets", "results_prompt_dismissed_at", "DATETIME")
+
+        if "swim_times" in insp.get_table_names():
+            add_col("swim_times", "meet_id", "INTEGER")
+
+        if "session_debriefs" in insp.get_table_names():
+            add_col("session_debriefs", "proposals", "JSON")
+            add_col("session_debriefs", "committed_at", "DATETIME")
 
         if "meet_targets" in insp.get_table_names():
             add_col("meet_targets", "target_times", "JSON")

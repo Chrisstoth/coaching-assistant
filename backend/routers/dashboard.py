@@ -30,7 +30,13 @@ def meet_countdowns(db: DBSession = Depends(get_db)):
     ).order_by(models.Meet.date).all()
 
     if not upcoming:
-        return {"group_targets": [], "upcoming_meets": []}
+        # A recently finished meet still needs its results prompt even when
+        # nothing is coming up.
+        return {
+            "group_targets": [],
+            "upcoming_meets": [],
+            "awaiting_results": _meets_awaiting_results(db, today),
+        }
 
     meet_ids = [m.id for m in upcoming]
     meet_map = {m.id: m for m in upcoming}
@@ -88,7 +94,103 @@ def meet_countdowns(db: DBSession = Depends(get_db)):
         if m.id not in group_meet_ids
     ][:4]
 
-    return {"group_targets": group_targets, "upcoming_meets": upcoming_meets}
+    return {
+        "group_targets": group_targets,
+        "upcoming_meets": upcoming_meets,
+        "awaiting_results": _meets_awaiting_results(db, today),
+    }
+
+
+@router.get("/sessions-awaiting-debrief")
+def sessions_awaiting_debrief(db: DBSession = Depends(get_db)):
+    """
+    Completed sessions from the last few days with nothing said about them yet.
+
+    Kept to a short window: a debrief is worth doing while the session is still
+    fresh, and stale prompts train the coach to ignore the card.
+    """
+    today = date.today()
+    window_start = today - timedelta(days=3)
+    sessions = db.query(models.Session).filter(
+        models.Session.date >= window_start,
+        models.Session.date <= today,
+        models.Session.status == "completed",
+    ).order_by(models.Session.date.desc()).all()
+
+    items = []
+    for session in sessions:
+        debrief = db.query(models.SessionDebrief).filter(
+            models.SessionDebrief.session_id == session.id,
+        ).first()
+        if debrief:
+            continue
+        attended = db.query(models.SessionEntry).filter(
+            models.SessionEntry.session_id == session.id,
+            models.SessionEntry.attended == True,
+        ).count()
+        if not attended:
+            continue
+        items.append({
+            "session_id": session.id,
+            "title": session.title or "Session",
+            "date": str(session.date),
+            "days_since": (today - session.date).days,
+            "attended": attended,
+        })
+    return {"items": items}
+
+
+def _meet_has_results(db: DBSession, meet, last_day: date) -> bool:
+    """
+    Whether this meet's times are already recorded.
+
+    Times entered through the meet screen carry meet_id. Times that arrived by
+    file import predate that link, so fall back to matching on the meet name
+    within its own dates — otherwise an already-imported meet keeps prompting.
+    """
+    if db.query(models.SwimTime).filter(models.SwimTime.meet_id == meet.id).count():
+        return True
+    return bool(db.query(models.SwimTime).filter(
+        models.SwimTime.date.between(meet.date, last_day),
+        models.SwimTime.meet.ilike(f"%{(meet.name or '')[:20]}%"),
+    ).count())
+
+
+def _meets_awaiting_results(db: DBSession, today: date) -> list[dict]:
+    """
+    Meets that finished in the last fortnight and still have no results recorded.
+
+    Surfaces from the day after the meet ends, so the prompt never competes with
+    the meet itself, and disappears once results exist or the coach dismisses it.
+    """
+    window_start = today - timedelta(days=14)
+    finished = db.query(models.Meet).filter(
+        models.Meet.date != None,
+        models.Meet.date >= window_start,
+        models.Meet.results_prompt_dismissed_at == None,
+    ).order_by(models.Meet.date.desc()).all()
+
+    items = []
+    for meet in finished:
+        last_day = meet.date_to or meet.date
+        if last_day >= today:
+            continue
+        if _meet_has_results(db, meet, last_day):
+            continue
+        expected = db.query(models.MeetTarget).filter(
+            models.MeetTarget.meet_id == meet.id,
+        ).count()
+        items.append({
+            "meet_id": meet.id,
+            "name": meet.name,
+            "date": str(meet.date),
+            "date_to": str(meet.date_to) if meet.date_to else None,
+            "location": meet.location,
+            "course": meet.course,
+            "days_since": (today - last_day).days,
+            "swimmer_count": expected,
+        })
+    return items
 
 
 @router.get("/availability")
