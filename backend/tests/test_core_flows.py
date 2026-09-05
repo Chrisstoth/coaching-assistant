@@ -17,6 +17,7 @@ Path(_db_file.name).unlink(missing_ok=True)
 os.environ["DATABASE_URL"] = f"sqlite:///{Path(_db_file.name).as_posix()}"
 os.environ["APP_PASSWORD"] = "test-password"
 os.environ["SECRET_KEY"] = "test-secret-key"
+os.environ["AI_OPERATION_WORKER_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient
 from backend.main import app
@@ -30,10 +31,12 @@ from backend.routers.ai_chat import (
 )
 from backend.services.claude_service import (
     COACHING_CONTEXT_CHAR_LIMIT, FAST_MODEL,
-    _coaching_context_for_prompt, detect_topics, execute_tool, get_athlete_plan_system_prompt,
+    _coaching_context_for_prompt, create_message, detect_topics, execute_tool, get_athlete_plan_system_prompt,
     get_season_plan_system_prompt, get_system_prompt, record_ai_usage,
 )
 from backend.services.terminology import coach_terminology_context
+from backend.services.ai_operations import process_operation
+from backend.tests import reset_database
 
 
 class CoreFlowTests(unittest.TestCase):
@@ -50,6 +53,12 @@ class CoreFlowTests(unittest.TestCase):
         cls.client_context.__exit__(None, None, None)
         engine.dispose()
         Path(_db_file.name).unlink(missing_ok=True)
+
+    def tearDown(self):
+        # Each test creates the data it needs, and most clean up on their final
+        # lines — which is skipped when an assertion fails. Resetting here keeps
+        # a failure contained to the test that caused it.
+        reset_database()
 
     def test_session_presentation_settings_and_ai_equivalency_check(self):
         payload = {
@@ -124,6 +133,123 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(len(created.json()["groups"]), 1)
         deleted = self.client.delete(f"/sessions/{created.json()['id']}", headers=self.headers)
         self.assertEqual(deleted.status_code, 204, deleted.text)
+
+    def test_register_commits_before_ai_and_protects_against_stale_retries(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Reliable Register Swimmer", squad="Test")
+            session = models.Session(date=date(2032, 1, 8), title="Reliable Register", status="active")
+            db.add_all([swimmer, session])
+            db.commit()
+            swimmer_id, session_id = swimmer.id, session.id
+
+        first_payload = {
+            "revision": "register-revision-one",
+            "client_saved_at": "2032-01-08T18:00:00Z",
+            "session_complete": False,
+            "run_ai": True,
+            "register_group_count": 2,
+            "entries": [{"swimmer_id": swimmer_id, "attended": True}],
+        }
+        with patch(
+            "backend.routers.sessions.claude_service.generate_session_predictions",
+            side_effect=AssertionError("AI must not run inside the register request"),
+        ):
+            saved = self.client.put(
+                f"/sessions/{session_id}/register", headers=self.headers, json=first_payload,
+            )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertTrue(saved.json()["saved"])
+        self.assertEqual(saved.json()["revision"], first_payload["revision"])
+        self.assertEqual(saved.json()["ai_operation"]["status"], "queued")
+        first_operation_id = saved.json()["ai_operation"]["id"]
+
+        repeated = self.client.put(
+            f"/sessions/{session_id}/register", headers=self.headers, json=first_payload,
+        )
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json()["ai_operation"]["id"], first_operation_id)
+
+        newer_payload = {
+            **first_payload,
+            "revision": "register-revision-two",
+            "client_saved_at": "2032-01-08T18:01:00Z",
+        }
+        newer = self.client.put(
+            f"/sessions/{session_id}/register", headers=self.headers, json=newer_payload,
+        )
+        second_operation_id = newer.json()["ai_operation"]["id"]
+        stale = self.client.put(
+            f"/sessions/{session_id}/register", headers=self.headers,
+            json={
+                **first_payload,
+                "revision": "delayed-older-revision",
+                "client_saved_at": "2032-01-08T17:59:00Z",
+                "entries": [{"swimmer_id": swimmer_id, "attended": False}],
+            },
+        )
+        self.assertEqual(stale.status_code, 200, stale.text)
+        self.assertTrue(stale.json()["stale_ignored"])
+        with SessionLocal() as db:
+            entry = db.query(models.SessionEntry).filter(
+                models.SessionEntry.session_id == session_id,
+                models.SessionEntry.swimmer_id == swimmer_id,
+            ).one()
+            self.assertTrue(entry.attended)
+            session_row = db.query(models.Session).filter(models.Session.id == session_id).one()
+            self.assertEqual(session_row.register_group_count, 2)
+            operation = db.query(models.AIOperation).filter(models.AIOperation.id == second_operation_id).one()
+            operation.max_attempts = 1
+            db.commit()
+
+        with patch(
+            "backend.services.ai_operations.claude_service.generate_session_predictions",
+            side_effect=RuntimeError("Temporary provider failure"),
+        ):
+            self.assertTrue(process_operation(second_operation_id))
+        operations = self.client.get("/ai-operations", headers=self.headers)
+        failed = next(item for item in operations.json()["items"] if item["id"] == second_operation_id)
+        self.assertEqual(failed["status"], "failed")
+        self.assertIn("Temporary provider failure", failed["error"])
+        retried = self.client.post(
+            f"/ai-operations/{second_operation_id}/retry", headers=self.headers,
+        )
+        self.assertEqual(retried.status_code, 200, retried.text)
+        self.assertEqual(retried.json()["status"], "queued")
+        self.assertEqual(retried.json()["attempts"], 0)
+
+        with SessionLocal() as db:
+            db.query(models.AIOperation).filter(models.AIOperation.entity_id == session_id).delete()
+            db.query(models.SessionEntry).filter(models.SessionEntry.session_id == session_id).delete()
+            db.query(models.Session).filter(models.Session.id == session_id).delete()
+            db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
+            db.commit()
+
+    def test_foreground_ai_calls_are_visible_in_operations_history(self):
+        fake_response = SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="Visible response")],
+            usage=SimpleNamespace(input_tokens=12, output_tokens=4),
+        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_response))
+        with patch("backend.services.claude_service._get_raw_client", return_value=fake_client):
+            response = create_message(
+                model=FAST_MODEL,
+                operation="foreground_visibility_test",
+                max_tokens=20,
+                messages=[{"role": "user", "content": "test"}],
+            )
+        self.assertEqual(response.content[0].text, "Visible response")
+        with SessionLocal() as db:
+            operation = db.query(models.AIOperation).filter(
+                models.AIOperation.operation_type == "foreground_visibility_test",
+            ).order_by(models.AIOperation.id.desc()).first()
+            self.assertIsNotNone(operation)
+            self.assertEqual(operation.status, "completed")
+            self.assertEqual(operation.payload["execution"], "foreground")
+            db.delete(operation)
+            db.query(models.AIUsageLog).filter(
+                models.AIUsageLog.operation == "foreground_visibility_test",
+            ).delete()
+            db.commit()
 
     def test_profile_wizard_draft_is_recoverable_without_duplicate_ai_call(self):
         with SessionLocal() as db:
@@ -1199,8 +1325,18 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(response.json()["model_route"]["tier"], "fast")
         self.assertEqual(captured["model"], FAST_MODEL)
         self.assertEqual(captured["operation"], "general_agent_initial")
-        self.assertIn(f"Resolver Alice: swimmer_id={swimmer_id}", captured["system"])
-        self.assertIn("do not call find_swimmer", captured["system"])
+        # The system prompt is sent as cacheable blocks: a stable prefix
+        # carrying the cache breakpoint, then the per-turn tail.
+        blocks = captured["system"]
+        self.assertIsInstance(blocks, list)
+        self.assertEqual(blocks[0]["cache_control"], {"type": "ephemeral"})
+        self.assertNotIn("cache_control", blocks[-1])
+        system_text = "\n\n".join(block["text"] for block in blocks)
+        self.assertIn(f"Resolver Alice: swimmer_id={swimmer_id}", system_text)
+        self.assertIn("do not call find_swimmer", system_text)
+        # Resolved identities change per turn, so they must sit outside the
+        # cached prefix or every turn invalidates it.
+        self.assertNotIn("Resolver Alice: swimmer_id=", blocks[0]["text"])
 
         with SessionLocal() as db:
             db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).delete()
@@ -2504,8 +2640,11 @@ class CoreFlowTests(unittest.TestCase):
                     }],
                 },
             )
-        self.assertEqual(completed.status_code, 200, completed.text)
-        self.assertEqual(completed.json()[0]["ai_characterisation"]["next_session_action"], "Continue the planned progression.")
+            self.assertEqual(completed.status_code, 200, completed.text)
+            operation = completed.json()["ai_operation"]
+            self.assertEqual(operation["status"], "queued")
+            self.assertEqual(operation["operation_type"], "session_assessment")
+            self.assertTrue(process_operation(operation["id"]))
         with SessionLocal() as db:
             saved_session = db.query(models.Session).filter(models.Session.id == session_id).one()
             entry = db.query(models.SessionEntry).filter(
