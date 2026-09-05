@@ -295,7 +295,6 @@ export default function SwimmerDetail() {
   const [sending, setSending] = useState(false)
   const [times, setTimes] = useState([])
   const [analyses, setAnalyses] = useState([])
-  const [synthesising, setSynthesising] = useState(false)
   const [observations, setObservations] = useState([])
   const [obsFilter, setObsFilter] = useState('all')
   const [raceProfiles, setRaceProfiles] = useState([])
@@ -511,14 +510,6 @@ export default function SwimmerDetail() {
       setConversation((prev) => [...prev, { role: 'ai', message: `Error: ${e.message}` }])
     }
     setSending(false)
-  }
-
-  const doSynthesise = async () => {
-    setSynthesising(true)
-    await api.synthesiseProfile(id)
-    const updated = await api.getSwimmer(id)
-    setSwimmer(updated)
-    setSynthesising(false)
   }
 
   if (!swimmer) return <div className="p-4 text-pool-400">Loading...</div>

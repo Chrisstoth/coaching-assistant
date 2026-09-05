@@ -469,13 +469,6 @@ def profile_chat(swimmer_id: int, body: ProfileChatMessage, db: DBSession = Depe
     return {"reply": reply}
 
 
-@router.post("/{swimmer_id}/profile/synthesise")
-def synthesise_profile(swimmer_id: int, db: DBSession = Depends(get_db)):
-    swimmer = _get_or_404(swimmer_id, db)
-    profile = claude_service.synthesise_profile(swimmer, db)
-    return {"physical": profile.get("physical"), "psychological": profile.get("psychological")}
-
-
 @router.get("/{swimmer_id}/profile/conversation")
 def get_conversation(swimmer_id: int, db: DBSession = Depends(get_db)):
     swimmer = _get_or_404(swimmer_id, db)

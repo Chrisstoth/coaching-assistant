@@ -133,7 +133,6 @@ export const api = {
 
   // Profile conversation
   profileChat: (id, message) => request('POST', `/swimmers/${id}/profile/chat`, { message }),
-  synthesiseProfile: (id) => request('POST', `/swimmers/${id}/profile/synthesise`),
   getConversation: (id) => request('GET', `/swimmers/${id}/profile/conversation`),
 
   // Session planner

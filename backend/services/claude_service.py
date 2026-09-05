@@ -4294,59 +4294,6 @@ def profile_chat(
     return ai_reply
 
 
-def synthesise_profile(swimmer: models.Swimmer, db: DBSession) -> dict:
-    """
-    Ask Claude to synthesise the current conversation + data into structured JSON profiles.
-    Updates swimmer.physical_profile and swimmer.psychological_profile.
-    """
-    swimmer_context = build_swimmer_context(swimmer, db)
-
-    history = (
-        db.query(models.ProfileConversation)
-        .filter(models.ProfileConversation.swimmer_id == swimmer.id)
-        .order_by(models.ProfileConversation.created_at.asc())
-        .all()
-    )
-    conversation_text = "\n".join(
-        f"{'Coach' if e.role == 'coach' else 'AI'}: {e.message}" for e in history
-    )
-
-    prompt = f"""Based on the swimmer data and our conversation below, synthesise a structured profile.
-
-SWIMMER DATA:
-{swimmer_context}
-
-CONVERSATION:
-{conversation_text}
-
-Return a JSON object with two keys:
-1. "physical": an object covering aerobic_base, sprint_tendency, technical_strengths, technical_weaknesses, injury_history, training_load_response, recovery_rate, current_fitness_level (all as short text descriptions)
-2. "psychological": an object covering motivation_style, competition_response, coachability, resilience, goal_orientation, response_to_hard_training, notes (all as short text descriptions)
-
-Return only the JSON, no other text."""
-
-    response = get_client().messages.create(
-        model=MODEL,
-        max_tokens=1500,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    raw = response.content[0].text.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-
-    profile_data = json.loads(raw)
-
-    swimmer.physical_profile = profile_data.get("physical", {})
-    swimmer.psychological_profile = profile_data.get("psychological", {})
-    db.commit()
-
-    return profile_data
-
-
 # ---------------------------------------------------------------------------
 # Versioned profile synthesis (race + training)
 # ---------------------------------------------------------------------------
