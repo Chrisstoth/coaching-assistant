@@ -203,10 +203,7 @@ function SquadPulse({ pulse }) {
   return (
     <section>
       <div className="flex items-center justify-between mb-1">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-4 bg-teal-600 rounded-full" />
-          <h2 className="font-semibold text-sm">Squad Pulse</h2>
-        </div>
+        <h2 className="font-semibold text-sm">Squad Pulse</h2>
         <Link to="/swimmers" className="text-xs text-pool-500 hover:text-pool-300">Full squad →</Link>
       </div>
 
@@ -380,10 +377,7 @@ function AvailabilityCard({ report }) {
   return (
     <section>
       <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-4 bg-amber-500 rounded-full" />
-          <h2 className="font-semibold text-sm">Squad availability</h2>
-        </div>
+        <h2 className="font-semibold text-sm">Squad availability</h2>
         <span className="text-[11px] text-pool-500">
           {report.current_count || 0} away now · {report.upcoming_count || 0} upcoming
         </span>

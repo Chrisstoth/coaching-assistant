@@ -594,10 +594,7 @@ export default function CoachAI() {
       {/* Header */}
       <div className="px-4 pt-4 pb-2 shrink-0 border-b border-pool-600">
         <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <div className="w-1.5 h-5 bg-accent-500 rounded-full" />
-            <h1 className="text-lg font-bold tracking-tight">LaneWatch AI</h1>
-          </div>
+          <h1 className="text-lg font-bold tracking-tight">LaneWatch AI</h1>
           <div className="flex items-center gap-3">
             <button
               onClick={() => setPoolside(p => !p)}
