@@ -582,6 +582,33 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
     }))
   }
 
+  // Manual override for when the workbook's group split wasn't auto-detected
+  // (or was detected wrong). Growing the count seeds new boxes from group 1's
+  // text so the coach can edit each down to what that group actually did;
+  // shrinking folds the dropped groups' text back in rather than losing it.
+  const setGroupCount = (count) => {
+    setDraft(current => {
+      const existing = current.groups || {}
+      const numbers = Object.keys(existing).map(Number).sort((a, b) => a - b)
+      if (count <= numbers.length) {
+        const kept = {}
+        numbers.slice(0, count).forEach(n => { kept[n] = { ...existing[n] } })
+        const overflow = numbers.slice(count).map(n => existing[n]?.sets).filter(Boolean)
+        if (overflow.length && count > 0) {
+          const lastKey = numbers[count - 1]
+          kept[lastKey] = { ...kept[lastKey], sets: [kept[lastKey].sets, ...overflow].filter(Boolean).join('\n\n') }
+        }
+        return { ...current, groups: kept }
+      }
+      const base = existing[numbers[0]] || { description: 'Imported session', sets: '', items: [] }
+      const next = { ...existing }
+      for (let n = numbers.length + 1; n <= count; n++) {
+        next[n] = { description: `Group ${n}`, sets: base.sets || '', items: [] }
+      }
+      return { ...current, groups: next }
+    })
+  }
+
   const changeDate = (value) => {
     setSelectedTarget(null)
     setDraft(current => ({ ...current, date: value, pool_slot_id: null }))
@@ -848,6 +875,26 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
           <textarea value={draft.coach_intent || ''} onChange={(e) => setDraft({...draft, coach_intent: e.target.value})}
             rows="2" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
         </label>
+        <div>
+          <span className="block text-xs text-pool-400 mb-1">Groups in this workbook</span>
+          <p className="text-[11px] text-pool-500 mb-1.5">Not split right? Set the real count — new boxes start from the current set so you can edit each down.</p>
+          <div className="grid grid-cols-3 gap-2">
+            {[1, 2, 3].map((count) => (
+              <button
+                key={count}
+                type="button"
+                onClick={() => setGroupCount(count)}
+                className={`rounded-lg border px-2 py-2 text-xs font-semibold ${
+                  Object.keys(draft.groups || {}).length === count
+                    ? 'bg-accent-700 border-accent-500 text-white'
+                    : 'bg-pool-700 border-pool-600 text-pool-300'
+                }`}
+              >
+                {count === 1 ? 'Everyone together' : `${count} groups`}
+              </button>
+            ))}
+          </div>
+        </div>
         {Object.entries(draft.groups || {}).sort(([a], [b]) => Number(a) - Number(b)).map(([groupNumber, group]) => (
           <label key={groupNumber} className="block">
             <span className="block text-xs text-pool-400 mb-1">
