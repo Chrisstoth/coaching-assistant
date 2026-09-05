@@ -5,7 +5,9 @@ import os
 import json
 import inspect
 import re
-from datetime import date
+from contextlib import contextmanager
+from contextvars import ContextVar
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 import anthropic
 from sqlalchemy.orm import Session as DBSession
@@ -22,6 +24,7 @@ from backend.services.terminology import coach_terminology_context
 
 _client: Optional[anthropic.Anthropic] = None
 _client_proxy = None
+_active_ai_operation_id = ContextVar("active_ai_operation_id", default=None)
 
 
 def _get_raw_client() -> anthropic.Anthropic:
@@ -49,6 +52,16 @@ def get_client():
     return _client_proxy
 
 
+@contextmanager
+def ai_operation_scope(operation_id: int):
+    """Associate provider calls with an existing durable background operation."""
+    token = _active_ai_operation_id.set(operation_id)
+    try:
+        yield
+    finally:
+        _active_ai_operation_id.reset(token)
+
+
 MODEL = os.getenv("ANTHROPIC_PRIMARY_MODEL", "claude-sonnet-5")
 FAST_MODEL = os.getenv("ANTHROPIC_FAST_MODEL", "claude-haiku-4-5-20251001")
 PRIMARY_EFFORT = os.getenv("ANTHROPIC_EFFORT", "medium")
@@ -60,7 +73,10 @@ COACHING_CONTEXT_CHAR_LIMIT = max(
 )
 
 _MODEL_PRICES_PER_MTOK = {
-    "claude-sonnet-5": (2.0, 10.0),
+    # Sonnet 5 launched at an introductory $2/$10 that ran to 31 Aug 2026;
+    # standard rates apply from 1 Sep 2026. Holding the intro price here made
+    # every logged cost read about 18% under what was actually being spent.
+    "claude-sonnet-5": (3.0, 15.0),
     "claude-sonnet-4-6": (3.0, 15.0),
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
@@ -106,11 +122,36 @@ def create_message(*, model: Optional[str] = None, operation: Optional[str] = No
                    effort: Optional[str] = None, **kwargs):
     """Cost-aware Claude call with central model routing and usage telemetry."""
     selected_model = model or MODEL
+    caller = inspect.currentframe().f_back.f_code.co_name if operation is None else operation
+    tracked_operation_id = None
+    if _active_ai_operation_id.get() is None:
+        try:
+            from backend.database import SessionLocal
+            with SessionLocal() as operation_db:
+                tracked = models.AIOperation(
+                    operation_type=caller,
+                    title=caller.replace("_", " ").strip().capitalize(),
+                    status="running",
+                    payload={"execution": "foreground", "model": selected_model},
+                    attempts=1,
+                    started_at=datetime.now(timezone.utc),
+                    available_at=datetime.now(timezone.utc),
+                )
+                operation_db.add(tracked)
+                operation_db.commit()
+                operation_db.refresh(tracked)
+                tracked_operation_id = tracked.id
+        except Exception:
+            # Operational visibility must never block the AI response itself.
+            tracked_operation_id = None
     if selected_model == MODEL and selected_model.startswith("claude-sonnet-5"):
         kwargs.setdefault("output_config", {"effort": effort or PRIMARY_EFFORT})
-    response = _get_raw_client().messages.create(model=selected_model, **kwargs)
+    try:
+        response = _get_raw_client().messages.create(model=selected_model, **kwargs)
+    except Exception as exc:
+        _finish_tracked_ai_operation(tracked_operation_id, "failed", error=str(exc))
+        raise
     usage = getattr(response, "usage", None)
-    caller = inspect.currentframe().f_back.f_code.co_name if operation is None else operation
     record_ai_usage(
         "anthropic",
         selected_model,
@@ -120,7 +161,26 @@ def create_message(*, model: Optional[str] = None, operation: Optional[str] = No
         cache_read_tokens=_usage_value(usage, "cache_read_input_tokens"),
         cache_write_tokens=_usage_value(usage, "cache_creation_input_tokens"),
     )
+    _finish_tracked_ai_operation(tracked_operation_id, "completed", result="Foreground AI response completed.")
     return response
+
+
+def _finish_tracked_ai_operation(operation_id: Optional[int], status: str, *, result=None, error=None):
+    if not operation_id:
+        return
+    try:
+        from backend.database import SessionLocal
+        with SessionLocal() as operation_db:
+            row = operation_db.query(models.AIOperation).filter(models.AIOperation.id == operation_id).first()
+            if not row:
+                return
+            row.status = status
+            row.result_summary = result
+            row.error = error[:2000] if error else None
+            row.completed_at = datetime.now(timezone.utc)
+            operation_db.commit()
+    except Exception:
+        pass
 
 
 def response_text(response) -> str:
@@ -305,6 +365,29 @@ def apply_energy_analysis_to_draft(draft: dict, analysis: dict) -> dict:
     return draft
 
 
+def _compact_prior_assessment(raw):
+    """Keep only the two fields of a past assessment that inform a new prediction.
+
+    A stored assessment carries seven fields. Recovery guidance and the suggested
+    action from three sessions ago describe a decision already taken; what still
+    matters is what the coach saw and whether the prediction held.
+    """
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, json.JSONDecodeError):
+        return raw
+    if not isinstance(parsed, dict):
+        return raw
+    compact = {
+        key: parsed[key]
+        for key in ("observed_response", "prediction_comparison")
+        if parsed.get(key)
+    }
+    return compact or None
+
+
 def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, db: DBSession) -> dict:
     recent_entries = (
         db.query(models.SessionEntry, models.Session)
@@ -315,7 +398,10 @@ def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, 
             models.Session.date < session.date,
         )
         .order_by(models.Session.date.desc())
-        .limit(5)
+        # Three, not five: inside a training block the fourth and fifth sessions
+        # back are the same stimulus again and add tokens without adding signal.
+        # Evidence older than this reaches the model through the profile.
+        .limit(3)
         .all()
     )
     recent_session_ids = [prior.id for _, prior in recent_entries]
@@ -335,7 +421,7 @@ def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, 
             "group_done": entry.group_done,
             "zone_load": load.volume_breakdown if load else None,
             "observation": entry.coach_observation,
-            "prior_assessment": entry.ai_characterisation,
+            "prior_assessment": _compact_prior_assessment(entry.ai_characterisation),
         })
 
     planned_group = None
@@ -361,15 +447,30 @@ def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, 
             except ValueError:
                 planned_group = label
             break
-    training_profile = (
-        db.query(models.SwimmerProfileVersion)
-        .filter(
-            models.SwimmerProfileVersion.swimmer_id == swimmer.id,
-            models.SwimmerProfileVersion.profile_type == "training",
+    # The profile is the only part of this brief that remembers further back
+    # than the three recent sessions above, so prefer the unified one where it
+    # exists and fall back to the legacy training-only profile otherwise.
+    unified = latest_unified_profile(swimmer.id, db)
+    if unified:
+        unified_data = unified.data or {}
+        training_response = {
+            "training": unified_data.get("training"),
+            "technical_limiters": (unified_data.get("technical") or {}).get("technical_limiters"),
+            "cross_domain": unified_data.get("cross_domain"),
+            "synthesised": unified.created_at.date().isoformat() if unified.created_at else None,
+        }
+        training_response = {k: v for k, v in training_response.items() if v}
+    else:
+        legacy_training = (
+            db.query(models.SwimmerProfileVersion)
+            .filter(
+                models.SwimmerProfileVersion.swimmer_id == swimmer.id,
+                models.SwimmerProfileVersion.profile_type == "training",
+            )
+            .order_by(models.SwimmerProfileVersion.created_at.desc())
+            .first()
         )
-        .order_by(models.SwimmerProfileVersion.created_at.desc())
-        .first()
-    )
+        training_response = legacy_training.data if legacy_training else {}
     active_events = db.query(models.SwimmerLoadEvent).filter(
         models.SwimmerLoadEvent.swimmer_id == swimmer.id,
         models.SwimmerLoadEvent.date_from <= session.date,
@@ -384,7 +485,7 @@ def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, 
         "development": swimmer.weaknesses,
         "physical_profile": swimmer.physical_profile or {},
         "profile_notes": (swimmer.profile_notes or "")[:600],
-        "training_response_profile": training_profile.data if training_profile else {},
+        "training_response_profile": training_response,
         "planned_group": planned_group,
         "planned_sub_group": planned_sub_group,
         "recent_observed_sessions": recent,
@@ -392,10 +493,116 @@ def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, 
     }
 
 
+# How many swimmers are briefed each session regardless of whether anything
+# flags them. Without a floor the triage below goes silent in a good week —
+# exactly when a quiet drift is easiest to miss — and a swimmer with no flags
+# could go a month without the assistant looking at them properly. Four a
+# session works through a squad of 25 roughly every six sessions.
+PREDICTION_ROTATION_FLOOR = 4
+
+# How recently a swimmer must have been briefed to count as "seen".
+PREDICTION_TARGET_HORIZON_DAYS = 56
+
+
+def _triage_prediction_swimmers(
+    swimmers: list, session: models.Session, db: DBSession,
+) -> tuple[list, dict[int, str]]:
+    """Choose which swimmers are worth a full brief today.
+
+    Briefing everyone present costs a full dossier per swimmer to be told most
+    of the squad is fine — the prompt itself asks for a question only where the
+    evidence warrants one. This selects the swimmers with a reason, then tops up
+    to a floor so a quiet week still surfaces somebody.
+
+    Returns the selected swimmers and why each was chosen.
+    """
+    swimmer_ids = [row.id for row in swimmers]
+    if not swimmer_ids:
+        return [], {}
+
+    reasons: dict[int, str] = {}
+
+    unresolved_load = {
+        row.swimmer_id for row in db.query(models.SwimmerLoadEvent).filter(
+            models.SwimmerLoadEvent.swimmer_id.in_(swimmer_ids),
+            models.SwimmerLoadEvent.date_from <= session.date,
+            models.SwimmerLoadEvent.resolved.is_(False),
+        ).all()
+    }
+
+    horizon = session.date + timedelta(days=PREDICTION_TARGET_HORIZON_DAYS)
+    approaching_target = {
+        row.swimmer_id for row in db.query(models.SwimmerTarget).filter(
+            models.SwimmerTarget.swimmer_id.in_(swimmer_ids),
+            models.SwimmerTarget.achieved.is_(False),
+            models.SwimmerTarget.deadline != None,  # noqa: E711
+            models.SwimmerTarget.deadline <= horizon,
+            models.SwimmerTarget.deadline >= session.date,
+        ).all()
+    }
+
+    # Recent attended history per swimmer, newest first: it answers three
+    # questions at once — how thin the record is, whether the last prediction
+    # held, and whether this is their first session of a new block.
+    history: dict[int, list] = {swimmer_id: [] for swimmer_id in swimmer_ids}
+    rows = (
+        db.query(models.SessionEntry, models.Session)
+        .join(models.Session, models.SessionEntry.session_id == models.Session.id)
+        .filter(
+            models.SessionEntry.swimmer_id.in_(swimmer_ids),
+            models.SessionEntry.attended.is_(True),
+            models.Session.date < session.date,
+        )
+        .order_by(models.Session.date.desc())
+        .all()
+    )
+    for entry, prior in rows:
+        if len(history[entry.swimmer_id]) < 5:
+            history[entry.swimmer_id].append((entry, prior))
+
+    for swimmer in swimmers:
+        recent = history.get(swimmer.id) or []
+        if swimmer.id in unresolved_load:
+            reasons[swimmer.id] = "unresolved load event"
+        elif len(recent) < 3:
+            reasons[swimmer.id] = "thin recent history"
+        elif any(
+            "not_confirmed" in (entry.ai_characterisation or "")
+            for entry, _ in recent[:2]
+        ):
+            # The assistant misread them last time, so it should look harder.
+            reasons[swimmer.id] = "last prediction not confirmed"
+        elif swimmer.id in approaching_target:
+            reasons[swimmer.id] = "target deadline approaching"
+        elif session.microcycle_id and recent and recent[0][1].microcycle_id != session.microcycle_id:
+            reasons[swimmer.id] = "first session of a new block"
+
+    # Top up to the floor with whoever has gone longest without a brief. A
+    # swimmer skipped by triage has no prediction stored, so they sort to the
+    # front next time and the rotation moves on by itself.
+    if len(reasons) < PREDICTION_ROTATION_FLOOR:
+        def last_briefed(swimmer):
+            for entry, prior in history.get(swimmer.id) or []:
+                if entry.ai_expected_response:
+                    return prior.date
+            return date.min
+
+        unflagged = sorted(
+            (row for row in swimmers if row.id not in reasons),
+            key=lambda row: (last_briefed(row), row.name or ""),
+        )
+        for swimmer in unflagged[: PREDICTION_ROTATION_FLOOR - len(reasons)]:
+            reasons[swimmer.id] = "routine check"
+
+    selected = [row for row in swimmers if row.id in reasons]
+    return selected, reasons
+
+
 def generate_session_predictions(
     session: models.Session,
     db: DBSession,
     swimmer_ids: Optional[list[int]] = None,
+    triage: bool = True,
 ) -> list[dict]:
     """Create cached pre-session predictions and focused coach questions in one call."""
     if swimmer_ids is None and not session.squad:
@@ -430,6 +637,12 @@ def generate_session_predictions(
                 })
         return cached
 
+    triage_reasons: dict[int, str] = {}
+    if triage:
+        pending, triage_reasons = _triage_prediction_swimmers(pending, session, db)
+        if not pending:
+            return []
+
     from backend.services.cycle_codes import cycle_context
     cycle = cycle_context(session)
     session_groups = [{
@@ -438,7 +651,14 @@ def generate_session_predictions(
         "sets": group.sets,
         "volume_breakdown": group.volume_breakdown,
     } for group in session.groups]
-    briefs = [_prediction_swimmer_brief(row, session, db) for row in pending]
+    briefs = []
+    for row in pending:
+        brief = _prediction_swimmer_brief(row, session, db)
+        if triage_reasons.get(row.id):
+            # Why this swimmer was singled out today. "Routine check" carries no
+            # concern with it and should not be read as one.
+            brief["selected_because"] = triage_reasons[row.id]
+        briefs.append(brief)
     prompt = f"""Prepare pre-session coaching predictions for the swimmers below.
 This is a hypothesis and question-generation task, not an observation task. Never state that a swimmer
 is fatigued, struggled, maintained technique, or completed work unless the supplied historical coach
@@ -465,6 +685,10 @@ Return JSON only as an array with exactly one item per supplied swimmer:
   "next_session_consideration": "provisional guidance, explicitly dependent on today's coach observation"
 }}]
 
+"selected_because" says why each swimmer was put in front of you today. It is a reason to look, not a
+finding: "routine check" means nothing flagged them and the honest answer is often priority 0. Do not
+manufacture a concern to justify a swimmer's inclusion.
+
 Priority: 0=no question, 1=useful, 2=important, 3=high concern. Ask only when prior evidence,
 the swimmer profile, an active load event, or today's technical goal makes the answer genuinely useful.
 Questions must be observable, e.g. pace consistency, stroke count/length, technique under fatigue,
@@ -489,6 +713,8 @@ recovery between repetitions, or whether planned quality was completed. Do not a
         }
         prediction["kind"] = "ai_prediction_not_observation"
         prediction["session_id"] = session.id
+        if triage_reasons.get(swimmer.id):
+            prediction["selected_because"] = triage_reasons[swimmer.id]
         entry = existing_entries.get(swimmer.id)
         if not entry:
             entry = models.SessionEntry(session_id=session.id, swimmer_id=swimmer.id)
@@ -500,13 +726,44 @@ recovery between repetitions, or whether planned quality was completed. Do not a
     return saved
 
 
+def _session_debrief_evidence(session, db: DBSession) -> tuple[Optional[str], dict[int, list[str]]]:
+    """
+    What the coach said in this session's debrief, per swimmer.
+
+    Only proposals the coach accepted count as evidence — rejected ones were
+    things the assistant misheard or the coach thought better of.
+    """
+    debrief = db.query(models.SessionDebrief).filter(
+        models.SessionDebrief.session_id == session.id,
+        models.SessionDebrief.status.in_(["ready", "committed"]),
+    ).order_by(models.SessionDebrief.created_at.desc()).first()
+    if not debrief:
+        return None, {}
+
+    by_swimmer: dict[int, list[str]] = {}
+    for item in (debrief.proposals or []):
+        if debrief.status == "committed" and item.get("status") != "accepted":
+            continue
+        swimmer_id = item.get("swimmer_id")
+        content = (item.get("content") or "").strip()
+        if swimmer_id and content:
+            by_swimmer.setdefault(int(swimmer_id), []).append(content)
+    return debrief.summary, by_swimmer
+
+
 def characterise_session_entries_batch(
     session: models.Session,
     entries: list[models.SessionEntry],
     db: DBSession,
 ) -> dict[int, dict]:
     """Interpret coach observations for multiple swimmers in one post-session call."""
-    observed = [row for row in entries if row.attended and (row.coach_observation or "").strip()]
+    debrief_summary, debrief_by_swimmer = _session_debrief_evidence(session, db)
+    # A swimmer is worth assessing if the coach said something about them anywhere:
+    # in the register's attendance note, or in the session debrief.
+    observed = [
+        row for row in entries
+        if row.attended and ((row.coach_observation or "").strip() or debrief_by_swimmer.get(row.swimmer_id))
+    ]
     if not observed:
         return {}
     from backend.services.cycle_codes import cycle_context
@@ -527,11 +784,25 @@ def characterise_session_entries_batch(
             "group_done": entry.group_done,
             "sub_group_done": entry.sub_group_done,
             "prediction": prediction,
-            "coach_observation_today": entry.coach_observation,
+            "attendance_note": entry.coach_observation,
+            "debrief_notes": debrief_by_swimmer.get(entry.swimmer_id) or None,
         })
-    prompt = f"""Interpret the coach's post-session observations. The coach observation is the only evidence
-of what happened today. Compare it with the cached pre-session prediction, swimmer history, session dose
-and cycle position. Do not add unobserved symptoms, pace, heart rate, fatigue or technical outcomes.
+    prompt = f"""Interpret what the coach reported about this session.
+
+TWO KINDS OF EVIDENCE, WEIGHTED DIFFERENTLY:
+- "debrief_notes" are what the coach said about how the swimmer trained. This is your evidence.
+- "attendance_note" is logistics only — late arrival, pre-pool, leaving early, illness reported at
+  the poolside. Treat it as context that may EXPLAIN a response. Never read it as a training
+  observation in its own right: "out early" is not a performance, though it may account for one.
+
+If a swimmer has only an attendance note and no debrief note, say plainly that there is too little
+evidence rather than inferring how they trained.
+
+Compare the evidence with the cached pre-session prediction, swimmer history, session dose and cycle
+position. Do not add unobserved symptoms, pace, heart rate, fatigue or technical outcomes.
+
+COACH'S SESSION DEBRIEF (overall, may be empty):
+{debrief_summary or 'No debrief was recorded for this session.'}
 
 SESSION:
 {json.dumps({"id": session.id, "date": session.date.isoformat(), "title": session.title, "intent": session.coach_intent, "cycle": cycle_context(session), "energy_analysis": session.energy_analysis}, ensure_ascii=False)}
@@ -1676,16 +1947,17 @@ def _current_season_prompt_context(db: DBSession) -> str:
     )
 
 
-def get_system_prompt(
+def _system_prompt_parts(
     db: DBSession,
     extra: str = "",
     include_squad_snapshot: bool = True,
     include_recent_sessions: bool = True,
     include_active_notes: bool = True,
     include_approaching_targets: bool = True,
+    include_pending_ai_work: bool = True,
     full_coaching_context: bool = False,
-) -> str:
-    """Build the full system prompt: base identity + coaching context + squad snapshot + recent sessions + active coaching notes."""
+) -> tuple[list[str], list[str]]:
+    """Build the system prompt in two halves: stable prefix, then volatile tail."""
     from datetime import date as date_type
     profile = (
         db.query(models.CoachingProfile)
@@ -1741,9 +2013,44 @@ def get_system_prompt(
         if approaching_targets:
             parts.append(f"---\n{approaching_targets}")
 
+    # Everything above is stable across the turns of a conversation. What
+    # follows changes between turns, so it is kept separate: the cache
+    # breakpoint goes after the stable half, and a change here no longer
+    # invalidates the entire prefix.
+    volatile = []
+    if include_pending_ai_work:
+        pending_work = build_pending_ai_work_context(db)
+        if pending_work:
+            volatile.append(f"---\n{pending_work}")
+
     if extra:
-        parts.append(f"---\n{extra}")
-    return "\n\n".join(parts)
+        volatile.append(f"---\n{extra}")
+    return parts, volatile
+
+
+def get_system_prompt(*args, **kwargs) -> str:
+    """The full system prompt as a single string."""
+    stable, volatile = _system_prompt_parts(*args, **kwargs)
+    return "\n\n".join(stable + volatile)
+
+
+def get_system_prompt_blocks(*args, **kwargs) -> list[dict]:
+    """The system prompt as cacheable blocks: stable prefix, then volatile tail.
+
+    Caching is a prefix match, so a single breakpoint at the end of the prompt
+    is invalidated by anything that moves — and the pending-AI-work block moves
+    every time a background operation finishes. Marking the stable half instead
+    keeps most of the prompt cached across a conversation and its tool loop.
+    """
+    stable, volatile = _system_prompt_parts(*args, **kwargs)
+    blocks = [{
+        "type": "text",
+        "text": "\n\n".join(stable),
+        "cache_control": {"type": "ephemeral"},
+    }]
+    if volatile:
+        blocks.append({"type": "text", "text": "\n\n".join(volatile)})
+    return blocks
 
 
 SEASON_PLAN_BASE = """You are a specialist season planning assistant for competitive swimming. Your role is different from the poolside coaching assistant — you are here to help the coach build and refine the season's training structure from the top down.
@@ -2155,6 +2462,34 @@ def build_recent_sessions_summary(db: DBSession, weeks: int = 3) -> str:
         reg_status = f" [register taken — {attendance} attended]" if entry_count > 0 else " [no register yet]"
         lines.append(f"  {s.date} | {title}{focus}{reg_status}{intent}")
 
+    return "\n".join(lines)
+
+
+def build_pending_ai_work_context(db: DBSession) -> str:
+    """
+    List background AI operations still queued or running.
+    Lets chat tell the coach a result isn't ready yet instead of answering
+    from stale or missing data.
+    """
+    rows = (
+        db.query(models.AIOperation)
+        .filter(models.AIOperation.status.in_(["queued", "running"]))
+        .order_by(models.AIOperation.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    rows = [r for r in rows if (r.payload or {}).get("execution") != "foreground"]
+    if not rows:
+        return ""
+
+    lines = [
+        "BACKGROUND AI WORK IN PROGRESS (not finished yet — if the coach asks "
+        "about any of these, say it's still processing and will be ready "
+        "shortly rather than guessing at the result):"
+    ]
+    for row in rows:
+        entity = f" ({row.entity_type} #{row.entity_id})" if row.entity_type else ""
+        lines.append(f"  - {row.title}{entity} — {row.status}")
     return "\n".join(lines)
 
 
@@ -3364,8 +3699,27 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if swimmer.psychological_profile:
         parts.append(f"Psychological profile: {json.dumps(swimmer.psychological_profile, indent=2)}")
 
-    # Latest versioned race and training profiles
-    latest_race = (
+    # The unified profile supersedes the four single-domain ones. Where it
+    # exists it is the swimmer's long memory: it folds in evidence far older
+    # than the observation window below, so it is what keeps a season's picture
+    # available in April. The legacy blocks still render for swimmers whose
+    # profile predates the unified synthesis.
+    unified = latest_unified_profile(swimmer.id, db)
+    if unified:
+        freshness = unified_profile_freshness(swimmer.id, db)
+        data = {k: v for k, v in (unified.data or {}).items() if k != "_synthesis"}
+        header = f"Swimmer profile (synthesised {unified.created_at.date() if unified.created_at else 'unknown'}"
+        header += f", from {unified.obs_count or 0} observations)"
+        if freshness["stale"]:
+            header += (
+                f"\n[{freshness['observations_since']} observations recorded since this was built "
+                f"— treat it as a picture that has not yet caught up with the most recent work]"
+            )
+        parts.append(f"{header}:\n{json.dumps(data, indent=2)}")
+        if unified.change_summary:
+            parts.append(f"Most recent profile change: {unified.change_summary}")
+
+    latest_race = None if unified else (
         db.query(models.SwimmerProfileVersion)
         .filter(
             models.SwimmerProfileVersion.swimmer_id == swimmer.id,
@@ -3377,7 +3731,7 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if latest_race:
         parts.append(f"Race profile (as of {latest_race.created_at.date() if latest_race.created_at else 'unknown'}):\n{json.dumps(latest_race.data, indent=2)}")
 
-    latest_training = (
+    latest_training = None if unified else (
         db.query(models.SwimmerProfileVersion)
         .filter(
             models.SwimmerProfileVersion.swimmer_id == swimmer.id,
@@ -3389,7 +3743,7 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if latest_training:
         parts.append(f"Training response profile (as of {latest_training.created_at.date() if latest_training.created_at else 'unknown'}):\n{json.dumps(latest_training.data, indent=2)}")
 
-    latest_biological = (
+    latest_biological = None if unified else (
         db.query(models.SwimmerProfileVersion)
         .filter(
             models.SwimmerProfileVersion.swimmer_id == swimmer.id,
@@ -3413,7 +3767,7 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if latest_perf:
         parts.append(f"Performance analysis (as of {latest_perf.created_at.date() if latest_perf.created_at else 'unknown'}):\n{json.dumps(latest_perf.data, indent=2)}")
 
-    latest_technical = (
+    latest_technical = None if unified else (
         db.query(models.SwimmerProfileVersion)
         .filter(
             models.SwimmerProfileVersion.swimmer_id == swimmer.id,
@@ -3490,18 +3844,34 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
     if racing_narrative:
         parts.append(f"Racing observations (coach's view of this swimmer's racing patterns and history):\n{racing_narrative.narrative}")
 
-    # Observations — grouped by type so the AI gets a structured picture
-    observations = (
-        db.query(models.SwimmerObservation)
+    # Observations — grouped by type so the AI gets a structured picture.
+    #
+    # Each type is queried with its own limit rather than taking the most recent
+    # N overall and then grouping. Under a periodised season the recent window
+    # goes homogeneous — six weeks into a speed block every recent observation is
+    # a speed observation — and a global limit would push whole domains out of
+    # the prompt entirely, exactly when the base block's evidence matters most.
+    obs_types = [
+        row[0] for row in db.query(models.SwimmerObservation.obs_type)
         .filter(models.SwimmerObservation.swimmer_id == swimmer.id)
-        .order_by(models.SwimmerObservation.date.desc())
-        .limit(40)
+        .distinct()
         .all()
-    )
-    if observations:
-        by_type = {}
-        for o in observations:
-            by_type.setdefault(o.obs_type, []).append(o)
+    ]
+    by_type = {}
+    for obs_type in obs_types:
+        rows = (
+            db.query(models.SwimmerObservation)
+            .filter(
+                models.SwimmerObservation.swimmer_id == swimmer.id,
+                models.SwimmerObservation.obs_type == obs_type,
+            )
+            .order_by(models.SwimmerObservation.date.desc())
+            .limit(6)
+            .all()
+        )
+        if rows:
+            by_type[obs_type] = rows
+    if by_type:
         obs_parts = []
         type_labels = {
             "race": "Race observations",
@@ -3514,10 +3884,13 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
             "physical": "Physical markers",
             "general": "General observations",
         }
-        for obs_type, items in by_type.items():
+        # Sorted so the block is byte-stable between turns; an unordered prompt
+        # would invalidate the cached prefix for no reason.
+        for obs_type in sorted(by_type):
+            items = by_type[obs_type]
             label = type_labels.get(obs_type, obs_type.capitalize())
             obs_parts.append(f"\n{label}:")
-            for o in items[:6]:  # cap per type to avoid token bloat
+            for o in items:
                 date_str = f" ({o.date})" if o.date else ""
                 event_str = f" [{o.event}]" if o.event else ""
                 obs_parts.append(f"  -{date_str}{event_str} {o.content}")
@@ -3526,6 +3899,39 @@ def build_swimmer_context(swimmer: models.Swimmer, db: DBSession) -> str:
                         if v:
                             obs_parts.append(f"    {k}: {v}")
         parts.append("Observations:\n" + "\n".join(obs_parts))
+
+    # Specialist skill runs — adaptation reviews, block reviews, race analyses
+    # and taper plans. These were previously saved for a history screen only,
+    # so the assistant could not see a taper plan it had itself produced for
+    # this swimmer. The brief output is carried, not the full analysis.
+    skill_runs = (
+        db.query(models.SkillOutput)
+        .filter(models.SkillOutput.swimmer_id == swimmer.id)
+        .order_by(models.SkillOutput.created_at.desc())
+        .limit(4)
+        .all()
+    )
+    if skill_runs:
+        skill_labels = {
+            "adaptation_review": "Adaptation review",
+            "block_review": "Block review",
+            "race_analysis": "Race analysis",
+            "taper_plan": "Taper plan",
+        }
+        skill_lines = [
+            "Specialist analyses already run for this swimmer (your own earlier "
+            "conclusions — build on them rather than restating them):"
+        ]
+        for run in skill_runs:
+            label = skill_labels.get(run.skill_type, run.skill_type.replace("_", " ").capitalize())
+            when = run.created_at.date().isoformat() if run.created_at else "date unknown"
+            entity = f" · {run.entity_name}" if run.entity_name else ""
+            body = (run.brief_output or run.full_output or "").strip()
+            if not body:
+                continue
+            skill_lines.append(f"\n[{label} · {when}{entity}]\n{body[:900]}")
+        if len(skill_lines) > 1:
+            parts.append("\n".join(skill_lines))
 
     # Recent load events (last 6 months)
     from datetime import date, timedelta
@@ -4564,6 +4970,421 @@ Return only JSON. Use null for fields with insufficient evidence."""
         data=profile_data,
         change_summary=change_summary,
         obs_count=len(all_obs),
+    )
+    db.add(version)
+    db.commit()
+    db.refresh(version)
+    return _profile_version_out(version)
+
+
+# ---------------------------------------------------------------------------
+# Unified swimmer profile — one incremental synthesis across every observed domain
+# ---------------------------------------------------------------------------
+
+UNIFIED_PROFILE_TYPE = "unified"
+
+# The four observation-driven profiles this replaces. Performance analysis is
+# deliberately excluded: it reads race times, not coach observations, so folding
+# it in would mean re-reading thousands of splits on every refresh.
+UNIFIED_REPLACES = ("race", "training", "biological", "technical")
+
+# Below this many new observations an incremental refresh isn't worth a call.
+UNIFIED_MIN_NEW_OBSERVATIONS = 8
+
+# Repeated folding drifts, like a photocopy of a photocopy. Periodically the
+# profile is rebuilt from every observation so it re-anchors on the raw record.
+UNIFIED_FULL_REBUILD_EVERY = 6
+
+
+def latest_unified_profile(swimmer_id: int, db: DBSession):
+    """Most recent unified profile version for a swimmer, or None."""
+    return (
+        db.query(models.SwimmerProfileVersion)
+        .filter(
+            models.SwimmerProfileVersion.swimmer_id == swimmer_id,
+            models.SwimmerProfileVersion.profile_type == UNIFIED_PROFILE_TYPE,
+        )
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .first()
+    )
+
+
+def _new_observations(swimmer_id: int, new_count: int, db: DBSession) -> list:
+    """The most recently written observations a profile has not yet folded in.
+
+    Selected by row order rather than by comparing created_at against the
+    profile's timestamp: both default to the database clock, so an observation
+    saved in the same second as a synthesis would compare as not-newer and be
+    skipped for good. Counting back from the newest row cannot miss one.
+    """
+    if new_count <= 0:
+        return []
+    rows = (
+        db.query(models.SwimmerObservation)
+        .filter(models.SwimmerObservation.swimmer_id == swimmer_id)
+        .order_by(models.SwimmerObservation.id.desc())
+        .limit(new_count)
+        .all()
+    )
+    return sorted(rows, key=lambda row: (row.date or date.min, row.id))
+
+
+def unified_profile_freshness(swimmer_id: int, db: DBSession) -> dict:
+    """How far the stored profile has fallen behind the observation record.
+
+    A profile renders identically whether it was built yesterday or last
+    September, so the coach cannot see staleness unaided. This measures it.
+    """
+    total = (
+        db.query(models.SwimmerObservation)
+        .filter(models.SwimmerObservation.swimmer_id == swimmer_id)
+        .count()
+    )
+    previous = latest_unified_profile(swimmer_id, db)
+    if not previous:
+        return {
+            "has_profile": False,
+            "observations_total": total,
+            "observations_since": total,
+            "age_days": None,
+            "stale": total >= UNIFIED_MIN_NEW_OBSERVATIONS,
+            "synthesised_at": None,
+        }
+    # obs_count is the watermark written at synthesis time. Subtracting it is
+    # exact and matches unified_profile_freshness_bulk, which cannot afford a
+    # per-swimmer query on a list screen.
+    since = max(0, total - (previous.obs_count or 0))
+    age_days = None
+    if previous.created_at:
+        created = previous.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_days = (datetime.now(timezone.utc) - created).days
+    return {
+        "has_profile": True,
+        "observations_total": total,
+        "observations_since": since,
+        "age_days": age_days,
+        "stale": since >= UNIFIED_MIN_NEW_OBSERVATIONS,
+        "synthesised_at": previous.created_at.isoformat() if previous.created_at else None,
+    }
+
+
+def unified_profile_freshness_bulk(swimmer_ids: list[int], db: DBSession) -> dict[int, dict]:
+    """Freshness for many swimmers in two queries, for list screens."""
+    from sqlalchemy import func
+
+    if not swimmer_ids:
+        return {}
+    totals = dict(
+        db.query(
+            models.SwimmerObservation.swimmer_id,
+            func.count(models.SwimmerObservation.id),
+        )
+        .filter(models.SwimmerObservation.swimmer_id.in_(swimmer_ids))
+        .group_by(models.SwimmerObservation.swimmer_id)
+        .all()
+    )
+    latest: dict[int, models.SwimmerProfileVersion] = {}
+    rows = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(
+            models.SwimmerProfileVersion.swimmer_id.in_(swimmer_ids),
+            models.SwimmerProfileVersion.profile_type == UNIFIED_PROFILE_TYPE,
+        )
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .all()
+    )
+    for row in rows:
+        latest.setdefault(row.swimmer_id, row)
+
+    now = datetime.now(timezone.utc)
+    out = {}
+    for swimmer_id in swimmer_ids:
+        total = totals.get(swimmer_id, 0)
+        previous = latest.get(swimmer_id)
+        if not previous:
+            out[swimmer_id] = {
+                "has_profile": False, "observations_total": total,
+                "observations_since": total, "age_days": None,
+                "stale": total >= UNIFIED_MIN_NEW_OBSERVATIONS, "synthesised_at": None,
+            }
+            continue
+        # obs_count is the watermark written at synthesis time, so the gap is a
+        # subtraction rather than a per-swimmer timestamp query.
+        since = max(0, total - (previous.obs_count or 0))
+        created = previous.created_at
+        if created is not None and created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        out[swimmer_id] = {
+            "has_profile": True,
+            "observations_total": total,
+            "observations_since": since,
+            "age_days": (now - created).days if created else None,
+            "stale": since >= UNIFIED_MIN_NEW_OBSERVATIONS,
+            "synthesised_at": previous.created_at.isoformat() if previous.created_at else None,
+        }
+    return out
+
+
+def _format_observations_for_profile(observations: list) -> str:
+    by_type: dict = {}
+    for row in observations:
+        by_type.setdefault(row.obs_type or "general", []).append(row)
+    labels = {
+        "race": "Race", "aerobic": "Aerobic", "threshold": "Threshold",
+        "vo2": "VO2/Hard", "speed": "Speed/Sprint", "recovery": "Recovery",
+        "physical": "Physical markers", "coaching_intent": "Coaching intent",
+        "watchpoint": "Watchpoints", "review": "Reviews", "general": "General",
+    }
+    lines = []
+    for obs_type, items in sorted(by_type.items()):
+        lines.append(f"\n{labels.get(obs_type, obs_type.capitalize())} ({len(items)} observations):")
+        for row in items:
+            date_str = f"({row.date}) " if row.date else ""
+            lines.append(f"  - {date_str}{row.content}")
+            summary = row.ai_summary
+            if isinstance(summary, str) and summary.strip().startswith("{"):
+                try:
+                    parsed = json.loads(summary)
+                    summary = parsed.get("observed_response") or parsed.get("next_session_action") or ""
+                except (TypeError, json.JSONDecodeError):
+                    summary = ""
+            if summary:
+                lines.append(f"      assessed: {str(summary)[:300]}")
+    return "\n".join(lines)
+
+
+UNIFIED_PROFILE_SCHEMA = """{
+  "race": {
+    "pacing_tendency": "how they typically pace their races",
+    "split_pattern": "observed split patterns - where they gain / lose time",
+    "underwater_strength": "quality of underwaters / turns if observable",
+    "pressure_response": "how they perform in races vs training, under pressure",
+    "fatigue_profile": "where and how technique/speed degrades across a race",
+    "event_profiles": {"event_name": "specific notes for this event"},
+    "course_notes": "any observed SCM vs LCM differences"
+  },
+  "training": {
+    "aerobic": "how they respond to aerobic volume work",
+    "threshold": "response to threshold sets - ability to hold pace",
+    "vo2": "response to hard VO2/race-pace work - fatigue pattern",
+    "speed": "response to sprint/speed work - quality, drop-off rate",
+    "recovery": "recovery between reps, between sessions, overnight",
+    "fatigue_markers": "what signals fatigue in this swimmer",
+    "predictive_notes": "given a known session type/load, what to expect"
+  },
+  "biological": {
+    "summary": "1-2 paragraph biological picture - maturation, growth, physical development",
+    "maturation_notes": "developmental stage and what it implies for training response",
+    "constraints": "physical constraints or injury history worth carrying forward"
+  },
+  "technical": {
+    "stroke_mechanics": "body position, catch, pull, kick, timing, breathing",
+    "starts_turns": "quality of starts, turns, underwaters",
+    "technical_strengths": "2-3 specific technical assets",
+    "technical_limiters": "the 1-2 issues most limiting current performance",
+    "coachability": "how readily they adopt technical change, retention under fatigue",
+    "priorities": "ranked technical priorities with brief reasoning"
+  },
+  "cross_domain": "1-3 sentences on connections BETWEEN domains that a single-domain view would miss - for example how a growth phase shows up in stroke length under fatigue. Null if there is nothing genuine to say.",
+  "confidence": "low|moderate|high - how well-evidenced this profile is overall",
+  "change_summary": "What changed versus the previous profile. For a first synthesis: 'Initial profile' then 2-3 sentences on the key picture."
+}"""
+
+
+def synthesise_swimmer_profile(
+    swimmer: models.Swimmer,
+    db: DBSession,
+    *,
+    mode: str = "auto",
+    conversation_context: str = None,
+) -> dict:
+    """Build one profile covering every observed domain, folding in new evidence.
+
+    Replaces four separate syntheses that each re-read the whole season. An
+    incremental pass carries the previous profile forward and shows the model
+    only what has been recorded since, so the profile remembers evidence far
+    older than any query window while costing less as the season lengthens.
+
+    mode: "auto" (incremental where a previous version exists, with a periodic
+    full rebuild), "full" (re-read every observation), or "incremental".
+    """
+    previous = latest_unified_profile(swimmer.id, db)
+    version_number = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(
+            models.SwimmerProfileVersion.swimmer_id == swimmer.id,
+            models.SwimmerProfileVersion.profile_type == UNIFIED_PROFILE_TYPE,
+        )
+        .count()
+    )
+
+    due_full_rebuild = (
+        UNIFIED_FULL_REBUILD_EVERY > 0
+        and version_number > 0
+        and version_number % UNIFIED_FULL_REBUILD_EVERY == 0
+    )
+    if mode == "auto":
+        incremental = bool(previous) and not due_full_rebuild
+    elif mode == "incremental":
+        incremental = bool(previous)
+    else:
+        incremental = False
+
+    total_observations = (
+        db.query(models.SwimmerObservation)
+        .filter(models.SwimmerObservation.swimmer_id == swimmer.id)
+        .count()
+    )
+
+    if incremental:
+        new_count = max(0, total_observations - (previous.obs_count or 0))
+        observations = _new_observations(swimmer.id, new_count, db)
+        evidence_label = (
+            f"NEW OBSERVATIONS since the previous profile "
+            f"({len(observations)} of {total_observations} total on record)"
+        )
+    else:
+        observations = (
+            db.query(models.SwimmerObservation)
+            .filter(models.SwimmerObservation.swimmer_id == swimmer.id)
+            .order_by(models.SwimmerObservation.date.asc())
+            .all()
+        )
+        evidence_label = f"ALL OBSERVATIONS on record ({len(observations)})"
+
+    obs_text = _format_observations_for_profile(observations) if observations else "None recorded."
+
+    if previous and incremental:
+        prior_text = (
+            f"PREVIOUS PROFILE (synthesised "
+            f"{previous.created_at.date() if previous.created_at else 'unknown'}, from "
+            f"{previous.obs_count or 0} observations). It already accounts for everything observed "
+            f"before that point — carry it forward and revise it; do not discard what it knows:\n"
+            f"{json.dumps(previous.data, indent=2)}"
+        )
+        task = (
+            "Revise the previous profile in light of the new observations. Most of it should survive: "
+            "change a field only where the new evidence genuinely warrants it, and say so in "
+            "change_summary. A handful of sessions does not overturn a season's picture. Where new "
+            "evidence merely repeats what the profile already says, leave that field as it was."
+        )
+    elif previous:
+        prior_text = (
+            f"PREVIOUS PROFILE (synthesised "
+            f"{previous.created_at.date() if previous.created_at else 'unknown'}) — shown for "
+            f"comparison only. The observations below are the complete record and take precedence:\n"
+            f"{json.dumps(previous.data, indent=2)}"
+        )
+        task = (
+            "Rebuild the profile from the complete observation record. Compare against the previous "
+            "version and note in change_summary anything that has genuinely shifted."
+        )
+    else:
+        prior_text = "No previous profile — this is the first synthesis."
+        task = "Build the swimmer's profile from the observation record."
+
+    legacy_text = ""
+    if not previous:
+        legacy = []
+        for legacy_type in UNIFIED_REPLACES:
+            row = (
+                db.query(models.SwimmerProfileVersion)
+                .filter(
+                    models.SwimmerProfileVersion.swimmer_id == swimmer.id,
+                    models.SwimmerProfileVersion.profile_type == legacy_type,
+                )
+                .order_by(models.SwimmerProfileVersion.created_at.desc())
+                .first()
+            )
+            if row:
+                legacy.append(f"{legacy_type}: {json.dumps(row.data)}")
+        if legacy:
+            legacy_text = (
+                "\n\nEXISTING SINGLE-DOMAIN PROFILES (built previously by separate passes — fold "
+                "anything still valid into the unified profile so nothing is lost):\n"
+                + "\n".join(legacy)
+            )
+
+    age_context = _swimmer_age_context(swimmer) or ""
+    foundation = []
+    if swimmer.physical_profile:
+        foundation.append(f"Physical: {json.dumps(swimmer.physical_profile)}")
+    if swimmer.psychological_profile:
+        foundation.append(f"Psychological: {json.dumps(swimmer.psychological_profile)}")
+    if swimmer.strengths:
+        foundation.append(f"Coach-noted strengths: {swimmer.strengths}")
+    if swimmer.weaknesses:
+        foundation.append(f"Coach-noted development areas: {swimmer.weaknesses}")
+
+    newline = "\n"
+    prompt = f"""Build a unified profile of this swimmer across every domain the coach has observed.
+
+Swimmer: {swimmer.name} | Gender: {swimmer.gender or '?'} | Squad: {swimmer.squad or '?'}
+Target events: {', '.join(swimmer.target_events or []) or 'not set'}
+
+DEVELOPMENTAL CONTEXT:
+{age_context or 'Not available.'}
+
+FOUNDATION (coach-confirmed, slow-changing):
+{newline.join(foundation) if foundation else 'None recorded.'}
+
+{prior_text}{legacy_text}
+
+{evidence_label}:
+{obs_text}
+
+TASK: {task}
+
+Ground every statement in the evidence above. Where evidence is thin, say so in that field rather
+than inventing a characterisation — null is a valid answer and more useful than a confident guess.
+Do not infer symptoms, times, heart rates or technical outcomes that no observation reports.
+Patterns that repeat across observations matter; single data points rarely do.
+
+Because you see all four domains at once, note genuine cross-domain connections in "cross_domain" —
+but only where the evidence actually supports one.
+
+Return JSON only, exactly this shape:
+{UNIFIED_PROFILE_SCHEMA}"""
+
+    if conversation_context:
+        prompt += (
+            "\n\n--- COACHING CONVERSATION (treat as primary source; it reflects the coach's own "
+            f"reading and may supersede inference from the structured data) ---\n{conversation_context}"
+        )
+
+    response = create_message(
+        model=MODEL,
+        operation="synthesise_swimmer_profile",
+        max_tokens=3000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    try:
+        profile_data = json.loads(_strip_json(response_text(response)))
+    except json.JSONDecodeError:
+        if previous:
+            # A malformed refresh must not replace a good profile with nothing.
+            raise ValueError(
+                "The profile synthesis returned malformed JSON; the existing profile is unchanged."
+            )
+        raise
+
+    change_summary = profile_data.pop("change_summary", None)
+    profile_data["_synthesis"] = {
+        "mode": "incremental" if incremental else "full",
+        "new_observations": len(observations) if incremental else None,
+        "observations_total": total_observations,
+    }
+
+    version = models.SwimmerProfileVersion(
+        swimmer_id=swimmer.id,
+        profile_type=UNIFIED_PROFILE_TYPE,
+        data=profile_data,
+        change_summary=change_summary,
+        # Total, not the incremental slice: this is the watermark staleness is
+        # measured against, so it must describe everything folded in so far.
+        obs_count=total_observations,
     )
     db.add(version)
     db.commit()
@@ -5889,3 +6710,599 @@ Return only JSON."""
     db.refresh(version)
 
     return _profile_version_out(version)
+
+
+# ---------------------------------------------------------------------------
+# Session debrief — spoken feedback into reviewable structured records
+# ---------------------------------------------------------------------------
+
+# How many attendees get a full dossier up front. The rest are listed by name and
+# pulled in on demand, which keeps a 27-swimmer squad affordable per turn.
+DEBRIEF_PRIORITY_SWIMMERS = 6
+DEBRIEF_DETAIL_LINES = 3
+# Slots reserved for swimmers nobody has written anything about lately. These sit
+# outside the merit ranking on purpose: having no history is exactly why they get
+# overlooked, so competing on "what do we know" would bury them forever.
+DEBRIEF_QUIET_SWIMMERS = 2
+DEBRIEF_QUIET_AFTER_DAYS = 21
+
+DEBRIEF_SYSTEM = """You are debriefing a competitive swimming coach straight after a session.
+They are talking, often from poolside, and their speech is being transcribed — so expect
+fragments, self-corrections and swimmer names that may be mis-transcribed.
+
+YOUR JOB is to draw out what actually happened, so it can be recorded against the right swimmers.
+
+HOW TO ASK:
+- One question at a time. Short. The coach is tired and probably holding a phone.
+- Ask about what they have NOT covered, using what the system already knows:
+  a watchpoint left open from last time, a training intent the coach set for a swimmer,
+  a target they are working toward, an active coaching note that was meant to apply,
+  or simply someone who attended and has not been mentioned at all.
+- Before finishing, ask about a swimmer marked "little on record". Say why you are asking —
+  "we have not got much on Bo lately, how is he training?" — so it reads as filling a gap
+  rather than an accusation. If the coach has nothing to say about them, accept that and move on.
+- Name the thing you are following up: "last time you wanted to see Bo hold the back half —
+  did that happen?" is a better question than "how was Bo?".
+- Treat what the system knows as a prompt for a question, never as something that happened.
+  Do not tell the coach what they observed.
+- Prefer specifics over feelings: which set, which swimmer, what you saw.
+- If a name is ambiguous or sounds mis-transcribed, ask which swimmer they mean. Never guess.
+- Do not invent detail, and do not offer training advice unless they ask for it.
+- If the coach corrects themselves, treat the later version as the truth.
+
+WHEN TO STOP:
+After roughly four or five useful answers, or sooner if the coach has clearly covered the session,
+tell them there is enough to write it up and that they can add more if they want.
+
+Keep every reply under four sentences."""
+
+
+def build_session_debrief_context(debrief, db: DBSession) -> str:
+    """
+    Session-scoped context for a debrief.
+
+    Deliberately narrow: only the swimmers who were actually there, plus what we
+    already expected of them. The whole-squad snapshot used elsewhere would cost
+    more per turn than the debrief is worth and invites talk about absent swimmers.
+    """
+    session = db.query(models.Session).filter(
+        models.Session.id == debrief.session_id,
+    ).first() if debrief.session_id else None
+
+    parts = []
+    if session:
+        plan_summary = ""
+        if session.planned_content:
+            groups = []
+            for name, content in (session.planned_content or {}).items():
+                text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+                groups.append(f"  {name}: {text[:400]}")
+            plan_summary = "\n".join(groups)
+        parts.append(
+            f"SESSION: {session.title or 'Untitled'} on {session.date}\n"
+            f"Intent: {session.coach_intent or 'not recorded'}\n"
+            f"Energy focus: {session.energy_system_focus or 'not recorded'}\n"
+            + (f"PLAN:\n{plan_summary}" if plan_summary else "No written plan for this session.")
+        )
+    else:
+        parts.append(
+            f"No session plan is linked to this debrief (date {debrief.date}). "
+            "Ask what the session was before going into detail."
+        )
+
+    if not session:
+        return "\n\n".join(parts)
+
+    entries = db.query(models.SessionEntry).filter(
+        models.SessionEntry.session_id == session.id,
+    ).all()
+    attended = [entry for entry in entries if entry.attended]
+    if not attended:
+        parts.append("No register has been taken for this session yet.")
+        return "\n\n".join(parts)
+
+    swimmers = {row.id: row for row in db.query(models.Swimmer).filter(
+        models.Swimmer.id.in_([entry.swimmer_id for entry in attended]),
+    ).all()}
+
+    parts.append(_debrief_swimmer_dossiers(attended, swimmers, session, db))
+
+    # A squad-wide plan the coach wrote earlier is worth checking against.
+    today = date.today()
+    notes = db.query(models.CoachingNote).filter(
+        models.CoachingNote.active == True,
+        models.CoachingNote.date_to >= today,
+    ).order_by(models.CoachingNote.date_from).limit(6).all()
+    attending_ids = set(swimmers)
+    relevant_notes = [
+        note for note in notes
+        if not note.swimmer_ids or attending_ids.intersection(note.swimmer_ids or [])
+    ]
+    if relevant_notes:
+        note_lines = ["ACTIVE COACHING NOTES (temporary plans — ask whether they held up):"]
+        for note in relevant_notes:
+            who = f" [{', '.join(note.swimmer_names)}]" if note.swimmer_names else " [squad]"
+            note_lines.append(f"  - {note.title}{who}: {note.body[:200]}")
+        parts.append("\n".join(note_lines))
+
+    # What the coach said last time gives the interview continuity.
+    previous = db.query(models.SessionDebrief).filter(
+        models.SessionDebrief.session_id != session.id,
+        models.SessionDebrief.status.in_(["ready", "committed"]),
+        models.SessionDebrief.summary != None,
+    ).order_by(models.SessionDebrief.date.desc()).first()
+    if previous and previous.summary:
+        parts.append(
+            f"LAST DEBRIEF ({previous.date}) — for continuity, not to repeat back:\n"
+            f"{previous.summary[:700]}"
+        )
+
+    return "\n\n".join(parts)
+
+
+def _debrief_swimmer_dossiers(attended, swimmers, session, db: DBSession) -> str:
+    """
+    A short dossier per attending swimmer: what we expected, what was recently
+    said about them, and what is still open.
+
+    Bulk-queried and tightly capped. The point is to give the interviewer
+    something specific to ask — "did the aerobic work you wanted for Bo happen?"
+    — without paying for a full squad profile on every debrief turn.
+    """
+    swimmer_ids = list(swimmers)
+    if not swimmer_ids:
+        return ""
+
+    # Recent notes, newest first, grouped per swimmer in one query.
+    cutoff = date.today() - timedelta(days=42)
+    observations = db.query(models.SwimmerObservation).filter(
+        models.SwimmerObservation.swimmer_id.in_(swimmer_ids),
+        models.SwimmerObservation.date >= cutoff,
+        # This session's own register row is already shown as the attendance
+        # note; repeating it here would read as a second piece of evidence.
+        (models.SwimmerObservation.session_id != session.id)
+        | (models.SwimmerObservation.session_id == None),
+    ).order_by(models.SwimmerObservation.date.desc()).limit(400).all()
+    recent_by_swimmer: dict[int, list] = {}
+    intent_by_swimmer: dict[int, str] = {}
+    for row in observations:
+        if row.obs_type == "coaching_intent":
+            intent_by_swimmer.setdefault(row.swimmer_id, (row.content or "")[:180])
+        else:
+            recent_by_swimmer.setdefault(row.swimmer_id, []).append(row)
+
+    # How much attention each swimmer has actually had. Register rows carry a
+    # session_id and now hold only attendance logistics, so a swimmer whose whole
+    # record is "arrived late" counts as uncovered, not covered.
+    coverage_cutoff = date.today() - timedelta(days=180)
+    coverage_rows = db.query(
+        models.SwimmerObservation.swimmer_id,
+        models.SwimmerObservation.date,
+        models.SwimmerObservation.session_id,
+    ).filter(
+        models.SwimmerObservation.swimmer_id.in_(swimmer_ids),
+        models.SwimmerObservation.date >= coverage_cutoff,
+    ).all()
+    total_notes: dict[int, int] = {}
+    last_substantive: dict[int, object] = {}
+    for swimmer_id, note_date, note_session_id in coverage_rows:
+        if note_session_id == session.id:
+            continue                      # this session's own logistics row
+        total_notes[swimmer_id] = total_notes.get(swimmer_id, 0) + 1
+        if note_session_id is None and note_date:
+            current = last_substantive.get(swimmer_id)
+            if current is None or note_date > current:
+                last_substantive[swimmer_id] = note_date
+
+    # Unachieved targets with a deadline still ahead.
+    targets = db.query(models.SwimmerTarget).filter(
+        models.SwimmerTarget.swimmer_id.in_(swimmer_ids),
+        models.SwimmerTarget.achieved == False,
+    ).all()
+    target_by_swimmer: dict[int, str] = {}
+    for row in targets:
+        if row.deadline and row.deadline < date.today():
+            continue
+        target_by_swimmer.setdefault(row.swimmer_id, row.label[:120])
+
+    # Watchpoints left by previous sessions' assessments.
+    watchpoints = db.query(models.AIAnalysis).filter(
+        models.AIAnalysis.swimmer_id.in_(swimmer_ids),
+        models.AIAnalysis.analysis_type == "session_response",
+        models.AIAnalysis.session_id != session.id,
+    ).order_by(models.AIAnalysis.id.desc()).limit(60).all()
+    watchpoint_by_swimmer: dict[int, str] = {}
+    for row in watchpoints:
+        if row.swimmer_id in watchpoint_by_swimmer:
+            continue
+        try:
+            payload = json.loads(row.content)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        question = payload.get("future_watchpoint")
+        if question:
+            watchpoint_by_swimmer[row.swimmer_id] = str(question)[:180]
+
+    # Detail is rationed by relevance, not spread evenly. Every attendee is
+    # listed (the interviewer must be able to attribute records and notice who
+    # has not been discussed), but only swimmers with an actual reason get a
+    # dossier. The rest are one line, and can be pulled in on demand if the
+    # coach brings them up.
+    def detail_for(entry) -> list[str]:
+        detail = []
+        if watchpoint_by_swimmer.get(entry.swimmer_id):
+            detail.append(("watchpoint", f"open watchpoint: {watchpoint_by_swimmer[entry.swimmer_id]}"))
+        if entry.ai_expected_response:
+            try:
+                prediction = json.loads(entry.ai_expected_response)
+                expected = prediction.get("expected_response") or prediction.get("watch_question")
+            except (TypeError, json.JSONDecodeError):
+                expected = str(entry.ai_expected_response)
+            if expected:
+                detail.append(("prediction", f"we expected: {str(expected)[:160]}"))
+        if intent_by_swimmer.get(entry.swimmer_id):
+            detail.append(("intent", f"current intent: {intent_by_swimmer[entry.swimmer_id]}"))
+        if target_by_swimmer.get(entry.swimmer_id):
+            detail.append(("target", f"working toward: {target_by_swimmer[entry.swimmer_id]}"))
+        for row in (recent_by_swimmer.get(entry.swimmer_id) or [])[:2]:
+            detail.append(("note", f"note {row.date}: {(row.content or '')[:140]}"))
+        return detail
+
+    # An unanswered question from last time is the most useful thing to ask about;
+    # a routine note is the least.
+    weights = {"watchpoint": 100, "prediction": 40, "intent": 30, "target": 20, "note": 5}
+    scored = []
+    for entry in attended:
+        if entry.swimmer_id not in swimmers:
+            continue
+        detail = detail_for(entry)
+        scored.append((sum(weights.get(kind, 0) for kind, _ in detail), entry, detail))
+
+    priority_ids = {
+        entry.swimmer_id
+        for score, entry, _ in sorted(scored, key=lambda row: -row[0])[:DEBRIEF_PRIORITY_SWIMMERS]
+        if score > 0
+    }
+
+    # Reserve a couple of slots for the swimmers who have gone quiet. Ranked by
+    # how long since anyone wrote a real training note, then by how little there
+    # is on them at all.
+    today = date.today()
+
+    def quietness(entry):
+        last = last_substantive.get(entry.swimmer_id)
+        days = (today - last).days if last else 9999
+        return (-days, total_notes.get(entry.swimmer_id, 0))
+
+    quiet_candidates = [
+        entry for _, entry, _ in scored
+        if entry.swimmer_id not in priority_ids
+        and (
+            last_substantive.get(entry.swimmer_id) is None
+            or (today - last_substantive[entry.swimmer_id]).days >= DEBRIEF_QUIET_AFTER_DAYS
+        )
+    ]
+    quiet_ids = {
+        entry.swimmer_id
+        for entry in sorted(quiet_candidates, key=quietness)[:DEBRIEF_QUIET_SWIMMERS]
+    }
+
+    def quiet_line(entry) -> str:
+        last = last_substantive.get(entry.swimmer_id)
+        if last is None:
+            return "little on record: nothing written about their training recently — worth asking how they went"
+        return (
+            f"little on record: last training note was {(today - last).days} days ago "
+            "— worth asking how they went"
+        )
+
+    blocks = [
+        "SWIMMERS WHO ATTENDED (only discuss these; the ids are what records get filed against).",
+        "Use what is known below to ask targeted questions — an open watchpoint or a stated",
+        "intent is a better question than 'how did they go?'. Do not read these back as fact.",
+        "Swimmers listed without detail simply have nothing outstanding; ask about them last,",
+        "and their history will be provided if the coach brings them up.",
+        "Anyone marked 'little on record' has slipped through the cracks — we have barely",
+        "anything on how they are training. Ask about at least one of them before finishing.",
+        "",
+    ]
+    for _, entry, detail in scored:
+        swimmer = swimmers[entry.swimmer_id]
+        header = f"  - {swimmer.name} (id={swimmer.id})"
+        if entry.group_done:
+            header += f" · group {entry.group_done}"
+        # The register note is attendance logistics — late, pre-pool, out early.
+        # It explains a performance; it is not itself a training observation.
+        if (entry.coach_observation or "").strip():
+            header += f" · attendance: {entry.coach_observation.strip()[:120]}"
+        blocks.append(header)
+        if entry.swimmer_id in priority_ids:
+            for _, line in detail[:DEBRIEF_DETAIL_LINES]:
+                blocks.append(f"      {line}")
+        elif entry.swimmer_id in quiet_ids:
+            blocks.append(f"      {quiet_line(entry)}")
+
+    return "\n".join(blocks)
+
+
+def debrief_swimmer_followup(names_text: str, debrief, db: DBSession) -> str:
+    """
+    Fuller history for swimmers the coach has just named.
+
+    Sent as a message rather than folded into the system prompt: the prompt is
+    cached across the debrief, and rewriting it every turn would throw that away
+    for the sake of a few lines.
+    """
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == "active").all()
+    lowered = (names_text or "").lower()
+
+    # Rank full-name matches above bare first names. A shared first name would
+    # otherwise match half the squad, and the cap below would then keep an
+    # arbitrary few rather than the swimmer the coach actually named.
+    matched = []
+    for row in swimmers:
+        name = row.name.lower()
+        first = row.name.split()[0].lower() if row.name.split() else ""
+        if name and name in lowered:
+            matched.append((0, row))
+        elif len(first) >= 4 and first in lowered:
+            matched.append((1, row))
+    if not matched:
+        return ""
+    matched = [row for _, row in sorted(matched, key=lambda pair: pair[0])]
+
+    cutoff = date.today() - timedelta(days=120)
+    sections = []
+    for swimmer in matched[:3]:
+        observations = db.query(models.SwimmerObservation).filter(
+            models.SwimmerObservation.swimmer_id == swimmer.id,
+            models.SwimmerObservation.date >= cutoff,
+        ).order_by(models.SwimmerObservation.date.desc()).limit(6).all()
+        if not observations:
+            continue
+        lines = [f"{swimmer.name} (id={swimmer.id}) — recent history:"]
+        for row in observations:
+            lines.append(f"  - {row.date} [{row.obs_type}] {(row.content or '')[:160]}")
+        sections.append("\n".join(lines))
+
+    if not sections:
+        return ""
+    return (
+        "[Background for the swimmers just mentioned — context for your next question only. "
+        "Do not recite it back to the coach.]\n\n" + "\n\n".join(sections)
+    )
+
+
+def session_debrief_reply(debrief, db: DBSession) -> str:
+    """
+    One interview turn. Foreground and conversational, so it stays on the main model.
+
+    The system prompt is identical on every turn and cached; anything that varies
+    turn to turn is appended to the messages instead, so the cache keeps hitting.
+    """
+    history = [{
+        "role": "user" if item.get("role") == "coach" else "assistant",
+        "content": item.get("message", ""),
+    } for item in (debrief.messages or []) if item.get("message")]
+
+    # Tier 3: the coach just named someone, so bring their history in now rather
+    # than having carried it for everyone since the first turn.
+    last_coach_message = next(
+        (item.get("message", "") for item in reversed(debrief.messages or [])
+         if item.get("role") == "coach"),
+        "",
+    )
+    followup = debrief_swimmer_followup(last_coach_message, debrief, db)
+    if followup and history:
+        history[-1] = {
+            "role": history[-1]["role"],
+            "content": f"{history[-1]['content']}\n\n{followup}",
+        }
+
+    response = create_message(
+        operation="session_debrief_reply",
+        max_tokens=400,
+        system=f"{DEBRIEF_SYSTEM}\n\n---\n{build_session_debrief_context(debrief, db)}",
+        messages=history,
+        cache_control={"type": "ephemeral"},
+    )
+    return response_text(response).strip()
+
+
+def extract_session_debrief(debrief, db: DBSession) -> list[dict]:
+    """
+    Turn the conversation into proposed records for the coach to review.
+
+    Runs on the primary model rather than the cheap one: these rows become a
+    swimmer's long-term history, and a note filed against the wrong swimmer
+    quietly distorts every plan that reads it later.
+    """
+    transcript = "\n".join(
+        f"{'COACH' if item.get('role') == 'coach' else 'ASSISTANT'}: {item.get('message', '')}"
+        for item in (debrief.messages or []) if item.get("message")
+    )
+    if not transcript.strip():
+        return []
+
+    session = db.query(models.Session).filter(
+        models.Session.id == debrief.session_id,
+    ).first() if debrief.session_id else None
+    swimmer_rows = []
+    if session:
+        entries = db.query(models.SessionEntry).filter(
+            models.SessionEntry.session_id == session.id,
+            models.SessionEntry.attended == True,
+        ).all()
+        swimmers = db.query(models.Swimmer).filter(
+            models.Swimmer.id.in_([entry.swimmer_id for entry in entries]),
+        ).all() if entries else []
+        swimmer_rows = [f"  - {row.name} (id={row.id})" for row in swimmers]
+    if not swimmer_rows:
+        swimmers = db.query(models.Swimmer).filter(
+            models.Swimmer.status == "active",
+        ).order_by(models.Swimmer.name).all()
+        swimmer_rows = [f"  - {row.name} (id={row.id})" for row in swimmers]
+
+    prompt = f"""Extract structured records from this post-session debrief.
+
+TODAY: {date.today().isoformat()}
+SESSION: {(session.title or session.date) if session else f'no linked session ({debrief.date})'}
+
+SWIMMERS YOU MAY ATTRIBUTE TO (use these exact ids — never invent one):
+{chr(10).join(swimmer_rows) or '  (none)'}
+
+TRANSCRIPT:
+{transcript}
+
+Return a JSON array of proposed records. Each item:
+{{
+  "kind": "observation" | "benchmark" | "intent" | "watchpoint",
+  "swimmer_id": <int from the list above>,
+  "swimmer_name": "<name>",
+  "content": "<the record, in the coach's own terms, one or two sentences>",
+  "obs_type": "<for observation: race|aerobic|threshold|vo2|speed|recovery|physical|technical|general>",
+  "distance": <for benchmark only: 25|50|100|200|400>,
+  "stroke": "<for benchmark only: free|back|breast|fly|im>",
+  "effort": "<for benchmark only: max|aerobic|threshold>",
+  "time_seconds": <for benchmark only: number>,
+  "confidence": "low|moderate|high",
+  "evidence": "<the words in the transcript this came from>"
+}}
+
+RULES:
+- Only record what the coach actually said. Never infer times, heart rates or technical detail.
+- If the coach corrected themselves, keep only the corrected version.
+- If a swimmer cannot be matched confidently to an id, leave it out entirely.
+- "intent" is a training direction the coach decided on. "watchpoint" is something to check next time.
+- Mark confidence "low" when the coach was vague or hedging.
+- If there is nothing worth recording, return [].
+
+Return only the JSON array."""
+
+    response = create_message(
+        operation="extract_session_debrief",
+        max_tokens=2000,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    try:
+        items = json.loads(_strip_json(response_text(response)))
+    except (json.JSONDecodeError, ValueError):
+        return []
+    if not isinstance(items, list):
+        return []
+
+    valid_ids = {
+        int(row.split("id=")[1].rstrip(")")) for row in swimmer_rows if "id=" in row
+    }
+    proposals = []
+    for index, item in enumerate(items):
+        if not isinstance(item, dict):
+            continue
+        try:
+            swimmer_id = int(item.get("swimmer_id"))
+        except (TypeError, ValueError):
+            continue
+        if swimmer_id not in valid_ids or not (item.get("content") or "").strip():
+            continue
+        kind = item.get("kind")
+        if kind not in {"observation", "benchmark", "intent", "watchpoint"}:
+            continue
+        proposals.append({
+            "id": f"{debrief.id}-{index}",
+            "kind": kind,
+            "swimmer_id": swimmer_id,
+            "swimmer_name": item.get("swimmer_name"),
+            "content": item["content"].strip(),
+            "obs_type": item.get("obs_type") or "general",
+            "distance": item.get("distance"),
+            "stroke": item.get("stroke"),
+            "effort": item.get("effort"),
+            "time_seconds": item.get("time_seconds"),
+            "confidence": item.get("confidence") or "moderate",
+            "evidence": item.get("evidence"),
+            "status": "proposed",
+        })
+    return proposals
+
+
+def summarise_session_debrief(debrief, db: DBSession) -> str:
+    """Prose summary of the session. Cheap model — it is read, not acted on."""
+    transcript = "\n".join(
+        f"{'COACH' if item.get('role') == 'coach' else 'ASSISTANT'}: {item.get('message', '')}"
+        for item in (debrief.messages or []) if item.get("message")
+    )
+    session = db.query(models.Session).filter(
+        models.Session.id == debrief.session_id,
+    ).first() if debrief.session_id else None
+    prompt = f"""Write a short session summary from this coach debrief, in plain prose.
+
+Cover, in this order and only where the coach gave something:
+what the session was and whether it went as intended; how the group responded;
+individual swimmers worth remembering; anything to carry into the next session.
+
+Do not invent detail, do not give coaching advice, and do not flatter the coach.
+Three short paragraphs at most.
+
+SESSION: {(session.title or session.date) if session else debrief.date}
+INTENT: {(session.coach_intent if session else None) or 'not recorded'}
+
+TRANSCRIPT:
+{transcript}"""
+    response = create_message(
+        model=FAST_MODEL,
+        operation="summarise_session_debrief",
+        max_tokens=700,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response_text(response).strip()
+
+
+def commit_debrief_proposals(debrief, db: DBSession) -> dict:
+    """Write the coach-accepted proposals into the swimmers' real records."""
+    session_id = debrief.session_id
+    counts = {"observations": 0, "benchmarks": 0, "intents": 0, "watchpoints": 0}
+
+    for item in (debrief.proposals or []):
+        if item.get("status") != "accepted":
+            continue
+        kind = item.get("kind")
+        swimmer_id = item.get("swimmer_id")
+        content = item.get("content") or ""
+
+        if kind == "benchmark" and item.get("time_seconds"):
+            db.add(models.BenchmarkLog(
+                swimmer_id=swimmer_id,
+                session_id=session_id,
+                distance=int(item.get("distance") or 0) or None,
+                stroke=item.get("stroke") or "free",
+                effort=item.get("effort") or "max",
+                time_seconds=float(item["time_seconds"]),
+                date=debrief.date,
+                notes=content,
+                logged_by="ai",
+            ))
+            counts["benchmarks"] += 1
+            continue
+
+        obs_type = {
+            "intent": "coaching_intent",
+            "watchpoint": "watchpoint",
+        }.get(kind, item.get("obs_type") or "general")
+        db.add(models.SwimmerObservation(
+            swimmer_id=swimmer_id,
+            session_id=None,          # keep the register's own observation row intact
+            obs_type=obs_type,
+            date=debrief.date,
+            content=content,
+            structured={
+                "source": "session_debrief",
+                "debrief_id": debrief.id,
+                "session_id": session_id,
+                "confidence": item.get("confidence"),
+                "evidence": item.get("evidence"),
+            },
+        ))
+        counts["intents" if kind == "intent" else "watchpoints" if kind == "watchpoint" else "observations"] += 1
+
+    db.commit()
+    return counts

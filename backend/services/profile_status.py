@@ -46,8 +46,18 @@ def _meaningful(value: Any) -> bool:
     return True
 
 
-def build_profile_status(swimmer: Any, profile_types: Iterable[str] = ()) -> dict:
-    """Return one stable definition used by the API and every profile UI."""
+def build_profile_status(
+    swimmer: Any,
+    profile_types: Iterable[str] = (),
+    freshness: dict | None = None,
+) -> dict:
+    """Return one stable definition used by the API and every profile UI.
+
+    `freshness` is the unified-profile watermark from
+    claude_service.unified_profile_freshness. Completeness alone was misleading:
+    a profile shows as complete forever, however far the observation record has
+    moved on since it was built.
+    """
     physical = swimmer.physical_profile if isinstance(swimmer.physical_profile, dict) else {}
     psychological = (
         swimmer.psychological_profile
@@ -89,6 +99,15 @@ def build_profile_status(swimmer: Any, profile_types: Iterable[str] = ()) -> dic
         for key, label in LIVING_PROFILE_TYPES
     ]
 
+    freshness = freshness or {}
+    is_stale = bool(freshness.get("stale")) and bool(freshness.get("has_profile"))
+    if is_stale:
+        # Staleness outranks the completeness label. A profile that is complete
+        # but forty observations behind is the case the coach most needs to see.
+        since = freshness.get("observations_since") or 0
+        label = f"Profile {since} observation{'' if since == 1 else 's'} behind"
+        next_action = "Update profile"
+
     return {
         "state": state,
         "label": label,
@@ -102,4 +121,9 @@ def build_profile_status(swimmer: Any, profile_types: Iterable[str] = ()) -> dic
         "living_sections": living,
         "living_built": sum(1 for section in living if section["built"]),
         "living_total": len(living),
+        "stale": is_stale,
+        "observations_since_profile": freshness.get("observations_since"),
+        "profile_age_days": freshness.get("age_days"),
+        "profile_synthesised_at": freshness.get("synthesised_at"),
+        "unified_profile": bool(freshness.get("has_profile")),
     }

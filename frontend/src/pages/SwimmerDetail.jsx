@@ -29,6 +29,13 @@ function fmtTime(s) {
   return mins > 0 ? `${mins}:${secs}` : `${secs}s`
 }
 
+function formatDate(value) {
+  if (!value) return 'unknown'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'unknown'
+  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })
+}
+
 function BlockStatusCard({ status }) {
   const { current_meso, group, group_intent, weeks, benchmarks, recent_observations } = status
   const [expandedWeek, setExpandedWeek] = useState(null)
@@ -298,6 +305,12 @@ export default function SwimmerDetail() {
   const [showBioHistory, setShowBioHistory] = useState(false)
   const [biologicalProfiles, setBiologicalProfiles] = useState([])
   const [technicalProfiles, setTechnicalProfiles] = useState([])
+  const [unifiedProfile, setUnifiedProfile] = useState(null)
+  const [unifiedFreshness, setUnifiedFreshness] = useState(null)
+  const [synthUnified, setSynthUnified] = useState(false)
+  const [unifiedError, setUnifiedError] = useState(null)
+  const [showUnifiedHistory, setShowUnifiedHistory] = useState(false)
+  const [unifiedVersions, setUnifiedVersions] = useState([])
   const [synthBio, setSynthBio] = useState(false)
   const [synthTech, setSynthTech] = useState(false)
   const [techError, setTechError] = useState(null)
@@ -374,6 +387,11 @@ export default function SwimmerDetail() {
     if (tab === 'Times') api.getSwimmerTimes(id).then(setTimes)
     if (tab === 'Analysis') api.getAnalyses(id).then(setAnalyses)
     if (tab === 'Overview') {
+      api.getUnifiedProfile(id).then((r) => {
+        setUnifiedVersions(r.versions || [])
+        setUnifiedProfile((r.versions || [])[0] || null)
+        setUnifiedFreshness(r.freshness || null)
+      }).catch(() => {})
       api.getRaceProfiles(id).then(setRaceProfiles)
       api.getTrainingProfiles(id).then(setTrainingProfiles)
       api.getBiologicalProfiles(id).then(setBiologicalProfiles)
@@ -748,6 +766,134 @@ export default function SwimmerDetail() {
               </section>
             )}
 
+            {/* Unified profile — one synthesis across every observed domain.
+                Replaces the four single-domain sections below, which stay
+                visible only for swimmers profiled before this existed. */}
+            <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+              <div className="flex justify-between items-start gap-2">
+                <div className="min-w-0">
+                  <h3 className="font-semibold text-sm text-accent-300">Swimmer Profile</h3>
+                  {unifiedProfile ? (
+                    <p className="text-[11px] text-pool-500 mt-0.5">
+                      Built {formatDate(unifiedProfile.created_at)} from {unifiedProfile.obs_count || 0} observations
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-pool-500 mt-0.5">Race, training, biological and technical in one picture</p>
+                  )}
+                </div>
+                <button
+                  onClick={async () => {
+                    setSynthUnified(true)
+                    setUnifiedError(null)
+                    try {
+                      const v = await api.synthesiseUnifiedProfile(id, {
+                        mode: unifiedProfile ? 'auto' : 'full',
+                      })
+                      setUnifiedProfile(v)
+                      setUnifiedVersions((prev) => [v, ...prev])
+                      const r = await api.getUnifiedProfile(id)
+                      setUnifiedFreshness(r.freshness || null)
+                    } catch (e) { setUnifiedError(e.message) }
+                    setSynthUnified(false)
+                  }}
+                  disabled={synthUnified}
+                  className={`text-xs rounded-lg px-2.5 py-1 border transition-colors shrink-0 disabled:opacity-40 ${
+                    unifiedFreshness?.stale
+                      ? 'bg-amber-700/40 text-amber-200 border-amber-600/40 hover:bg-amber-700/60'
+                      : 'bg-accent-700/40 text-accent-300 border-accent-600/30 hover:bg-accent-700/70'
+                  }`}
+                >
+                  {synthUnified ? 'Updating…' : unifiedProfile ? 'Update' : 'Build profile'}
+                </button>
+              </div>
+
+              {unifiedFreshness?.stale && (
+                <p className="text-[11px] text-amber-300/90 bg-amber-950/25 border border-amber-800/40 rounded-lg px-3 py-2 leading-relaxed">
+                  {unifiedFreshness.has_profile
+                    ? `${unifiedFreshness.observations_since} observations recorded since this profile was built. Updating folds them in — it does not start again.`
+                    : `${unifiedFreshness.observations_total} observations on record and no profile yet.`}
+                </p>
+              )}
+
+              {unifiedError && (
+                <div className="bg-red-900/20 border border-red-800/50 rounded-lg px-3 py-2 text-xs text-red-300 leading-relaxed">
+                  {unifiedError}
+                </div>
+              )}
+
+              {!unifiedProfile ? (
+                <p className="text-pool-400 text-xs leading-relaxed">
+                  No unified profile yet. It reads every observation on record and keeps itself current
+                  from then on, folding in new sessions rather than rebuilding from scratch.
+                </p>
+              ) : (
+                <>
+                  {unifiedProfile.change_summary && (
+                    <p className="text-xs text-pool-300 bg-pool-900/40 rounded-lg px-3 py-2 leading-relaxed">
+                      <span className="text-pool-500">Latest change · </span>{unifiedProfile.change_summary}
+                    </p>
+                  )}
+                  {unifiedProfile.data?.cross_domain && (
+                    <p className="text-xs text-teal-200 bg-teal-900/15 border border-teal-800/40 rounded-lg px-3 py-2 leading-relaxed">
+                      <span className="text-teal-400">Across domains · </span>{unifiedProfile.data.cross_domain}
+                    </p>
+                  )}
+                  <div className="space-y-2">
+                    {[
+                      ['race', 'Race', 'text-purple-300'],
+                      ['training', 'Training response', 'text-blue-300'],
+                      ['biological', 'Biological', 'text-green-400'],
+                      ['technical', 'Technical', 'text-amber-300'],
+                    ].map(([key, label, colour]) => {
+                      const section = unifiedProfile.data?.[key]
+                      if (!section || typeof section !== 'object') return null
+                      const filled = Object.entries(section).filter(([, v]) => v)
+                      if (!filled.length) return null
+                      return (
+                        <div key={key} className="border border-pool-700 rounded-lg p-3">
+                          <p className={`text-[10px] uppercase tracking-wide font-semibold mb-1.5 ${colour}`}>{label}</p>
+                          <dl className="space-y-1.5">
+                            {filled.map(([field, value]) => (
+                              <div key={field}>
+                                <dt className="text-[11px] text-pool-500">{field.replace(/_/g, ' ')}</dt>
+                                <dd className="text-xs text-pool-200 leading-relaxed">
+                                  {typeof value === 'object' ? JSON.stringify(value) : String(value)}
+                                </dd>
+                              </div>
+                            ))}
+                          </dl>
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {unifiedVersions.length > 1 && (
+                    <button
+                      onClick={() => setShowUnifiedHistory((v) => !v)}
+                      className="text-xs text-pool-500 hover:text-pool-300 transition-colors"
+                    >
+                      {showUnifiedHistory ? 'Hide' : `${unifiedVersions.length - 1} earlier version${unifiedVersions.length === 2 ? '' : 's'}`}
+                    </button>
+                  )}
+                  {showUnifiedHistory && (
+                    <div className="space-y-1.5 border-t border-pool-700 pt-2">
+                      {unifiedVersions.slice(1).map((v) => (
+                        <div key={v.id} className="text-[11px] text-pool-400 leading-relaxed">
+                          <span className="text-pool-500">{formatDate(v.created_at)} · {v.obs_count || 0} obs — </span>
+                          {v.change_summary || 'No change summary'}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
+            </section>
+
+            {/* Legacy single-domain profiles. The unified profile above covers
+                all four, so these render only for swimmers profiled before it
+                existed — otherwise the coach faces six synthesis buttons where
+                one will do. */}
+            {!unifiedProfile && (<>
+
             {/* Biological Profile — synthesis button + versioned display */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
               <div className="flex justify-between items-center gap-2">
@@ -879,7 +1025,10 @@ export default function SwimmerDetail() {
               )}
             </section>
 
-            {/* Performance Analysis */}
+            </>)}
+
+            {/* Performance Analysis stays separate from the unified profile:
+                it reads race times rather than coach observations. */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-semibold text-sm text-orange-400">Performance Analysis</h3>
@@ -1467,6 +1616,7 @@ export default function SwimmerDetail() {
               </section>
             )}
 
+            {!unifiedProfile && (<>
             {/* Race Profile */}
             {raceProfiles.length > 0 ? (
               <section className="bg-pool-800 rounded-xl p-4 space-y-3">
@@ -1599,7 +1749,9 @@ export default function SwimmerDetail() {
               </section>
             )}
 
-            {!swimmer.physical_profile && !swimmer.psychological_profile && raceProfiles.length === 0 && trainingProfiles.length === 0 && (
+            </>)}
+
+            {!unifiedProfile && !swimmer.physical_profile && !swimmer.psychological_profile && raceProfiles.length === 0 && trainingProfiles.length === 0 && (
               <p className="text-pool-400 text-sm">No profile built yet. Add observations, then use the Build button above to generate one.</p>
             )}
           </div>

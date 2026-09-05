@@ -239,6 +239,16 @@ export default function Swimmers() {
                       {s.status === 'sabbatical' ? 'Sabbatical' : 'Injury'}
                     </span>
                   )}
+                  {/* A complete profile can still be well behind the record,
+                      so staleness shows even when completeness does not. */}
+                  {s.active && profileStatus.stale && (
+                    <span
+                      className="text-[10px] rounded-full px-2 py-0.5 shrink-0 bg-amber-900/50 text-amber-300"
+                      title={`${profileStatus.observations_since_profile} observations recorded since the profile was built`}
+                    >
+                      +{profileStatus.observations_since_profile} obs
+                    </span>
+                  )}
                   {s.active && profileStatus.state !== 'complete' && (
                     <span
                       className={`text-[10px] rounded-full px-2 py-0.5 shrink-0 ${

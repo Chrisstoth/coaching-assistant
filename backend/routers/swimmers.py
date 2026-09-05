@@ -254,8 +254,13 @@ def list_swimmers(
         )
         for swimmer_id, profile_type in version_rows:
             profile_types_by_swimmer[swimmer_id].add(profile_type)
+    freshness_by_swimmer = claude_service.unified_profile_freshness_bulk(swimmer_ids, db)
     return [
-        _swimmer_summary(s, profile_types_by_swimmer.get(s.id, set()))
+        _swimmer_summary(
+            s,
+            profile_types_by_swimmer.get(s.id, set()),
+            freshness_by_swimmer.get(s.id),
+        )
         for s in swimmers
     ]
 
@@ -619,6 +624,57 @@ def save_racing_narrative(swimmer_id: int, body: dict = Body(...), db: DBSession
     return {"narrative": text}
 
 
+@router.post("/{swimmer_id}/profile/synthesise-unified")
+def synthesise_unified_profile(swimmer_id: int, body: dict = Body(default={}), db: DBSession = Depends(get_db)):
+    """Build or refresh the swimmer's unified profile across every observed domain.
+
+    Replaces the four single-domain synthesis endpoints below, which are kept so
+    existing profiles still render. Defaults to an incremental refresh; pass
+    mode="full" to rebuild from the complete observation record.
+    """
+    swimmer = _get_or_404(swimmer_id, db)
+    mode = body.get("mode") or "auto"
+    if mode not in {"auto", "full", "incremental"}:
+        raise HTTPException(status_code=422, detail="mode must be auto, full or incremental")
+    freshness = claude_service.unified_profile_freshness(swimmer_id, db)
+    if not freshness["has_profile"] and freshness["observations_total"] == 0:
+        has_foundation = bool(
+            swimmer.profile_notes or swimmer.physical_profile or swimmer.psychological_profile
+        )
+        if not has_foundation:
+            raise HTTPException(
+                status_code=422,
+                detail="Not enough to build a profile yet. Record some observations, "
+                       "or complete the foundation interview first.",
+            )
+    try:
+        return claude_service.synthesise_swimmer_profile(
+            swimmer, db, mode=mode, conversation_context=body.get("conversation_context"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@router.get("/{swimmer_id}/profile/unified")
+def get_unified_profiles(swimmer_id: int, limit: int = 20, db: DBSession = Depends(get_db)):
+    """Unified profile versions, newest first, with the current freshness reading."""
+    _get_or_404(swimmer_id, db)
+    versions = (
+        db.query(models.SwimmerProfileVersion)
+        .filter(
+            models.SwimmerProfileVersion.swimmer_id == swimmer_id,
+            models.SwimmerProfileVersion.profile_type == claude_service.UNIFIED_PROFILE_TYPE,
+        )
+        .order_by(models.SwimmerProfileVersion.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {
+        "versions": [_profile_version_out(v) for v in versions],
+        "freshness": claude_service.unified_profile_freshness(swimmer_id, db),
+    }
+
+
 @router.post("/{swimmer_id}/profile/race/synthesise")
 def synthesise_race_profile(swimmer_id: int, body: dict = Body(default={}), db: DBSession = Depends(get_db)):
     """Synthesise a new versioned race profile from race observations + times."""
@@ -861,7 +917,10 @@ def wizard_save_draft(
     }
     return {
         "profile": _profile_version_out(version),
-        "profile_status": build_profile_status(swimmer, profile_types),
+        "profile_status": build_profile_status(
+            swimmer, profile_types,
+            claude_service.unified_profile_freshness(swimmer.id, db),
+        ),
     }
 
 
@@ -1404,8 +1463,8 @@ def _get_or_404(swimmer_id: int, db: DBSession) -> models.Swimmer:
     return swimmer
 
 
-def _swimmer_summary(s: models.Swimmer, profile_types=()) -> dict:
-    profile_status = build_profile_status(s, profile_types)
+def _swimmer_summary(s: models.Swimmer, profile_types=(), freshness=None) -> dict:
+    profile_status = build_profile_status(s, profile_types, freshness)
     return {
         "id": s.id,
         "name": s.name,
@@ -1495,7 +1554,9 @@ def _swimmer_detail(s: models.Swimmer, db: DBSession) -> dict:
         "latest_race_profile": _profile_version_out(latest_race) if latest_race else None,
         "latest_training_profile": _profile_version_out(latest_training) if latest_training else None,
         "latest_biological_profile": _profile_version_out(latest_biological) if latest_biological else None,
-        "profile_status": build_profile_status(s, profile_types),
+        "profile_status": build_profile_status(
+            s, profile_types, claude_service.unified_profile_freshness(s.id, db),
+        ),
     }
 
 
