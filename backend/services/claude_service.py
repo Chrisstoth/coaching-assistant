@@ -227,7 +227,7 @@ Return an empty issues array when the extraction is internally consistent."""
         max_tokens=350,
         messages=[{"role": "user", "content": prompt}],
     )
-    parsed = json.loads(_strip_json(response.content[0].text))
+    parsed = json.loads(_strip_json(response_text(response)))
     issues = [str(issue)[:240] for issue in (parsed.get("issues") or [])[:6]]
     return {
         "status": "check" if issues else "ok",
@@ -316,7 +316,7 @@ Rules:
         timeout=30.0,
         messages=[{"role": "user", "content": prompt}],
     )
-    parsed = json.loads(_strip_json(response.content[0].text))
+    parsed = json.loads(_strip_json(response_text(response)))
     group_breakdowns = {}
     for key, value in (parsed.get("group_breakdowns") or {}).items():
         if not isinstance(value, dict):
@@ -699,7 +699,7 @@ recovery between repetitions, or whether planned quality was completed. Do not a
         max_tokens=min(5000, 450 + len(pending) * 180),
         messages=[{"role": "user", "content": prompt}],
     )
-    parsed = json.loads(_strip_json(response.content[0].text))
+    parsed = json.loads(_strip_json(response_text(response)))
     by_id = {int(row.get("swimmer_id")): row for row in parsed if isinstance(row, dict) and row.get("swimmer_id")}
     saved = []
     for swimmer in pending:
@@ -829,7 +829,7 @@ Keep each field short. A single observation must not redefine the swimmer's prof
         max_tokens=min(4000, 500 + len(rows) * 220),
         messages=[{"role": "user", "content": prompt}],
     )
-    parsed = json.loads(_strip_json(response.content[0].text))
+    parsed = json.loads(_strip_json(response_text(response)))
     return {
         int(row["swimmer_id"]): row for row in parsed
         if isinstance(row, dict) and row.get("swimmer_id")
@@ -3256,7 +3256,7 @@ Rules:
     )
 
     try:
-        data = json.loads(_strip_json(response.content[0].text))
+        data = json.loads(_strip_json(response_text(response)))
         # Resolve swimmer name to id
         swimmer_id = None
         swimmer_full_name = None
@@ -4094,7 +4094,7 @@ Return only the JSON array."""
             max_tokens=1024,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = _strip_json(response.content[0].text.strip())
+        raw = _strip_json(response_text(response))
         items = json.loads(raw)
     except Exception:
         return []
@@ -4181,7 +4181,7 @@ Return only the JSON array."""
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
         )
-        raw = _strip_json(response.content[0].text.strip())
+        raw = _strip_json(response_text(response))
         items = json.loads(raw)
     except Exception:
         return []
@@ -4284,7 +4284,7 @@ def profile_chat(
         system=system,
         messages=messages,
     )
-    ai_reply = response.content[0].text
+    ai_reply = response_text(response)
 
     # Persist both sides
     db.add(models.ProfileConversation(swimmer_id=swimmer.id, role="coach", message=coach_message))
@@ -4418,7 +4418,7 @@ Return only JSON. Use null for fields where data is genuinely insufficient."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    profile_data = json.loads(_strip_json(response.content[0].text))
+    profile_data = json.loads(_strip_json(response_text(response)))
 
     change_summary = profile_data.pop("change_summary", None)
 
@@ -4537,7 +4537,7 @@ Return only JSON. Use null for fields with insufficient data."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    profile_data = json.loads(_strip_json(response.content[0].text))
+    profile_data = json.loads(_strip_json(response_text(response)))
     change_summary = profile_data.pop("change_summary", None)
 
     version = models.SwimmerProfileVersion(
@@ -4716,7 +4716,7 @@ Return only JSON. Base all conclusions on the data provided."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    assessment = json.loads(_strip_json(response.content[0].text))
+    assessment = json.loads(_strip_json(response_text(response)))
     assessment["generated_at"] = today.isoformat()
     assessment["swimmer_id"] = swimmer.id
     return assessment
@@ -4770,7 +4770,7 @@ Return only JSON."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    profile_data = json.loads(_strip_json(response.content[0].text))
+    profile_data = json.loads(_strip_json(response_text(response)))
     change_summary = profile_data.pop("change_summary", None)
 
     obs_count = db.query(models.SwimmerObservation).filter(
@@ -4895,7 +4895,7 @@ Return only JSON. Use null for fields with insufficient evidence."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = response.content[0].text
+    raw = response_text(response)
     try:
         profile_data = json.loads(_strip_json(raw))
     except json.JSONDecodeError:
@@ -5597,7 +5597,7 @@ def synthesise_performance_analysis(swimmer: models.Swimmer, db: DBSession) -> d
         messages=[{"role": "user", "content": prompt}],
     )
 
-    profile_data = json.loads(_strip_json(response.content[0].text))
+    profile_data = json.loads(_strip_json(response_text(response)))
     change_summary = profile_data.pop("change_summary", None)
 
     version = models.SwimmerProfileVersion(
@@ -5659,7 +5659,7 @@ Keep it under 400 words."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    narrative = response.content[0].text.strip()
+    narrative = response_text(response)
 
     db.add(models.TrainingHistoryNarrative(
         swimmer_id=swimmer.id,
@@ -5710,7 +5710,7 @@ Return a JSON array only — no other text:
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return json.loads(_strip_json(response.content[0].text))
+    return json.loads(_strip_json(response_text(response)))
 
 
 # ---------------------------------------------------------------------------
@@ -5777,7 +5777,7 @@ Characterise this swimmer's response to this session."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    return response.content[0].text.strip()
+    return response_text(response)
 
 
 # ---------------------------------------------------------------------------
@@ -5832,7 +5832,7 @@ Return only JSON."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = response.content[0].text.strip()
+    raw = response_text(response)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -5916,7 +5916,7 @@ Return as JSON: {{
         messages=[{"role": "user", "content": prompt}],
     )
 
-    raw = response.content[0].text.strip()
+    raw = response_text(response)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
@@ -6343,7 +6343,7 @@ INTERVIEW CONTROL:
         system=system,
         messages=api_messages,
     )
-    reply = response.content[0].text.strip()
+    reply = response_text(response)
     if prior_questions and _repeats_prior_question(reply, prior_questions):
         correction = get_client().messages.create(
             model=MODEL,
@@ -6358,7 +6358,7 @@ INTERVIEW CONTROL:
                 )},
             ],
         )
-        reply = correction.content[0].text.strip()
+        reply = response_text(correction)
     return reply
 
 
@@ -6602,7 +6602,7 @@ Return only JSON."""
         messages=[{"role": "user", "content": prompt}],
     )
 
-    profile_data = json.loads(_strip_json(response.content[0].text))
+    profile_data = json.loads(_strip_json(response_text(response)))
 
     def clean_section(section: str) -> dict:
         raw = profile_data.get(section) if isinstance(profile_data, dict) else {}
