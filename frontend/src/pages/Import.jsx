@@ -240,7 +240,7 @@ function CombinedImport({ setResult, setLoading, loading }) {
       <label className="block bg-pool-800 rounded-xl p-4 text-center cursor-pointer border-2 border-dashed border-pool-600 hover:border-accent-500 transition-colors">
         <input
           type="file"
-          accept=".xlsx"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           className="hidden"
           onChange={(e) => setFile(e.target.files[0])}
         />
@@ -572,12 +572,12 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
     }
   }
 
-  const updateGroupSets = (value) => {
+  const updateGroupSets = (groupNumber, value) => {
     setDraft(current => ({
       ...current,
       groups: {
         ...current.groups,
-        1: { ...current.groups?.['1'], sets: value, items: [] },
+        [groupNumber]: { ...current.groups?.[groupNumber], sets: value, items: [] },
       },
     }))
   }
@@ -643,7 +643,7 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
         <label className="block bg-pool-800 rounded-xl p-4 text-center cursor-pointer border-2 border-dashed border-pool-600 hover:border-accent-500 transition-colors">
           <input
             type="file"
-            accept=".xlsx"
+            accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             className="hidden"
             onChange={(e) => setFile(e.target.files[0] || null)}
           />
@@ -791,13 +791,24 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
           </div>
           <p className="text-sm text-pool-200">{draft.energy_analysis.primary_emphasis || energy(draft.energy_system_focus).label}</p>
           <p className="text-xs text-pool-400">Density: {draft.energy_analysis.density || 'unclear'} · AI estimate for coach review, not measured swimmer fatigue.</p>
-          <div className="flex flex-wrap gap-1.5">
-            {Object.entries(draft.groups?.['1']?.volume_breakdown || {}).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (
-              <span key={zone} className="text-[10px] bg-pool-800 border border-pool-700 rounded-full px-2 py-1 text-pool-300">
-                {energy(zone).label} · {Number(value).toLocaleString()}m
-              </span>
-            ))}
-          </div>
+          {Object.entries(draft.groups || {}).sort(([a], [b]) => Number(a) - Number(b)).map(([groupNumber, group]) => {
+            const chips = Object.entries(group?.volume_breakdown || {}).filter(([, value]) => Number(value) > 0)
+            if (chips.length === 0) return null
+            return (
+              <div key={groupNumber} className="space-y-1">
+                {Object.keys(draft.groups || {}).length > 1 && (
+                  <p className="text-[10px] text-pool-500">Group {groupNumber}</p>
+                )}
+                <div className="flex flex-wrap gap-1.5">
+                  {chips.map(([zone, value]) => (
+                    <span key={zone} className="text-[10px] bg-pool-800 border border-pool-700 rounded-full px-2 py-1 text-pool-300">
+                      {energy(zone).label} · {Number(value).toLocaleString()}m
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )
+          })}
           {draft.energy_analysis.assumptions?.length > 0 && (
             <details>
               <summary className="text-[11px] text-pool-500 cursor-pointer">Review assumptions</summary>
@@ -837,11 +848,15 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
           <textarea value={draft.coach_intent || ''} onChange={(e) => setDraft({...draft, coach_intent: e.target.value})}
             rows="2" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600" />
         </label>
-        <label className="block">
-          <span className="block text-xs text-pool-400 mb-1">Extracted set</span>
-          <textarea value={draft.groups?.['1']?.sets || ''} onChange={(e) => updateGroupSets(e.target.value)}
-            rows="13" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs font-mono border border-pool-600" />
-        </label>
+        {Object.entries(draft.groups || {}).sort(([a], [b]) => Number(a) - Number(b)).map(([groupNumber, group]) => (
+          <label key={groupNumber} className="block">
+            <span className="block text-xs text-pool-400 mb-1">
+              {Object.keys(draft.groups || {}).length > 1 ? `Group ${groupNumber} set` : 'Extracted set'}
+            </span>
+            <textarea value={group?.sets || ''} onChange={(e) => updateGroupSets(groupNumber, e.target.value)}
+              rows="13" className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs font-mono border border-pool-600" />
+          </label>
+        ))}
       </div>
 
       <div className="flex gap-2">

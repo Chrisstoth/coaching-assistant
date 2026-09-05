@@ -3,6 +3,8 @@ Handles ingestion of swimrankings CSVs and bulk .xlsx session files.
 """
 import re
 import io
+import zipfile
+import xml.etree.ElementTree as ET
 from datetime import datetime, date, time as dt_time, timedelta
 from typing import Optional
 import pandas as pd
@@ -637,8 +639,10 @@ def _cell_text(value) -> str:
     return str(value).strip()
 
 
-def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
-    items, raw_lines = [], []
+def _template_set_items_with_rows(ws, start_row: int) -> list[tuple[int, dict, str]]:
+    """Like _template_set_items, but keeps each item's row number so callers can
+    partition the stream by section (e.g. per-group set boundaries)."""
+    entries = []
     in_repeat = False
     for row_number in range(start_row, ws.max_row + 1):
         values = [ws.cell(row_number, col).value for col in range(1, 11)]
@@ -650,8 +654,7 @@ def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
         repeat_match = re.fullmatch(r"\s*(\d+)\s*x\s*", _cell_text(reps), re.IGNORECASE)
         if repeat_match and not any(_cell_text(v) for v in values[1:9]):
             repeat = int(repeat_match.group(1))
-            items.append({"type": "repeat", "repetitions": repeat})
-            raw_lines.append(f"{repeat}x:")
+            entries.append((row_number, {"type": "repeat", "repetitions": repeat}, f"{repeat}x:"))
             in_repeat = True
             continue
 
@@ -668,7 +671,6 @@ def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
                 "effort": _cell_text(effort) or None,
                 "total_metres": None if pd.isna(total_value) else int(total_value),
             }
-            items.append(item)
             line = f"{item['repetitions']} x {item['distance']}"
             if _cell_text(as_word):
                 line += f" {_cell_text(as_word)}"
@@ -680,14 +682,106 @@ def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
                 line += f" | effort {item['effort']}/20"
             if item["total_metres"] is not None:
                 line += f" | {item['total_metres']}m"
-            raw_lines.append(("  " if in_repeat else "") + line)
+            entries.append((row_number, item, ("  " if in_repeat else "") + line))
             continue
 
         note = _cell_text(description) or _cell_text(reps)
         if note:
-            items.append({"type": "note", "text": note})
-            raw_lines.append(("  " if in_repeat else "") + note)
-    return items, raw_lines
+            entries.append((row_number, {"type": "note", "text": note}, ("  " if in_repeat else "") + note))
+    return entries
+
+
+def _template_set_items(ws, start_row: int) -> tuple[list[dict], list[str]]:
+    entries = _template_set_items_with_rows(ws, start_row)
+    return [item for _, item, _ in entries], [line for _, _, line in entries]
+
+
+_DRAWING_NS = {
+    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+}
+
+
+def _extract_textbox_notes(file_content: bytes) -> list[str]:
+    """
+    Read floating text-box shapes (coaches use these to annotate a set with
+    per-group instructions). openpyxl's cell values never see these — they
+    live in the drawing XML, not the grid — so this reads it directly.
+    """
+    notes = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_content)) as archive:
+            drawing_names = [
+                name for name in archive.namelist()
+                if re.fullmatch(r"xl/drawings/drawing\d+\.xml", name)
+            ]
+            for name in drawing_names:
+                root = ET.fromstring(archive.read(name))
+                for shape in root.findall(".//xdr:sp", _DRAWING_NS):
+                    lines = [
+                        "".join(node.text or "" for node in paragraph.findall(".//a:t", _DRAWING_NS))
+                        for paragraph in shape.findall(".//a:p", _DRAWING_NS)
+                    ]
+                    combined = "\n".join(line for line in lines if line.strip())
+                    if combined.strip():
+                        notes.append(combined.strip())
+    except Exception:
+        return []
+    return notes
+
+
+def _parse_group_notes(text: str) -> dict[str, str]:
+    """Split a text-box note into {group_number: instructions} when it reads like 'Group 1: ...'."""
+    groups: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines():
+        header = re.match(r"\s*group\s*(\d+)\s*[:\-]?\s*(.*)$", line, re.IGNORECASE)
+        if header:
+            current = header.group(1)
+            remainder = header.group(2).strip()
+            groups[current] = [remainder] if remainder else []
+        elif current is not None and line.strip():
+            groups[current].append(line.strip())
+    return {number: "\n".join(lines).strip() for number, lines in groups.items() if lines}
+
+
+_EFFORT_BANNER = re.compile(r"effort\s*/\s*20", re.IGNORECASE)
+
+
+def _is_section_heading_row(row_texts: list[str]) -> bool:
+    """A banner row like 'Warm Up:' or 'Main 2  x 2 - Group 2'. Coach templates
+    vary the wording but consistently repeat the 'Effort/20' column label on
+    every banner, so that's the general-purpose signal; the literal names are
+    kept as a fallback for templates that don't repeat it."""
+    first = row_texts[0].rstrip(":").strip().lower() if row_texts and row_texts[0] else ""
+    if first in {"warm up", "warm-up", "session", "main set"}:
+        return True
+    return any(_EFFORT_BANNER.search(value) for value in row_texts if value)
+
+
+def _find_section_headings(ws, after_row: int = 0) -> list[tuple[int, str]]:
+    headings = []
+    for row_number in range(after_row + 1, ws.max_row + 1):
+        row_values = [ws.cell(row_number, col).value for col in range(1, 11)]
+        row_texts = [_cell_text(value) for value in row_values]
+        if not any(row_texts):
+            continue
+        if _is_section_heading_row(row_texts):
+            label = row_texts[0].rstrip(":").strip() or " | ".join(value for value in row_texts if value)
+            headings.append((row_number, label))
+    return headings
+
+
+def _heading_group_number(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return None
+    match = re.search(r"group\s*(\d+)", text, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _clean_heading_label(text: str) -> str:
+    cleaned = re.sub(r"[-–—]?\s*group\s*\d+\s*", "", text, flags=re.IGNORECASE).strip(" -–—")
+    return cleaned or text.strip()
 
 
 def _looks_like_template_set_row(values: list) -> bool:
@@ -779,7 +873,9 @@ def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
         )
     else:
         set_start_row = set_header_row + 1
-    items, raw_lines = _template_set_items(ws, set_start_row)
+    entries = _template_set_items_with_rows(ws, set_start_row)
+    items = [item for _, item, _ in entries]
+    raw_lines = [line for _, _, line in entries]
     if not any(item["type"] == "set" for item in items):
         raise ValueError("No recognisable set rows were found in the workbook.")
 
@@ -799,6 +895,92 @@ def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
     metadata_notes += [f"Week key: {week_key}"] if week_key else []
     metadata_notes += [f"Planned total: {planned_metres}m"] if planned_metres is not None else []
     metadata_notes += [f"Planned duration: {planned_duration}"] if planned_duration else []
+
+    base_description = " · ".join(aims) if aims else "Imported session"
+    base_sets = "\n".join(raw_lines)
+
+    # Some templates split groups into their own named sections (e.g. "Main 1 x2 -
+    # Group 1" / "Main 2 x2 - Group 2") rather than annotating a shared set. Find
+    # those section boundaries so each group gets the shared sections (Warm Up,
+    # any Cool Down, etc.) plus only its own section, in original sheet order.
+    sub_headings = _find_section_headings(ws, after_row=set_start_row - 1)
+    segments = []
+    seg_start = set_start_row
+    for index, (row_number, label) in enumerate(sub_headings):
+        if seg_start <= row_number - 1:
+            segments.append({"group_number": None, "start": seg_start, "end": row_number - 1})
+        seg_end = sub_headings[index + 1][0] - 1 if index + 1 < len(sub_headings) else ws.max_row
+        segments.append({"group_number": _heading_group_number(label), "start": row_number, "end": seg_end, "label": label})
+        seg_start = seg_end + 1
+    distinct_groups = sorted({segment["group_number"] for segment in segments if segment["group_number"]}, key=int)
+
+    group_notes: dict[str, str] = {}
+    other_textbox_notes = []
+    for note in _extract_textbox_notes(file_content):
+        parsed = _parse_group_notes(note)
+        if len(parsed) >= 2:
+            group_notes.update(parsed)
+        else:
+            other_textbox_notes.append(note)
+
+    if len(distinct_groups) >= 2:
+        groups_payload = {}
+        for group_number in distinct_groups:
+            group_entries = [
+                entry
+                for segment in segments
+                if segment["group_number"] is None or segment["group_number"] == group_number
+                for entry in entries
+                if segment["start"] <= entry[0] <= segment["end"]
+            ]
+            group_items = [item for _, item, _ in group_entries]
+            group_lines = [line for _, _, line in group_entries]
+            group_total = sum(item.get("total_metres") or 0 for item in group_items if item["type"] == "set")
+            own_label = next((segment["label"] for segment in segments if segment["group_number"] == group_number), None)
+            sets_text = "\n".join(group_lines)
+            note_text = group_notes.get(group_number)
+            if note_text:
+                sets_text = f"{sets_text}\n\nGroup {group_number} focus:\n{note_text}"
+            groups_payload[group_number] = {
+                "description": _clean_heading_label(own_label) if own_label else base_description,
+                "sets": sets_text,
+                "items": group_items,
+                "total_metres": group_total or None,
+            }
+        found = ", ".join(f"Group {number}" for number in distinct_groups)
+        warnings.append(
+            f"Found separate sections for {found} in the workbook; each group's plan below includes "
+            "the shared sections plus its own — review and edit if needed."
+        )
+    elif group_notes:
+        groups_payload = {}
+        for group_number, note_text in sorted(group_notes.items(), key=lambda kv: int(kv[0])):
+            groups_payload[group_number] = {
+                "description": note_text.splitlines()[0] if note_text else base_description,
+                "sets": f"{base_sets}\n\nGroup {group_number} focus:\n{note_text}",
+                "items": items,
+                "total_metres": planned_metres,
+            }
+        found = ", ".join(f"Group {number}" for number in sorted(group_notes, key=int))
+        warnings.append(
+            f"Found group-specific instructions in a text box ({found}); each group's plan below "
+            "includes the shared sets plus its own instructions — review and edit if needed."
+        )
+    else:
+        groups_payload = {
+            "1": {
+                "description": base_description,
+                "sets": base_sets,
+                "items": items,
+                "total_metres": planned_metres,
+            }
+        }
+    if other_textbox_notes:
+        warnings.append(
+            "Found a text box in the workbook that wasn't automatically placed into the sets: "
+            + " | ".join(other_textbox_notes)
+        )
+
     draft = {
         "date": inferred_date.isoformat(),
         "start_time": start_time,
@@ -806,14 +988,7 @@ def extract_session_xlsx(file_content: bytes, filename: str) -> dict:
         "title": title,
         "coach_intent": "\n".join(f"Aim {index}: {aim}" for index, aim in enumerate(aims, 1)) or None,
         "coach_notes": "\n".join(metadata_notes),
-        "groups": {
-            "1": {
-                "description": " · ".join(aims) if aims else "Imported session",
-                "sets": "\n".join(raw_lines),
-                "items": items,
-                "total_metres": planned_metres,
-            }
-        },
+        "groups": groups_payload,
         "source": "excel",
     }
     return {
