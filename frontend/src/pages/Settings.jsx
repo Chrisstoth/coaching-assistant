@@ -57,6 +57,16 @@ const SECTIONS = [
     heading: 'AI',
     items: [
       {
+        to: '/ai-operations',
+        label: 'AI Operations',
+        description: 'Track background AI work, see failures clearly, and retry work that needs attention.',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 12a8.25 8.25 0 1 0 8.25-8.25M3.75 12H1.5m2.25 0 2.5-2.5M3.75 12l2.5 2.5M12 7.5V12l3 1.5" />
+          </svg>
+        ),
+      },
+      {
         to: '/ai',
         label: 'LaneWatch AI',
         description: 'Open the persistent AI chat — ask anything about training science, your squad, or articles you\'ve read.',
@@ -218,16 +228,56 @@ export default function Settings() {
             <p className="text-xs text-pool-400">Loading the last 30 days…</p>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3">
+              {/* Month to date answers "what is this costing me"; the 30-day
+                  total only answered "what has it cost". The projection is a
+                  straight run-rate, not a forecast — it makes a jump obvious. */}
+              <div>
+                <p className="text-xs text-pool-400">This month so far</p>
+                <p className="text-2xl font-bold text-pool-100">
+                  {money(usage.month_to_date?.estimated_cost_usd)}
+                </p>
+                <p className="text-[11px] text-pool-500 mt-0.5">
+                  {usage.month_to_date?.calls ?? 0} calls since {usage.month_to_date?.since}
+                </p>
+              </div>
+              <div className="grid grid-cols-3 gap-3 border-t border-pool-700 pt-3">
                 <div>
-                  <p className="text-xs text-pool-400">Estimated API cost · 30 days</p>
-                  <p className="text-xl font-bold text-pool-100">{money(usage.totals.estimated_cost_usd)}</p>
+                  <p className="text-[11px] text-pool-400">Per day</p>
+                  <p className="text-sm font-semibold text-pool-100">{money(usage.daily_average_usd)}</p>
                 </div>
                 <div>
-                  <p className="text-xs text-pool-400">Tracked calls</p>
-                  <p className="text-xl font-bold text-pool-100">{usage.totals.calls}</p>
+                  <p className="text-[11px] text-pool-400">Month at this rate</p>
+                  <p className="text-sm font-semibold text-pool-100">{money(usage.projected_month_usd)}</p>
+                </div>
+                <div>
+                  <p className="text-[11px] text-pool-400">Last 30 days</p>
+                  <p className="text-sm font-semibold text-pool-100">{money(usage.totals.estimated_cost_usd)}</p>
                 </div>
               </div>
+              {(usage.daily || []).length > 1 && (() => {
+                const recent = usage.daily.slice(-14)
+                const peak = Math.max(...recent.map(d => d.estimated_cost_usd), 0.0001)
+                return (
+                  <div className="border-t border-pool-700 pt-3">
+                    <p className="text-[11px] text-pool-400 mb-1.5">Daily spend · last 14 days</p>
+                    <div className="flex items-end gap-[3px] h-10" role="img"
+                         aria-label={`Daily AI spend for the last ${recent.length} days, highest ${money(peak)}`}>
+                      {recent.map(day => (
+                        <div
+                          key={day.date}
+                          title={`${day.date} · ${money(day.estimated_cost_usd)} · ${day.calls} calls`}
+                          className="flex-1 bg-accent-600/70 rounded-sm min-h-[2px]"
+                          style={{ height: `${Math.max(4, (day.estimated_cost_usd / peak) * 100)}%` }}
+                        />
+                      ))}
+                    </div>
+                    <div className="flex justify-between text-[10px] text-pool-500 mt-1">
+                      <span>{recent[0]?.date?.slice(5)}</span>
+                      <span>peak {money(peak)}</span>
+                    </div>
+                  </div>
+                )
+              })()}
               <div className="text-xs text-pool-400 leading-relaxed border-t border-pool-700 pt-3">
                 <p>Season/session planning: <span className="text-pool-200">{usage.configuration.primary_model}</span> · {usage.configuration.planning_effort} effort</p>
                 <p>General assistant: <span className="text-pool-200">cost-aware {usage.configuration.fast_model} / {usage.configuration.primary_model} routing</span></p>

@@ -11,6 +11,8 @@ export default function CoachCheckIn() {
   const [loading, setLoading] = useState(true)
   const [sending, setSending] = useState(false)
   const [completing, setCompleting] = useState(false)
+  const [accepted, setAccepted] = useState(new Set())
+  const [applying, setApplying] = useState(false)
 
   useEffect(() => {
     api.getCoachCheckIn(id)
@@ -67,8 +69,22 @@ export default function CoachCheckIn() {
     }
   }
 
+  const applyProposals = async () => {
+    setApplying(true)
+    try {
+      const result = await api.applyCheckInProposals(id, [...accepted])
+      setCheckin(result.checkin)
+      setAccepted(new Set())
+    } catch (error) {
+      alert(`Could not update your coaching profile: ${error.message}`)
+    }
+    setApplying(false)
+  }
+
   if (loading) return <div className="p-5 text-sm text-pool-400">Loading check-in…</div>
   if (!checkin) return <div className="p-5 text-sm text-pool-400">Check-in not found.</div>
+
+  const pendingProposals = (checkin.proposals || []).filter(item => item.status === 'pending')
 
   const canComplete = (checkin.messages || []).some(message => message.role === 'coach')
   const closed = checkin.status !== 'in_progress'
@@ -96,8 +112,81 @@ export default function CoachCheckIn() {
             </p>
             {checkin.summary && <p className="text-sm text-pool-200 mt-2 whitespace-pre-line leading-relaxed">{checkin.summary}</p>}
           </div>
+
+          {/* Proposed profile changes. Nothing here is applied until the coach
+              accepts it — the coaching profile is shown to the assistant in
+              every conversation, so it is not rewritten on the strength of one
+              reflection. */}
+          {pendingProposals.length > 0 && (
+            <div className="rounded-2xl bg-pool-800 border border-pool-700 p-4 space-y-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-accent-400">
+                  Suggested profile updates
+                </p>
+                <p className="text-[11px] text-pool-500 mt-1 leading-relaxed">
+                  Your coaching profile is shown to the assistant in every conversation.
+                  Nothing changes unless you accept it.
+                </p>
+              </div>
+              {pendingProposals.map(proposal => (
+                <div key={proposal.id} className="rounded-xl border border-pool-700 p-3 space-y-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-xs font-semibold text-pool-100 capitalize">
+                      {proposal.field.replace('_', ' ')}
+                    </p>
+                    <span className="text-[10px] text-pool-500">{proposal.confidence} confidence</span>
+                  </div>
+                  {proposal.rationale && (
+                    <p className="text-[11px] text-pool-400 italic leading-relaxed">{proposal.rationale}</p>
+                  )}
+                  {proposal.current && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-pool-600">Currently</p>
+                      <p className="text-[11px] text-pool-500 leading-relaxed line-through decoration-pool-600/60">
+                        {proposal.current}
+                      </p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wide text-teal-500">Proposed</p>
+                    <p className="text-xs text-pool-200 leading-relaxed">{proposal.proposed}</p>
+                  </div>
+                  <label className="flex items-center gap-2 pt-1 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={accepted.has(proposal.id)}
+                      onChange={() => setAccepted(previous => {
+                        const next = new Set(previous)
+                        if (next.has(proposal.id)) next.delete(proposal.id)
+                        else next.add(proposal.id)
+                        return next
+                      })}
+                      className="accent-teal-500"
+                    />
+                    <span className="text-xs text-pool-300">Accept this change</span>
+                  </label>
+                </div>
+              ))}
+              <button
+                onClick={applyProposals}
+                disabled={applying || accepted.size === 0}
+                className="w-full rounded-xl bg-accent-600 text-white text-sm font-semibold py-2.5 disabled:opacity-40"
+              >
+                {applying
+                  ? 'Updating profile…'
+                  : `Apply ${accepted.size || 'no'} change${accepted.size === 1 ? '' : 's'}`}
+              </button>
+            </div>
+          )}
+
+          {checkin.applied_at && (
+            <p className="text-xs text-teal-300 bg-teal-900/20 border border-teal-800/40 rounded-xl px-3 py-2 leading-relaxed">
+              Coaching profile updated from this check-in.
+            </p>
+          )}
+
           <p className="text-xs text-pool-500 leading-relaxed">
-            This is a dated reflection. It does not overwrite your coaching profile or the plan it relates to.
+            This is a dated reflection. Nothing reaches your coaching profile unless you accept it above.
           </p>
           <Link to="/coach-checkins" className="inline-block text-sm font-medium text-accent-400">Back to all check-ins</Link>
         </main>

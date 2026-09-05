@@ -1,4 +1,5 @@
 """Milestone and ad-hoc reflective check-ins for the coach."""
+import json
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -75,9 +76,14 @@ def _out(row: models.CoachCheckIn, full: bool = False) -> dict:
         "summary": row.summary,
         "created_at": row.created_at,
         "completed_at": row.completed_at,
+        "applied_at": row.applied_at,
+        "pending_proposals": sum(
+            1 for item in (row.proposals or []) if item.get("status") == "pending"
+        ),
     }
     if full:
         result["messages"] = row.messages or []
+        result["proposals"] = row.proposals or []
         result["opening_question"] = _opening_question(row.checkin_type)
     return result
 
@@ -262,9 +268,149 @@ COACH RESPONSES:
     row.summary = response_text(response).strip()
     row.status = "completed"
     row.completed_at = datetime.now(timezone.utc)
+    row.proposals = _propose_profile_updates(row, db)
     db.commit()
     db.refresh(row)
     return _out(row, full=True)
+
+
+PROFILE_FIELDS = {
+    "ethos": "coaching philosophy and durable beliefs about how you coach",
+    "squad_state": "where the group is right now",
+    "targets": "season and meet targets",
+    "current_focus": "the current training block focus",
+}
+
+
+def _propose_profile_updates(row: models.CoachCheckIn, db: DBSession) -> list[dict]:
+    """Draft edits to the coaching profile for the coach to accept or reject.
+
+    A check-in used to end at a saved summary that nothing ever read, so
+    reflecting never changed what the assistant knew. These are proposals only:
+    the coaching profile shapes every prompt, so it is not rewritten silently.
+    """
+    profile = db.query(models.CoachingProfile).filter(
+        models.CoachingProfile.is_current == True,  # noqa: E712
+    ).first()
+    if not profile:
+        return []
+    coach_messages = [item["message"] for item in (row.messages or []) if item.get("role") == "coach"]
+    if not coach_messages:
+        return []
+
+    current = {field: (getattr(profile, field, None) or "") for field in PROFILE_FIELDS}
+    prompt = f"""A coach has just completed a reflection. Decide whether anything they said should
+change their stored coaching profile — the durable description of how they coach that is shown to
+the assistant in every conversation.
+
+Propose a change only where the reflection genuinely supersedes what is stored. Most check-ins
+should produce no proposals at all, or one. Passing frustration, a single session going badly, or a
+restatement of something already recorded are not reasons to rewrite a profile. If the reflection
+reveals a durable shift in belief, emphasis, squad state or focus, propose it.
+
+CHECK-IN: {row.title}
+SCOPE: {_scope_context(row, db)}
+
+WHAT THE COACH SAID:
+{chr(10).join(f'- {message}' for message in coach_messages)}
+
+CURRENT STORED PROFILE:
+{json.dumps(current, indent=2)}
+
+Return JSON only — an array, empty if nothing should change:
+[{{
+  "field": "ethos|squad_state|targets|current_focus",
+  "proposed": "the full replacement text for that field, written in the coach's own register",
+  "rationale": "one sentence: what they said that justifies this change",
+  "confidence": "low|moderate|high"
+}}]"""
+    try:
+        response = get_client().messages.create(
+            model=MODEL, max_tokens=1200, messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response_text(response).strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = json.loads(raw)
+    except Exception:
+        # A failed proposal must not lose the coach's completed reflection.
+        return []
+    if not isinstance(parsed, list):
+        return []
+
+    proposals = []
+    for index, item in enumerate(parsed):
+        if not isinstance(item, dict):
+            continue
+        field = item.get("field")
+        proposed = (item.get("proposed") or "").strip()
+        if field not in PROFILE_FIELDS or not proposed:
+            continue
+        if proposed == current.get(field, "").strip():
+            continue
+        proposals.append({
+            "id": index,
+            "field": field,
+            "field_label": PROFILE_FIELDS[field],
+            "current": current.get(field, ""),
+            "proposed": proposed,
+            "rationale": item.get("rationale") or "",
+            "confidence": item.get("confidence") or "moderate",
+            "status": "pending",
+        })
+    return proposals
+
+
+@router.post("/{checkin_id}/proposals/apply")
+def apply_checkin_proposals(checkin_id: int, body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Apply the proposals the coach accepted as a new current coaching profile."""
+    row = db.query(models.CoachCheckIn).filter(models.CoachCheckIn.id == checkin_id).first()
+    if not row:
+        raise HTTPException(404, "Check-in not found")
+    accepted_ids = {int(value) for value in (body.get("accepted_ids") or [])}
+    proposals = list(row.proposals or [])
+    accepted = [item for item in proposals if item.get("id") in accepted_ids]
+    if not accepted:
+        raise HTTPException(400, "No proposals were accepted")
+
+    profile = db.query(models.CoachingProfile).filter(
+        models.CoachingProfile.is_current == True,  # noqa: E712
+    ).first()
+    if not profile:
+        raise HTTPException(409, "There is no current coaching profile to update")
+
+    # A new version rather than an edit, so the profile's history stays readable
+    # and a change made after a check-in can be traced back to it.
+    fields = {field: getattr(profile, field, None) for field in PROFILE_FIELDS}
+    for item in accepted:
+        fields[item["field"]] = item["proposed"]
+    replacement = models.CoachingProfile(
+        title=f"After check-in · {row.title}"[:200],
+        summary=profile.summary,
+        is_current=True,
+        **fields,
+    )
+    profile.is_current = False
+    db.add(replacement)
+
+    applied_fields = {item["field"] for item in accepted}
+    # Rebuilt as new dicts rather than mutated in place: SQLAlchemy compares a
+    # JSON column by value against its loaded state, so editing the nested dicts
+    # would leave the change undetected and unsaved.
+    row.proposals = [
+        {**item, "status": "accepted" if item.get("id") in accepted_ids else "declined"}
+        for item in proposals
+    ]
+    row.applied_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return {
+        "checkin": _out(row, full=True),
+        "applied_fields": sorted(applied_fields),
+        "profile_id": replacement.id,
+    }
 
 
 @router.post("/{checkin_id}/skip")
