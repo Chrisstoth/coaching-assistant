@@ -30,6 +30,20 @@ SUMMARY_BATCH_SIZE = max(4, min(int(os.getenv("AI_SUMMARY_BATCH_SIZE", "8")), 20
 SUMMARY_CHAR_LIMIT = max(1200, min(int(os.getenv("AI_SUMMARY_CHAR_LIMIT", "3500")), 6000))
 
 
+def _cacheable_system(stable: str, tail: list[str]) -> list[dict]:
+    """Split the system prompt so the cache breakpoint sits after the stable half.
+
+    Caching is a prefix match. A breakpoint at the very end of the prompt is
+    invalidated by anything that moves, and the parts that move most — rolling
+    conversation memory, resolved swimmer identities — are also the smallest.
+    Marking the stable half keeps the bulk of it cached across the tool loop.
+    """
+    blocks = [{"type": "text", "text": stable, "cache_control": {"type": "ephemeral"}}]
+    if tail:
+        blocks.append({"type": "text", "text": "\n\n".join(tail)})
+    return blocks
+
+
 def _conversation_action(text: str, topics: set[str], messages: list, swimmers: list) -> dict:
     """Choose review actions locally so chat replies are not delayed by another API call."""
     lower = " ".join((text or "").lower().split())
@@ -1082,9 +1096,14 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         if brief:
             system += "\n\nPOOLSIDE MODE: The coach is at the pool. Keep all responses under 5 sentences. Use bullet points. Lead with the most actionable finding. No background context, no caveats unless critical."
 
+    # Everything appended from here changes between turns — the rolling memory
+    # grows, resolved identities follow whoever was named. Kept apart from the
+    # stable prompt so the cache breakpoint sits between the two.
+    system_stable = system
+    system_tail = []
     memory = _thread_memory(thread_obj, recent, db, history_limit)
     if memory:
-        system += f"\n\n---\n{memory}"
+        system_tail.append(f"---\n{memory}")
 
     # Build thread context string to pass to specialist skills
     from backend.routers.skills import _format_thread_context
@@ -1367,14 +1386,13 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             f"- {swimmer.name}: swimmer_id={swimmer.id}"
             for swimmer in resolved_swimmers[:6]
         )
-        system += f"""
-
----
+        system_tail.append(f"""---
 RESOLVED DATABASE IDENTITIES:
 {resolved_lines}
 Use these IDs directly with read tools; do not call find_swimmer for these athletes.
-Call independent read tools together in the same response where possible."""
+Call independent read tools together in the same response where possible.""")
 
+    system = _cacheable_system(system_stable, system_tail)
     tools = get_tools()
     loop_messages = list(messages)
     route = choose_agent_route(
@@ -1398,7 +1416,6 @@ Call independent read tools together in the same response where possible."""
         system=system,
         messages=loop_messages,
         tools=tools,
-        cache_control={"type": "ephemeral"},
     )
 
     # Tool-calling loop — bounded by route to prevent runaway cost
@@ -1448,8 +1465,7 @@ Call independent read tools together in the same response where possible."""
             system=system,
             messages=loop_messages,
             tools=tools,
-            cache_control={"type": "ephemeral"},
-        )
+            )
 
     reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
     if not reply:
@@ -1837,12 +1853,17 @@ async def send_message_with_image(
     # Always inject session writing context for photo messages
     slot_hint = extract_slot_hint(text)
     session_ctx = build_session_writing_context(db, slot_hint)
-    system = get_system_prompt(db)
+    system_stable = get_system_prompt(db)
+    system_tail = []
     memory = _thread_memory(thread_obj, recent, db, history_limit)
     if memory:
-        system += f"\n\n---\n{memory}"
+        system_tail.append(f"---\n{memory}")
     if session_ctx:
-        system += f"\n\n---\nSESSION WRITING MODE — extracting session from photo. Use slot and attendee context below.\n{session_ctx}"
+        system_tail.append(
+            "---\nSESSION WRITING MODE — extracting session from photo. "
+            f"Use slot and attendee context below.\n{session_ctx}"
+        )
+    system = _cacheable_system(system_stable, system_tail)
 
     # Multimodal user message: image + text
     user_content = [
@@ -1866,7 +1887,6 @@ async def send_message_with_image(
         system=system,
         messages=loop_messages_img,
         tools=tools,
-        cache_control={"type": "ephemeral"},
     )
 
     # Tool-calling loop — retain planning depth without allowing runaway repeats.
@@ -1901,8 +1921,7 @@ async def send_message_with_image(
             system=system,
             messages=loop_messages_img,
             tools=tools,
-            cache_control={"type": "ephemeral"},
-        )
+            )
 
     reply = next((b.text for b in response.content if hasattr(b, "text")), "").strip()
     db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
@@ -2323,6 +2342,33 @@ def ai_usage(days: int = 30, db: DBSession = Depends(get_db)):
             target["cache_read_tokens"] += row.cache_read_tokens or 0
             target["cache_write_tokens"] += row.cache_write_tokens or 0
             target["estimated_cost_usd"] += row.estimated_cost_usd or 0
+    # A per-day series and a month-to-date figure, so the number in Settings
+    # answers "what is this costing me" rather than only "what has it cost".
+    daily: dict[str, dict] = {}
+    month_start = datetime.now(timezone.utc).replace(
+        day=1, hour=0, minute=0, second=0, microsecond=0,
+    )
+    month_to_date = 0.0
+    month_calls = 0
+    for row in rows:
+        created = row.created_at
+        if created is None:
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        day_key = created.date().isoformat()
+        day = daily.setdefault(day_key, {"date": day_key, "calls": 0, "estimated_cost_usd": 0.0})
+        day["calls"] += 1
+        day["estimated_cost_usd"] += row.estimated_cost_usd or 0
+        if created >= month_start:
+            month_to_date += row.estimated_cost_usd or 0
+            month_calls += 1
+    for day in daily.values():
+        day["estimated_cost_usd"] = round(day["estimated_cost_usd"], 6)
+
+    observed_days = len(daily) or 1
+    daily_average = totals["estimated_cost_usd"] / observed_days
+
     totals["estimated_cost_usd"] = round(totals["estimated_cost_usd"], 6)
     for item in by_model.values():
         item["estimated_cost_usd"] = round(item["estimated_cost_usd"], 6)
@@ -2331,6 +2377,16 @@ def ai_usage(days: int = 30, db: DBSession = Depends(get_db)):
     return {
         "days": days,
         "totals": totals,
+        "month_to_date": {
+            "estimated_cost_usd": round(month_to_date, 6),
+            "calls": month_calls,
+            "since": month_start.date().isoformat(),
+        },
+        "daily": sorted(daily.values(), key=lambda item: item["date"]),
+        "daily_average_usd": round(daily_average, 6),
+        # A month at the current rate. Not a forecast — a straight projection,
+        # which is what makes an unexpected jump obvious early.
+        "projected_month_usd": round(daily_average * 30, 6),
         "by_model": sorted(by_model.values(), key=lambda x: x["estimated_cost_usd"], reverse=True),
         "by_operation": sorted(
             by_operation.values(),

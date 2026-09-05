@@ -58,11 +58,21 @@ function PredictionCard({ prediction }) {
   if (!prediction || typeof prediction !== 'object') return null
   return (
     <div className="bg-teal-900/15 border border-teal-700/35 rounded-lg p-3 space-y-1.5">
-      <p className="text-[10px] uppercase tracking-wide font-semibold text-teal-300">AI prediction · not an observation</p>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="text-[10px] uppercase tracking-wide font-semibold text-teal-300">AI prediction · not an observation</p>
+        {prediction.selected_because && (
+          <span className="text-[10px] text-pool-500 shrink-0">{prediction.selected_because}</span>
+        )}
+      </div>
       {prediction.predicted_response && <p className="text-xs text-pool-300">{prediction.predicted_response}</p>}
       {prediction.watch_question && (
         <div className="border-t border-teal-800/40 pt-2 mt-2">
-          <p className="text-xs font-semibold text-amber-200">Question for you</p>
+          <p className={`text-xs font-semibold ${
+            prediction.priority >= 3 ? 'text-red-300'
+              : prediction.priority === 2 ? 'text-amber-200' : 'text-pool-300'
+          }`}>
+            {prediction.priority >= 3 ? 'Worth a close look' : 'Question for you'}
+          </p>
           <p className="text-xs text-pool-200 mt-1">{prediction.watch_question}</p>
           {prediction.watch_reason && <p className="text-[11px] text-pool-500 mt-1">{prediction.watch_reason}</p>}
         </div>
@@ -96,8 +106,13 @@ export default function Register() {
   const [expandedId, setExpandedId] = useState(null)
   const [groupCount, setGroupCount] = useState(null)
   const [editingGroupCount, setEditingGroupCount] = useState(false)
-  const [savingGroupCount, setSavingGroupCount] = useState(false)
+  const [groupCountPending, setGroupCountPending] = useState(false)
   const [sessionNotes, setSessionNotes] = useState([])
+  const [loaded, setLoaded] = useState(false)
+  const [draftDirty, setDraftDirty] = useState(false)
+  const [draftRevision, setDraftRevision] = useState(null)
+
+  const draftKey = `lanewatch_register_draft:${id}`
 
   useEffect(() => {
     Promise.all([
@@ -111,7 +126,7 @@ export default function Register() {
         sess.groups?.length || Object.keys(sess.planned_content || {}).length || null
       )
       setGroupCount(inferredGroupCount)
-      setEntries(reg.map((r) => ({
+      const serverEntries = reg.map((r) => ({
         swimmer_id: r.swimmer_id,
         swimmer_name: r.swimmer_name,
         squad: r.squad,
@@ -132,12 +147,46 @@ export default function Register() {
         coach_observation: r.coach_observation ?? '',
         ai_characterisation: r.ai_characterisation ?? null,
         ai_expected_response: r.ai_expected_response ?? null,
-      })))
+      }))
+      let draft = null
+      try {
+        draft = JSON.parse(localStorage.getItem(draftKey) || 'null')
+      } catch {
+        localStorage.removeItem(draftKey)
+      }
+      if (draft?.revision && draft.revision === sess.register_revision) {
+        localStorage.removeItem(draftKey)
+        draft = null
+      }
+      if (Array.isArray(draft?.entries)) {
+        const draftById = Object.fromEntries(draft.entries.map(entry => [entry.swimmer_id, entry]))
+        setEntries(serverEntries.map(entry => draftById[entry.swimmer_id] ? { ...entry, ...draftById[entry.swimmer_id] } : entry))
+        setDraftDirty(true)
+        setDraftRevision(draft.revision || null)
+        if (draft.group_count) {
+          setGroupCount(draft.group_count)
+          setGroupCountPending(draft.group_count !== sess.register_group_count)
+        }
+      } else {
+        setEntries(serverEntries)
+      }
+      setLoaded(true)
     })
-  }, [id])
+  }, [draftKey, id])
 
   useEffect(() => {
-    if (!submitted) return undefined
+    if (!loaded || !draftDirty) return
+    localStorage.setItem(draftKey, JSON.stringify({
+      entries,
+      group_count: groupCount,
+      revision: draftRevision,
+      updated_at: new Date().toISOString(),
+    }))
+  }, [draftDirty, draftKey, draftRevision, entries, groupCount, loaded])
+
+  useEffect(() => {
+    // A completed session offers a debrief, so don't navigate out from under it.
+    if (!submitted || submitted.queued || submitted.complete) return undefined
     const returnHome = window.setTimeout(() => {
       navigate('/', { replace: true })
     }, 1400)
@@ -146,6 +195,7 @@ export default function Register() {
 
   const update = (swimmerId, field, value) => {
     setSubmitted(null)
+    setDraftDirty(true)
     setEntries((prev) =>
       prev.map((e) => (e.swimmer_id === swimmerId ? { ...e, [field]: value } : e))
     )
@@ -153,6 +203,7 @@ export default function Register() {
 
   const markAllPresent = () => {
     setSubmitted(null)
+    setDraftDirty(true)
     setEntries((prev) => prev.map((e) => ({
       ...e,
       attended: e.exception_reason ? e.attended : true,
@@ -170,36 +221,31 @@ export default function Register() {
     }
   }
 
-  const chooseGroupCount = async (count) => {
-    setSavingGroupCount(true)
-    try {
-      const updatedSession = await api.updateSession(id, { register_group_count: count })
-      setSession(updatedSession)
-      setGroupCount(count)
-      setEditingGroupCount(false)
-      setSubmitted(null)
-      setEntries(prev => prev.map(entry => ({
-        ...entry,
-        group_done: count === 1
-          ? 1
-          : entry.group_done && entry.group_done <= count
-            ? entry.group_done
-            : entry.group_planned && entry.group_planned <= count
-              ? entry.group_planned
-              : null,
-        sub_group_done: count === 1 ? null : entry.sub_group_done,
-      })))
-    } catch (error) {
-      alert(`Could not save the session group setup: ${error.message}`)
-    } finally {
-      setSavingGroupCount(false)
-    }
+  const chooseGroupCount = (count) => {
+    setGroupCount(count)
+    setEditingGroupCount(false)
+    setSubmitted(null)
+    setDraftDirty(true)
+    setEntries(prev => prev.map(entry => ({
+      ...entry,
+      group_done: count === 1
+        ? 1
+        : entry.group_done && entry.group_done <= count
+          ? entry.group_done
+          : entry.group_planned && entry.group_planned <= count
+            ? entry.group_planned
+            : null,
+      sub_group_done: count === 1 ? null : entry.sub_group_done,
+    })))
+    setGroupCountPending(true)
   }
 
   const submit = async (runAI = true, sessionComplete = true) => {
     setSubmitting(true)
     try {
-      const results = await api.submitRegister(id, {
+      const revision = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
+      const clientSavedAt = new Date().toISOString()
+      const payload = {
         entries: entries.map(({ swimmer_id, attended, group_planned, sub_group_planned, group_done, sub_group_done, coach_observation }) => ({
           swimmer_id,
           attended,
@@ -211,14 +257,31 @@ export default function Register() {
         })),
         run_ai: runAI,
         session_complete: sessionComplete,
-      })
+        revision,
+        client_saved_at: clientSavedAt,
+        register_group_count: groupCount,
+      }
+      localStorage.setItem(draftKey, JSON.stringify({
+        entries,
+        group_count: groupCount,
+        revision,
+        updated_at: clientSavedAt,
+      }))
+      setDraftRevision(revision)
+      const results = await api.submitRegister(id, payload)
       if (results?.queued) {
-        setSubmitted(sessionComplete ? 'complete_queued' : 'attendance_queued')
+        setSubmitted({ queued: true, complete: sessionComplete, operation: null })
+        return
+      }
+      if (results?.stale_ignored) {
+        alert('A newer register save is already on the server. Reloading that version now.')
+        window.location.reload()
         return
       }
       // Update AI characterisations
-      const aiMap = Object.fromEntries(results.map((r) => [r.swimmer_id, r.ai_characterisation]))
-      const predictionMap = Object.fromEntries(results.map((r) => [r.swimmer_id, r.ai_expected_response]))
+      const savedEntries = results.entries || results
+      const aiMap = Object.fromEntries(savedEntries.map((r) => [r.swimmer_id, r.ai_characterisation]))
+      const predictionMap = Object.fromEntries(savedEntries.map((r) => [r.swimmer_id, r.ai_expected_response]))
       setEntries((prev) =>
         prev.map((e) => ({
           ...e,
@@ -226,7 +289,16 @@ export default function Register() {
           ai_expected_response: predictionMap[e.swimmer_id] ?? e.ai_expected_response,
         }))
       )
-      setSubmitted(sessionComplete ? 'complete_synced' : 'attendance_synced')
+      localStorage.removeItem(draftKey)
+      setDraftDirty(false)
+      setDraftRevision(null)
+      setGroupCountPending(false)
+      setSession(previous => ({
+        ...previous,
+        status: results.session_status || previous.status,
+        register_group_count: groupCount,
+      }))
+      setSubmitted({ queued: false, complete: sessionComplete, operation: results.ai_operation })
     } catch (e) {
       alert(`Error: ${e.message}`)
     } finally {
@@ -240,13 +312,17 @@ export default function Register() {
     ...sessionNotes.flatMap(note => note.swimmer_ids || []),
     ...entries.filter(entry => entry.ai_expected_response?.watch_question).map(entry => entry.swimmer_id),
   ])
-  const watchpointsWithoutObservation = entries.filter(entry => (
-    entry.attended
-    && watchedSwimmerIds.has(entry.swimmer_id)
-    && !entry.coach_observation?.trim()
-  ))
-  const watchpointObservationNames = watchpointsWithoutObservation.slice(0, 3).map(entry => entry.swimmer_name).join(', ')
-  const additionalWatchpointCount = Math.max(0, watchpointsWithoutObservation.length - 3)
+  // Watchpoints are answered in the debrief now, so this is a reminder of what
+  // to talk about rather than a prompt for a note on this screen.
+  // Ordered by the priority the prediction already carries (3 = high concern),
+  // so the three names shown are the three worth watching rather than whichever
+  // swimmers happen to come first in the register.
+  const openWatchpoints = entries
+    .filter(entry => entry.attended && watchedSwimmerIds.has(entry.swimmer_id))
+    .slice()
+    .sort((a, b) => (b.ai_expected_response?.priority || 0) - (a.ai_expected_response?.priority || 0))
+  const watchpointNames = openWatchpoints.slice(0, 3).map(entry => entry.swimmer_name).join(', ')
+  const additionalWatchpointCount = Math.max(0, openWatchpoints.length - 3)
 
   // Build lookup: group_number -> sub_group labels available
   const subGroupsByGroup = {}
@@ -268,7 +344,17 @@ export default function Register() {
 
   return (
     <div className="flex flex-col min-h-screen">
-      {submitted && <RegisterSavedOverlay queued={submitted.includes('queued')} complete={submitted.startsWith('complete')} />}
+      {submitted && (
+        <RegisterSavedOverlay
+          queued={submitted.queued}
+          complete={submitted.complete}
+          operation={submitted.operation}
+          sessionId={id}
+          onClose={() => setSubmitted(null)}
+          onHome={() => navigate('/', { replace: true })}
+          onDebrief={() => navigate(`/debrief?session=${id}`)}
+        />
+      )}
 
       {/* Header */}
       <div className="bg-pool-800 px-4 pt-4 pb-3 sticky top-0 z-10">
@@ -311,6 +397,7 @@ export default function Register() {
               <p className="text-sm text-pool-200 mt-0.5">
                 {groupCount === 1 ? 'Whole squad · everyone did the same session' : `${groupCount} training groups`}
               </p>
+              {groupCountPending && <p className="text-[10px] text-amber-300 mt-0.5">Will sync with the register save</p>}
             </div>
             <button onClick={() => setEditingGroupCount(true)} className="text-xs text-accent-400 px-2 py-2">Change</button>
           </div>
@@ -327,8 +414,7 @@ export default function Register() {
                 <button
                   key={count}
                   onClick={() => chooseGroupCount(count)}
-                  disabled={savingGroupCount}
-                  className={`rounded-lg border px-2 py-2 text-xs font-semibold disabled:opacity-50 ${groupCount === count ? 'bg-accent-700 border-accent-500 text-white' : 'bg-pool-700 border-pool-600 text-pool-300'}`}
+                  className={`rounded-lg border px-2 py-2 text-xs font-semibold ${groupCount === count ? 'bg-accent-700 border-accent-500 text-white' : 'bg-pool-700 border-pool-600 text-pool-300'}`}
                 >
                   {label}
                 </button>
@@ -436,11 +522,7 @@ export default function Register() {
                 <PredictionCard prediction={entry.ai_expected_response} />
                 <VoiceInput
                   onTranscript={(t) => update(entry.swimmer_id, 'coach_observation', t)}
-                  placeholder={entry.ai_expected_response?.watch_question
-                    ? entry.ai_expected_response.watch_question
-                    : watchedSwimmerIds.has(entry.swimmer_id)
-                    ? 'What did you observe against the watchpoint?'
-                    : 'Observation (optional)...'}
+                  placeholder="Attendance note (optional) — late, pre-pool, out early…"
                 />
 
                 {/* AI characterisation */}
@@ -453,9 +535,9 @@ export default function Register() {
 
       {/* Submit */}
       <div className="p-4 bg-pool-800 border-t border-pool-700 space-y-2 safe-bottom">
-        {watchpointsWithoutObservation.length > 0 && (
+        {openWatchpoints.length > 0 && (
           <p className="text-amber-300 text-xs text-center">
-            Watchpoint check: {watchpointObservationNames}{additionalWatchpointCount ? ` and ${additionalWatchpointCount} more` : ''} {watchpointsWithoutObservation.length === 1 ? 'has' : 'have'} no session observation yet.
+            Watchpoints open for {watchpointNames}{additionalWatchpointCount ? ` and ${additionalWatchpointCount} more` : ''} — cover {openWatchpoints.length === 1 ? 'it' : 'them'} in the debrief after you save.
           </p>
         )}
         <div className="flex gap-2">
@@ -471,7 +553,7 @@ export default function Register() {
             disabled={submitting || !groupCount}
             className="flex-1 bg-accent-600 rounded-xl py-3 text-sm font-semibold disabled:opacity-40"
           >
-            {!groupCount ? 'Choose session groups first' : submitting ? 'Assessing…' : session.status === 'completed' ? 'Reassess observations' : 'Finish + assess'}
+            {!groupCount ? 'Choose session groups first' : submitting ? 'Saving…' : session.status === 'completed' ? 'Reassess observations' : 'Finish + assess'}
           </button>
         </div>
       </div>

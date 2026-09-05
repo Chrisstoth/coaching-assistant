@@ -39,15 +39,21 @@ async function request(method, path, body = null, isFormData = false, options = 
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     const detail = err.detail
     const msg = typeof detail === 'string' ? detail : Array.isArray(detail) ? detail.map(d => d.msg || JSON.stringify(d)).join(', ') : JSON.stringify(detail) || `HTTP ${res.status}`
-    throw new Error(msg)
+    const error = new Error(msg)
+    error.status = res.status
+    throw error
   }
   if (res.status === 204) return null
   return res.json()
 }
 
-function isConnectionFailure(error) {
+function isRetryableRegisterFailure(error) {
   return (typeof navigator !== 'undefined' && !navigator.onLine)
     || error instanceof TypeError
+    || error?.name === 'AbortError'
+    || error?.name === 'TimeoutError'
+    || [408, 425, 429].includes(error?.status)
+    || error?.status >= 500
 }
 
 async function saveRegisterWithOfflineFallback(sessionId, data) {
@@ -55,9 +61,12 @@ async function saveRegisterWithOfflineFallback(sessionId, data) {
     return queueRegisterSave(sessionId, data)
   }
   try {
-    return await request('PUT', `/sessions/${sessionId}/register`, data)
+    const options = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+      ? { signal: AbortSignal.timeout(15000) }
+      : {}
+    return await request('PUT', `/sessions/${sessionId}/register`, data, false, options)
   } catch (error) {
-    if (isConnectionFailure(error)) return queueRegisterSave(sessionId, data)
+    if (isRetryableRegisterFailure(error)) return queueRegisterSave(sessionId, data)
     throw error
   }
 }
@@ -86,6 +95,15 @@ export const api = {
   },
   addObservation: (id, data) => request('POST', `/swimmers/${id}/observations`, data),
   deleteObservation: (id, obsId) => request('DELETE', `/swimmers/${id}/observations/${obsId}`),
+
+  // Unified profile — one synthesis across race, training, biological and
+  // technical. The four single-domain calls below remain for older profiles.
+  synthesiseUnifiedProfile: (id, { mode = 'auto', conversationContext } = {}) =>
+    request('POST', `/swimmers/${id}/profile/synthesise-unified`, {
+      mode,
+      ...(conversationContext ? { conversation_context: conversationContext } : {}),
+    }),
+  getUnifiedProfile: (id) => request('GET', `/swimmers/${id}/profile/unified`),
 
   // Versioned profiles
   synthesiseRaceProfile: (id, conversationContext) => request('POST', `/swimmers/${id}/profile/race/synthesise`, conversationContext ? { conversation_context: conversationContext } : {}),
@@ -154,7 +172,12 @@ export const api = {
   // Register
   getRegister: (sessionId) => request('GET', `/sessions/${sessionId}/register`),
   submitRegister: saveRegisterWithOfflineFallback,
-  flushOfflineSaves: () => flushOfflineSaves(request),
+  flushOfflineSaves: () => flushOfflineSaves((method, path, body) => {
+    const options = typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+      ? { signal: AbortSignal.timeout(15000) }
+      : {}
+    return request(method, path, body, false, options)
+  }),
   recommendGroups: (sessionId) => request('POST', `/sessions/${sessionId}/recommend-groups`),
 
   // Import
@@ -246,6 +269,9 @@ export const api = {
   updateMeetSession: (meetId, sessionId, data) => request('PUT', `/meets/${meetId}/timetable/${sessionId}`, data),
   deleteMeetSession: (meetId, sessionId) => request('DELETE', `/meets/${meetId}/timetable/${sessionId}`),
   importMeetTimetable: (meetId, data) => request('POST', `/meets/${meetId}/timetable/import`, data),
+  getMeetResults: (meetId) => request('GET', `/meets/${meetId}/results`),
+  saveMeetResults: (meetId, results) => request('POST', `/meets/${meetId}/results`, { results }),
+  dismissMeetResultsPrompt: (meetId) => request('POST', `/meets/${meetId}/dismiss-results-prompt`),
 
   // Qualification standards and deterministic comparisons
   getQualificationSets: (meetId = null) => request('GET', `/qualification-standards${meetId ? `?meet_id=${meetId}` : ''}`),
@@ -359,6 +385,8 @@ export const api = {
   chatCoachCheckIn: (id, message) => request('POST', `/coach-checkins/${id}/chat`, { message }),
   completeCoachCheckIn: (id) => request('POST', `/coach-checkins/${id}/complete`),
   skipCoachCheckIn: (id) => request('POST', `/coach-checkins/${id}/skip`),
+  applyCheckInProposals: (id, acceptedIds) =>
+    request('POST', `/coach-checkins/${id}/proposals/apply`, { accepted_ids: acceptedIds }),
 
   // Session print, club branding and coach terminology
   getSessionPresentation: () => request('GET', '/session-presentation'),
@@ -373,6 +401,17 @@ export const api = {
     return request('GET', `/ai/analyses/${swimmerId}${qs}`)
   },
   getAIUsage: (days = 30) => request('GET', `/ai-chat/usage?days=${days}`),
+  getAIOperations: (limit = 100) => request('GET', `/ai-operations?limit=${limit}`),
+
+  // Session debriefs
+  getSessionDebriefs: (sessionId) => request('GET', `/session-debriefs${sessionId ? `?session_id=${sessionId}` : ''}`),
+  startSessionDebrief: (data) => request('POST', '/session-debriefs', data),
+  getSessionDebrief: (id) => request('GET', `/session-debriefs/${id}`),
+  sendDebriefMessage: (id, message) => request('POST', `/session-debriefs/${id}/chat`, { message }),
+  completeSessionDebrief: (id) => request('POST', `/session-debriefs/${id}/complete`),
+  commitSessionDebrief: (id, decisions) => request('POST', `/session-debriefs/${id}/commit`, { decisions }),
+  getSessionsAwaitingDebrief: () => request('GET', '/dashboard/sessions-awaiting-debrief'),
+  retryAIOperation: (id) => request('POST', `/ai-operations/${id}/retry`),
 
   // Periodization
   generateMicro: (swimmerId) => request('POST', `/periodization/${swimmerId}/micro`),
