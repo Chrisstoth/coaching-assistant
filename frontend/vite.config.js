@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import fs from 'fs'
 
+const API_TARGET = process.env.VITE_API_TARGET || 'https://coaching-assistant-api.onrender.com'
+
 let httpsConfig = false
 try {
   httpsConfig = {
@@ -43,8 +45,12 @@ export default defineConfig({
     https: httpsConfig,
     proxy: {
       '/api': {
-        target: 'https://coaching-assistant-api.onrender.com',
+        // Defaults to the deployed API. Set VITE_API_TARGET to point at a
+        // local backend (http://localhost:8001) when trying out changes that
+        // are not deployed yet.
+        target: API_TARGET,
         changeOrigin: true,
+        secure: false,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
@@ -55,8 +61,12 @@ export default defineConfig({
     https: httpsConfig,
     proxy: {
       '/api': {
-        target: 'https://coaching-assistant-api.onrender.com',
+        // Defaults to the deployed API. Set VITE_API_TARGET to point at a
+        // local backend (http://localhost:8001) when trying out changes that
+        // are not deployed yet.
+        target: API_TARGET,
         changeOrigin: true,
+        secure: false,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
     },
