@@ -134,6 +134,104 @@ class CoreFlowTests(unittest.TestCase):
         deleted = self.client.delete(f"/sessions/{created.json()['id']}", headers=self.headers)
         self.assertEqual(deleted.status_code, 204, deleted.text)
 
+    def test_planner_reads_back_a_saved_occurrence_and_only_overwrites_on_request(self):
+        with SessionLocal() as db:
+            slot = models.PoolSlot(day_of_week=0, time="05:30", label="Planner Monday AM", squad="Test", active=True)
+            db.add(slot)
+            db.commit()
+            slot_id = slot.id
+
+        first = self.client.post(
+            "/sessions",
+            headers=self.headers,
+            json={
+                "date": "2026-08-24",
+                "title": "Original threshold set",
+                "pool_slot_id": slot_id,
+                "status": "planned",
+                "groups": {"1": {"description": "Whole squad", "sets": "6 x 400 @ 5:30"}},
+            },
+        )
+        self.assertEqual(first.status_code, 201, first.text)
+        session_id = first.json()["id"]
+
+        # The planner asks for exactly the occurrences on screen and learns which
+        # already hold a plan, so it can show a record rather than a blank page.
+        listed = self.client.get(
+            "/sessions",
+            headers=self.headers,
+            params={"date_from": "2026-08-24", "date_to": "2026-08-24", "pool_slot_id": slot_id},
+        )
+        self.assertEqual(listed.status_code, 200, listed.text)
+        self.assertEqual([row["id"] for row in listed.json()], [session_id])
+        self.assertTrue(listed.json()[0]["has_plan"])
+
+        # A shell with no plan is not a record; it is something to fill in.
+        with SessionLocal() as db:
+            shell = models.Session(date=date(2026, 8, 31), pool_slot_id=slot_id, status="active")
+            db.add(shell)
+            db.commit()
+            shell_id = shell.id
+        shell_row = self.client.get(
+            "/sessions", headers=self.headers,
+            params={"date_from": "2026-08-31", "date_to": "2026-08-31"},
+        )
+        self.assertFalse(shell_row.json()[0]["has_plan"])
+
+        # Saving again without asking to replace leaves the original untouched.
+        duplicate = self.client.post(
+            "/sessions",
+            headers=self.headers,
+            json={
+                "date": "2026-08-24",
+                "title": "Accidental second save",
+                "pool_slot_id": slot_id,
+                "groups": {"1": {"sets": "something else"}},
+            },
+        )
+        self.assertEqual(duplicate.status_code, 201, duplicate.text)
+        self.assertNotEqual(duplicate.json()["id"], session_id)
+        self.assertEqual(
+            self.client.get(f"/sessions/{session_id}", headers=self.headers).json()["title"],
+            "Original threshold set",
+        )
+        self.client.delete(f"/sessions/{duplicate.json()['id']}", headers=self.headers)
+
+        # A deliberate replace rewrites the same row instead of adding another.
+        replaced = self.client.post(
+            "/sessions",
+            headers=self.headers,
+            json={
+                "date": "2026-08-24",
+                "title": "Replanned speed set",
+                "pool_slot_id": slot_id,
+                "replace_session_id": session_id,
+                "groups": {"1": {"description": "Whole squad", "sets": "12 x 50 max"}},
+            },
+        )
+        self.assertEqual(replaced.status_code, 201, replaced.text)
+        self.assertEqual(replaced.json()["id"], session_id)
+        self.assertEqual(replaced.json()["title"], "Replanned speed set")
+        self.assertEqual(len(replaced.json()["groups"]), 1)
+        self.assertEqual(replaced.json()["groups"][0]["sets"], {"raw": "12 x 50 max"})
+
+        # Replacing across occurrences is refused rather than silently applied.
+        wrong_target = self.client.post(
+            "/sessions",
+            headers=self.headers,
+            json={
+                "date": "2026-08-31",
+                "title": "Wrong day",
+                "pool_slot_id": slot_id,
+                "replace_session_id": session_id,
+                "groups": {"1": {"sets": "nope"}},
+            },
+        )
+        self.assertEqual(wrong_target.status_code, 409, wrong_target.text)
+
+        for stale_id in (session_id, shell_id):
+            self.client.delete(f"/sessions/{stale_id}", headers=self.headers)
+
     def test_register_commits_before_ai_and_protects_against_stale_retries(self):
         with SessionLocal() as db:
             swimmer = models.Swimmer(name="Reliable Register Swimmer", squad="Test")

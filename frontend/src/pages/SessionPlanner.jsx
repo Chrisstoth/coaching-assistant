@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../api'
-import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
-import { buildSessionOccurrences, localIsoDate, nextSessionIndex } from '../sessionPlannerSchedule'
+import { sessionStatusLabel } from '../sessionStatus'
+import { DEFAULT_PRESENTATION, energyPresentation, groupSets, openSessionPrint } from '../sessionPresentation'
+import {
+  buildSessionOccurrences,
+  indexSessionsByOccurrence,
+  localIsoDate,
+  nextSessionIndex,
+  occurrenceKey,
+  occurrenceRange,
+} from '../sessionPlannerSchedule'
 
 const ENERGY_COLOURS = {
   aerobic: 'bg-blue-900/40 text-blue-300 border-blue-800',
@@ -38,6 +47,24 @@ function editablePhotoDraftText(draft) {
   return lines.join('\n\n')
 }
 
+const RECORD_STATUS_STYLE = {
+  planned: 'bg-accent-600/25 text-accent-300',
+  active: 'bg-teal-900/40 text-teal-300',
+  completed: 'bg-green-900/35 text-green-300',
+  cancelled: 'bg-red-900/35 text-red-300',
+  dismissed: 'bg-pool-600 text-pool-300',
+}
+
+/** A saved occurrence only earns a badge once it holds a plan, or was cancelled. */
+function recordStatus(session) {
+  if (!session) return null
+  if (session.status !== 'cancelled' && !session.has_plan) return null
+  return {
+    label: sessionStatusLabel(session.status),
+    className: RECORD_STATUS_STYLE[session.status] || RECORD_STATUS_STYLE.planned,
+  }
+}
+
 export default function SessionPlanner() {
   const [inputMethod, setInputMethod] = useState('text')
   const [text, setText] = useState('')
@@ -54,6 +81,10 @@ export default function SessionPlanner() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(null)
   const [presentation, setPresentation] = useState(DEFAULT_PRESENTATION)
+  const [sessionIndex, setSessionIndex] = useState({})
+  const [record, setRecord] = useState(null)
+  const [recordLoading, setRecordLoading] = useState(false)
+  const [replacing, setReplacing] = useState(false)
   const carouselRef = useRef(null)
   const cardRefs = useRef({})
   const scrollTimer = useRef(null)
@@ -74,6 +105,16 @@ export default function SessionPlanner() {
     ? null
     : slots.find(slot => String(slot.id) === String(poolSlotId)) || null
 
+  // What is already saved against the occurrence on screen. A plan that exists
+  // is shown as a record rather than a blank page, so it cannot be typed over.
+  const existingSession = sessionIndex[unscheduled ? occurrenceKey(date, null) : selectedKey] || null
+  const showingRecord = Boolean(existingSession) && !replacing
+    && (existingSession.has_plan || existingSession.status === 'cancelled')
+  const cancelled = existingSession?.status === 'cancelled'
+  // Fill an empty timetable session in place instead of creating a second one.
+  const fillsExistingShell = Boolean(existingSession) && !unscheduled && !existingSession.has_plan && !cancelled
+  const replaceTargetId = existingSession && (replacing || fillsExistingShell) ? existingSession.id : null
+
   useEffect(() => {
     if (slotsLoading || initialSelectionMade.current || occurrences.length === 0) return
     const next = occurrences[upcomingIndex]
@@ -87,6 +128,49 @@ export default function SessionPlanner() {
 
   useEffect(() => () => window.clearTimeout(scrollTimer.current), [])
 
+  const loadOccurrenceRecords = async () => {
+    const range = occurrenceRange(occurrences)
+    if (!range) return
+    try {
+      setSessionIndex(indexSessionsByOccurrence(await api.getSessions({ ...range, limit: 500 })))
+    } catch {
+      setSessionIndex({})
+    }
+  }
+
+  // A date off the timetable is not covered by the carousel range, so it is
+  // looked up on its own; the refresh replaces that day rather than merging
+  // over it, so a session deleted elsewhere stops being shown here.
+  const loadDateRecords = async target => {
+    try {
+      const fresh = indexSessionsByOccurrence(await api.getSessions({ date_from: target, date_to: target, limit: 50 }))
+      setSessionIndex(current => ({
+        ...Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${target}-`))),
+        ...fresh,
+      }))
+    } catch {
+      // Leave whatever is already known rather than blanking the record.
+    }
+  }
+
+  useEffect(() => { loadOccurrenceRecords() }, [occurrences])
+
+  useEffect(() => { if (unscheduled && date) loadDateRecords(date) }, [unscheduled, date])
+
+  useEffect(() => {
+    if (!existingSession?.id || !(existingSession.has_plan || cancelled)) {
+      setRecord(null)
+      return undefined
+    }
+    let stale = false
+    setRecordLoading(true)
+    api.getSession(existingSession.id)
+      .then(detail => { if (!stale) setRecord(detail) })
+      .catch(() => { if (!stale) setRecord(null) })
+      .finally(() => { if (!stale) setRecordLoading(false) })
+    return () => { stale = true }
+  }, [existingSession?.id, existingSession?.has_plan, cancelled])
+
   const clearPreview = () => {
     setResult(null)
     setSaved(null)
@@ -98,6 +182,7 @@ export default function SessionPlanner() {
     if (selectedKey !== occurrence.key) {
       setDate(occurrence.date)
       setPoolSlotId(String(occurrence.id))
+      setReplacing(false)
       clearPreview()
     }
     if (scroll) {
@@ -140,11 +225,13 @@ export default function SessionPlanner() {
     }
     setUnscheduled(true)
     setPoolSlotId('')
+    setReplacing(false)
     clearPreview()
   }
 
   const changeDate = value => {
     setDate(value)
+    setReplacing(false)
     clearPreview()
   }
 
@@ -263,6 +350,7 @@ export default function SessionPlanner() {
         groups,
         individual_mods: individualMods,
         pool_slot_id: selectedSlot?.id || null,
+        replace_session_id: replaceTargetId,
         start_time: selectedSlot?.time || null,
         end_time: selectedSlot?.end_time || null,
         squad: selectedSlot?.squad || null,
@@ -270,10 +358,27 @@ export default function SessionPlanner() {
         status: 'planned',
       })
       setSaved(session)
+      await (unscheduled ? loadDateRecords(date) : loadOccurrenceRecords())
     } catch (e) {
       alert('Error saving: ' + e.message)
     }
     setSaving(false)
+  }
+
+  const startReplacement = () => {
+    const label = record?.title || 'this session'
+    if (!window.confirm(`Replace the saved plan for ${label}? The current plan will be overwritten.`)) return
+    setReplacing(true)
+    clearPreview()
+  }
+
+  const printRecord = () => {
+    if (!record) return
+    try {
+      openSessionPrint({ session: record, settings: presentation })
+    } catch (error) {
+      alert(error.message)
+    }
   }
 
   const printSheet = () => {
@@ -305,11 +410,8 @@ export default function SessionPlanner() {
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 pt-4 pb-3 shrink-0 border-b border-pool-600">
-        <div className="flex items-center gap-2 mb-0.5">
-          <div className="w-1.5 h-5 bg-accent-500 rounded-full" />
-          <h1 className="text-lg font-bold tracking-tight">Session Planner</h1>
-        </div>
-        <p className="text-pool-400 text-xs pl-3.5">Write a session in plain text — get an AI preview and a printable sheet</p>
+        <h1 className="text-lg font-bold tracking-tight mb-0.5">Session Planner</h1>
+        <p className="text-pool-400 text-xs">Write a session in plain text — get an AI preview and a printable sheet</p>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -348,6 +450,7 @@ export default function SessionPlanner() {
                 {occurrences.map((occurrence, index) => {
                   const selected = selectedKey === occurrence.key
                   const period = Number(String(occurrence.time || '12:00').split(':')[0]) < 12 ? 'AM' : 'PM'
+                  const status = recordStatus(sessionIndex[occurrence.key])
                   return (
                     <button
                       type="button"
@@ -365,9 +468,14 @@ export default function SessionPlanner() {
                           <p className="text-sm font-semibold">{occurrenceDateLabel(occurrence.date)} · {period}</p>
                           <p className="text-xs text-pool-400 mt-0.5">{occurrence.label || occurrence.squad || 'Training session'}</p>
                         </div>
-                        {index === upcomingIndex && (
-                          <span className="text-[9px] uppercase tracking-wide font-semibold text-teal-300 bg-teal-900/35 rounded-full px-2 py-0.5">Next</span>
-                        )}
+                        <div className="flex flex-col items-end gap-1 shrink-0">
+                          {index === upcomingIndex && (
+                            <span className="text-[9px] uppercase tracking-wide font-semibold text-teal-300 bg-teal-900/35 rounded-full px-2 py-0.5">Next</span>
+                          )}
+                          {status && (
+                            <span className={`text-[9px] uppercase tracking-wide font-semibold rounded-full px-2 py-0.5 ${status.className}`}>{status.label}</span>
+                          )}
+                        </div>
                       </div>
                       <p className="text-xs mt-2">
                         {occurrence.time}{occurrence.end_time ? `–${occurrence.end_time}` : ''}
@@ -404,6 +512,161 @@ export default function SessionPlanner() {
               </div>
             )}
           </div>
+        </div>
+
+        {/* Existing session record — the planner doubles as a read-back of what is
+            already saved, so an occurrence cannot be planned over by accident. */}
+        {showingRecord && (
+          <div className="px-4 pt-3 pb-6">
+            <div className="bg-pool-800 border border-pool-700 rounded-xl p-3 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] uppercase tracking-wide text-pool-500">Session record</p>
+                  <h2 className="font-bold text-base text-pool-100 mt-0.5">
+                    {record?.title || existingSession.title || 'Saved session'}
+                  </h2>
+                  <p className="text-xs text-pool-400 mt-0.5">
+                    {occurrenceDateLabel(existingSession.date)}
+                    {existingSession.start_time ? ` · ${existingSession.start_time}${existingSession.end_time ? `–${existingSession.end_time}` : ''}` : ''}
+                    {existingSession.squad ? ` · ${existingSession.squad}` : ''}
+                    {existingSession.course ? ` · ${existingSession.course}` : ''}
+                  </p>
+                </div>
+                {recordStatus(existingSession) && (
+                  <span className={`shrink-0 text-[10px] uppercase tracking-wide font-semibold rounded-full px-2 py-0.5 ${recordStatus(existingSession).className}`}>
+                    {recordStatus(existingSession).label}
+                  </span>
+                )}
+              </div>
+
+              <p className="text-[11px] text-pool-500 leading-relaxed">
+                {cancelled
+                  ? 'This occurrence was cancelled, so it cannot be planned over here.'
+                  : 'A plan is already saved here. Nothing on this page changes it unless you choose to replace it.'}
+              </p>
+
+              {cancelled && existingSession.cancel_reason && (
+                <p className="text-xs text-red-300 bg-red-900/20 rounded-lg px-3 py-2">{existingSession.cancel_reason}</p>
+              )}
+
+              {recordLoading && !record ? (
+                <p className="text-xs text-pool-400">Loading the saved session…</p>
+              ) : record ? (
+                <div className="space-y-3">
+                  {(record.energy_system_focus || record.cycle_code) && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {record.energy_system_focus && (
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${ENERGY_COLOURS[record.energy_system_focus] || 'bg-pool-700 text-pool-400 border-pool-600'}`}>
+                          {displayEnergy(record.energy_system_focus).label}
+                        </span>
+                      )}
+                      {record.cycle_code && <span className="text-xs text-pool-400">Cycle {record.cycle_code}</span>}
+                    </div>
+                  )}
+
+                  {record.coach_intent && (
+                    <div className="bg-pool-700 border border-pool-600 rounded-xl p-3">
+                      <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-1.5">Session Intent</p>
+                      <p className="text-sm text-pool-200 leading-relaxed">{record.coach_intent}</p>
+                    </div>
+                  )}
+
+                  {(record.groups || []).length > 0 && (
+                    <div className="space-y-2">
+                      {record.groups.map(group => (
+                        <div key={group.id} className="bg-pool-700 border border-pool-600 rounded-xl overflow-hidden">
+                          <div className="flex items-baseline gap-2 px-3 py-2 border-b border-pool-600">
+                            <span className="font-bold text-sm">Group {group.group_number}</span>
+                            <span className="text-xs text-pool-400">{group.description}</span>
+                          </div>
+                          <ul className="px-3 py-2 space-y-1.5">
+                            {groupSets(group).map((line, index) => (
+                              <li key={index} className="text-sm text-pool-200 flex gap-2">
+                                <span className="text-pool-600 shrink-0">›</span>
+                                <span>{line}</span>
+                              </li>
+                            ))}
+                          </ul>
+                          {Object.values(group.volume_breakdown || {}).some(value => Number(value) > 0) && (
+                            <div className="px-3 pb-3 flex flex-wrap gap-1.5">
+                              {Object.entries(group.volume_breakdown).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (
+                                <span key={zone} className="text-[11px] bg-pool-800 border border-pool-600 text-pool-300 rounded-full px-2 py-0.5">
+                                  {displayEnergy(zone).label} {Number(value)}m
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {Object.keys(record.individual_mods || {}).length > 0 && (
+                    <div className="bg-pool-700 border border-pool-600 rounded-xl p-3">
+                      <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-1.5">Swimmer Adaptations</p>
+                      <div className="space-y-1">
+                        {Object.entries(record.individual_mods).map(([name, note]) => (
+                          <p key={name} className="text-xs text-pool-300">
+                            <span className="font-semibold text-pool-200">{name}</span> — {note}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {record.coach_notes && (
+                    <div className="bg-pool-700 border border-pool-600 rounded-xl p-3">
+                      <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide mb-1.5">Coach Notes</p>
+                      <p className="text-sm text-pool-200 leading-relaxed whitespace-pre-line">{record.coach_notes}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-pool-400">The saved session could not be loaded. Open it to see the detail.</p>
+              )}
+
+              <div className="flex flex-wrap gap-2 pt-1">
+                <Link
+                  to={`/sessions/${existingSession.id}`}
+                  className="bg-accent-600 hover:bg-accent-500 rounded-xl px-3 py-2 text-xs font-semibold transition-colors"
+                >
+                  Open session
+                </Link>
+                {record && (
+                  <button
+                    type="button"
+                    onClick={printRecord}
+                    className="bg-pool-700 border border-pool-600 hover:border-accent-500 rounded-xl px-3 py-2 text-xs font-semibold transition-colors"
+                  >
+                    Print sheet
+                  </button>
+                )}
+                {!cancelled && (
+                  <button
+                    type="button"
+                    onClick={startReplacement}
+                    className="bg-pool-700 border border-pool-600 hover:border-red-500 text-pool-300 rounded-xl px-3 py-2 text-xs font-semibold transition-colors"
+                  >
+                    Replace plan
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!showingRecord && (
+        <div className="px-4 pt-3 space-y-3">
+          {replacing && (
+            <p className="text-xs text-amber-300 bg-amber-900/20 border border-amber-800/40 rounded-xl px-3 py-2">
+              Replacing the saved plan for this session. Saving overwrites it; leaving without saving changes nothing.
+            </p>
+          )}
+          {fillsExistingShell && (
+            <p className="text-xs text-pool-400 bg-pool-800 border border-pool-700 rounded-xl px-3 py-2">
+              This session is already on the calendar but has no plan yet. Saving fills it in rather than creating a second one.
+            </p>
+          )}
 
           {/* Session source */}
           <div>
@@ -573,9 +836,10 @@ export default function SessionPlanner() {
             </p>
           )}
         </div>
+        )}
 
         {/* Results */}
-        {result && (
+        {!showingRecord && result && (
           <div className="px-4 pt-5 pb-6 space-y-4">
             {/* Session title + meta */}
             <div className="flex items-start justify-between gap-3">
@@ -609,7 +873,7 @@ export default function SessionPlanner() {
                     disabled={saving}
                     className="bg-accent-600 hover:bg-accent-500 disabled:opacity-40 rounded-xl px-3 py-2 text-xs font-semibold transition-colors"
                   >
-                    {saving ? 'Saving…' : 'Save session'}
+                    {saving ? 'Saving…' : replacing ? 'Replace session' : 'Save session'}
                   </button>
                 )}
               </div>

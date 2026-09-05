@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { SESSION_STATUS_LABELS } from '../sessionStatus'
 import useLongPress from '../hooks/useLongPress'
 import { calendarDayLabel, localDateIso as toIso, mondayFor as getMonday } from '../calendarDates'
 
@@ -21,12 +22,12 @@ const STATUS_STYLES = {
 }
 
 const STATUS_CHIP = {
-  completed: { label: 'Done',        cls: 'bg-emerald-800 text-emerald-200' },
-  active:    { label: 'In progress', cls: 'bg-blue-800 text-blue-200' },
-  cancelled: { label: 'Cancelled',   cls: 'bg-pool-700 text-pool-400' },
-  dismissed: { label: 'Hidden',      cls: 'bg-pool-700 text-pool-500' },
-  planned:   { label: 'Planned',     cls: 'bg-pool-700 text-pool-300' },
-  unlogged:  { label: 'Not logged',  cls: 'bg-amber-800 text-amber-200' },
+  completed: { label: SESSION_STATUS_LABELS.completed, cls: 'bg-emerald-800 text-emerald-200' },
+  active:    { label: SESSION_STATUS_LABELS.active,    cls: 'bg-blue-800 text-blue-200' },
+  cancelled: { label: SESSION_STATUS_LABELS.cancelled, cls: 'bg-pool-700 text-pool-400' },
+  dismissed: { label: SESSION_STATUS_LABELS.dismissed, cls: 'bg-pool-700 text-pool-500' },
+  planned:   { label: SESSION_STATUS_LABELS.planned,   cls: 'bg-pool-700 text-pool-300' },
+  unlogged:  { label: SESSION_STATUS_LABELS.unlogged,  cls: 'bg-amber-800 text-amber-200' },
 }
 
 const CANCEL_REASONS = ['Pool unavailable', 'Public holiday', 'Coach unavailable', 'Low attendance', 'Weather', 'Other']

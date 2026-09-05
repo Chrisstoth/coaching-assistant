@@ -48,6 +48,10 @@ class SessionCreate(BaseModel):
     register_group_count: Optional[int] = Field(default=None, ge=1, le=3)
     microcycle_id: Optional[int] = None
     session_sequence: Optional[int] = Field(default=None, ge=1)
+    # Set only when the coach has deliberately chosen to overwrite the plan
+    # already recorded against this occurrence. Without it a save always
+    # creates a new session, so an existing record can never be lost by accident.
+    replace_session_id: Optional[int] = None
 
 
 class CalendarStart(BaseModel):
@@ -118,6 +122,9 @@ def _meaningful_group(content) -> bool:
 @router.get("")
 def list_sessions(
     squad: Optional[str] = None,
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    pool_slot_id: Optional[int] = None,
     limit: int = 30,
     offset: int = 0,
     db: DBSession = Depends(get_db),
@@ -125,8 +132,65 @@ def list_sessions(
     q = db.query(models.Session).order_by(models.Session.date.desc())
     if squad:
         q = q.filter(models.Session.squad == squad)
+    if date_from:
+        q = q.filter(models.Session.date >= date_from)
+    if date_to:
+        q = q.filter(models.Session.date <= date_to)
+    if pool_slot_id is not None:
+        q = q.filter(models.Session.pool_slot_id == pool_slot_id)
     sessions = q.offset(offset).limit(limit).all()
-    return [_session_summary(s) for s in sessions]
+    planned_ids = _session_ids_with_groups([s.id for s in sessions], db)
+    return [_session_summary(s, planned_ids) for s in sessions]
+
+
+def _replace_session_plan(body: SessionCreate, meaningful_groups: dict, db: DBSession) -> dict:
+    """Overwrite the plan on an existing session the coach chose to replace."""
+    session = db.query(models.Session).filter(
+        models.Session.id == body.replace_session_id
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session to replace not found")
+    if session.date != body.date or session.pool_slot_id != body.pool_slot_id:
+        raise HTTPException(
+            status_code=409,
+            detail="That session is on a different occurrence, so it was not replaced.",
+        )
+    if session.status == "cancelled":
+        raise HTTPException(status_code=409, detail="A cancelled session cannot be replanned.")
+
+    session.title = body.title
+    session.coach_intent = body.coach_intent
+    session.energy_system_focus = body.energy_system_focus
+    session.energy_analysis = body.energy_analysis
+    session.coach_notes = body.coach_notes
+    session.planned_content = body.groups
+    session.individual_mods = body.individual_mods
+    session.register_group_count = (
+        body.register_group_count if body.register_group_count is not None
+        else (len(meaningful_groups) if meaningful_groups else None)
+    )
+    if body.squad:
+        session.squad = body.squad
+    if body.course:
+        session.course = body.course
+
+    for group in db.query(models.SessionGroup).filter(
+        models.SessionGroup.session_id == session.id
+    ).all():
+        db.delete(group)
+    db.flush()
+    for group_num, content in meaningful_groups.items():
+        db.add(models.SessionGroup(
+            session_id=session.id,
+            group_number=int(group_num),
+            description=content.get("description", ""),
+            sets={"raw": content.get("sets", "")},
+            volume_breakdown=content.get("volume_breakdown") or None,
+        ))
+
+    db.commit()
+    db.refresh(session)
+    return _session_detail(session, db)
 
 
 @router.post("", status_code=201)
@@ -135,6 +199,8 @@ def create_session(body: SessionCreate, db: DBSession = Depends(get_db)):
         group_num: content for group_num, content in (body.groups or {}).items()
         if _meaningful_group(content)
     }
+    if body.replace_session_id:
+        return _replace_session_plan(body, meaningful_groups, db)
     session = models.Session(
         date=body.date,
         start_time=body.start_time,
@@ -1223,7 +1289,24 @@ def _decode_ai_json(value):
         return value
 
 
-def _session_summary(s: models.Session) -> dict:
+def _session_ids_with_groups(session_ids: list[int], db: DBSession) -> set[int]:
+    """Which of these sessions have group rows, in one query rather than N."""
+    if not session_ids:
+        return set()
+    rows = db.query(models.SessionGroup.session_id).filter(
+        models.SessionGroup.session_id.in_(session_ids)
+    ).distinct().all()
+    return {row[0] for row in rows}
+
+
+def _has_plan(s: models.Session, planned_ids: Optional[set[int]] = None) -> bool:
+    """True when a session carries real planned work, not just a calendar shell."""
+    if s.planned_content or s.coach_intent or s.coach_notes:
+        return True
+    return s.id in planned_ids if planned_ids is not None else bool(s.groups)
+
+
+def _session_summary(s: models.Session, planned_ids: Optional[set[int]] = None) -> dict:
     context = cycle_context(s)
     return {
         "id": s.id,
@@ -1245,6 +1328,7 @@ def _session_summary(s: models.Session) -> dict:
         "session_sequence": s.session_sequence,
         "cycle_code": s.cycle_code,
         "cycle_context": context,
+        "has_plan": _has_plan(s, planned_ids),
     }
 
 
