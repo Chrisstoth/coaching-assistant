@@ -22,6 +22,15 @@ function ThinkingDots() {
 // a real, tappable button right where the AI just asked to save.
 const READY_TO_SAVE_MARKER = '[[READY_TO_SAVE]]'
 
+// The system prompt asks the AI to append READY_TO_SAVE_MARKER, but a model
+// doesn't always reproduce an arbitrary formatting token reliably. It is told
+// to always name the button "Save Profile" verbatim in the same sentence, so
+// that mention is the primary, sturdier signal — the marker is a bonus, not
+// the only path.
+function messageSignalsReadyToSave(content) {
+  return content.includes(READY_TO_SAVE_MARKER) || /save profile/i.test(content)
+}
+
 function MessageContent({ text }) {
   const lines = text.split('\n')
   return (
@@ -381,7 +390,7 @@ export default function ProfileWizard() {
     }
   }
 
-  const readySignalled = messages.some(m => m.role === 'assistant' && m.content.includes(READY_TO_SAVE_MARKER))
+  const readySignalled = messages.some(m => m.role === 'assistant' && messageSignalsReadyToSave(m.content))
   const canSave = (readySignalled || (messages.length >= 6 && messages.at(-1)?.role === 'assistant')) && !saved
 
   return (
@@ -513,7 +522,7 @@ export default function ProfileWizard() {
         )}
 
         {mode === 'chat' && messages.map((m, i) => {
-          const ready = m.role === 'assistant' && m.content.includes(READY_TO_SAVE_MARKER)
+          const ready = m.role === 'assistant' && messageSignalsReadyToSave(m.content)
           const displayText = ready ? m.content.split(READY_TO_SAVE_MARKER).join('').trim() : m.content
           return (
             <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
