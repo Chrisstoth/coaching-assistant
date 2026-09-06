@@ -5971,6 +5971,7 @@ def plan_and_analyse_session(
     expected_swimmers: list,
     coaching_context: str,
     db: DBSession,
+    messages: Optional[list] = None,
 ) -> dict:
     """
     Parse a free-text session description and generate a pre-session analysis:
@@ -5978,7 +5979,17 @@ def plan_and_analyse_session(
     - Plan alignment with current training block
     - Per-swimmer group suggestions and notes
     - Expected physiological effects
+
+    Pass `messages` — the `messages` list from an earlier call's return value —
+    with `session_text` as the coach's follow-up note to revise that plan in
+    place rather than generating a fresh one from scratch. The returned dict
+    always carries an updated `messages` list to pass into the next turn.
     """
+    if messages:
+        conversation = list(messages)
+        conversation.append({"role": "user", "content": session_text})
+        return _run_session_plan_conversation(conversation, db)
+
     planning_date = None
     if date_str:
         try:
@@ -6046,14 +6057,24 @@ Rules:
 - If no expected swimmers, return per_swimmer as an empty array.
 - Do not include markdown in set descriptions — plain text only.
 - Keep set descriptions concise but complete (e.g. "6x400 on 5:30, threshold pace").
+
+The coach may follow up in this same conversation asking for a revision (e.g. "make the
+main set longer", "swap the kick set for pull", "Tom should do less volume"). When that
+happens, adjust only what was asked for, keep everything else from your last plan as-is,
+and return the complete plan again in the exact same JSON structure — never a partial diff.
 """
 
+    conversation = [{"role": "user", "content": prompt}]
+    return _run_session_plan_conversation(conversation, db)
+
+
+def _run_session_plan_conversation(conversation: list, db: DBSession) -> dict:
     response = get_client().messages.create(
         model=FAST_MODEL,
         max_tokens=1800,
         timeout=35.0,
         system=get_system_prompt(db),
-        messages=[{"role": "user", "content": prompt}],
+        messages=conversation,
     )
 
     raw = response_text(response)
@@ -6083,9 +6104,12 @@ Rules:
                 "sets": sets,
             }
     if not cleaned_groups:
-        cleaned_groups["1"] = {"label": "Session", "sets": [session_text]}
+        cleaned_groups["1"] = {"label": "Session", "sets": ["The planner did not return any sets — try rephrasing your session."]}
     parsed["groups"] = cleaned_groups
     result["per_swimmer"] = result.get("per_swimmer") if isinstance(result.get("per_swimmer"), list) else []
+
+    conversation.append({"role": "assistant", "content": raw})
+    result["messages"] = conversation
     return result
 
 

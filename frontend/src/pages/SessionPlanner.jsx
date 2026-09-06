@@ -80,6 +80,14 @@ export default function SessionPlanner() {
   const [error, setError] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(null)
+  // Conversation state for revising the plan in place. `messages` is the raw
+  // exchange the backend needs to continue the thread — never persisted, it
+  // only lives for as long as this page does. `revisionLog` is just what the
+  // coach asked for, shown for their own context.
+  const [messages, setMessages] = useState(null)
+  const [revisionText, setRevisionText] = useState('')
+  const [revising, setRevising] = useState(false)
+  const [revisionLog, setRevisionLog] = useState([])
   const [presentation, setPresentation] = useState(DEFAULT_PRESENTATION)
   const [sessionIndex, setSessionIndex] = useState({})
   const [record, setRecord] = useState(null)
@@ -175,6 +183,9 @@ export default function SessionPlanner() {
     setResult(null)
     setSaved(null)
     setError(null)
+    setMessages(null)
+    setRevisionText('')
+    setRevisionLog([])
   }
 
   const selectOccurrence = (occurrence, scroll = true) => {
@@ -295,6 +306,8 @@ export default function SessionPlanner() {
     setError(null)
     setResult(null)
     setSaved(null)
+    setMessages(null)
+    setRevisionLog([])
     const controller = new AbortController()
     const timeout = window.setTimeout(() => controller.abort(), inputMethod === 'photo' ? 110000 : 70000)
     try {
@@ -310,6 +323,7 @@ export default function SessionPlanner() {
         squad: selectedSlot?.squad || null,
       }, { signal: controller.signal })
       setResult(data)
+      setMessages(data.messages || null)
     } catch (e) {
       setError(e.name === 'AbortError'
         ? 'The planner took too long to respond. Please try again; your session idea is still in the box.'
@@ -317,6 +331,36 @@ export default function SessionPlanner() {
     } finally {
       window.clearTimeout(timeout)
       setLoading(false)
+    }
+  }
+
+  const revisePlan = async () => {
+    const note = revisionText.trim()
+    if (!note || !messages || revising) return
+    setRevising(true)
+    setError(null)
+    const controller = new AbortController()
+    const timeout = window.setTimeout(() => controller.abort(), 70000)
+    try {
+      const data = await api.planSession({
+        text: note,
+        date,
+        pool_slot_id: selectedSlot?.id || null,
+        squad: selectedSlot?.squad || null,
+        messages,
+      }, { signal: controller.signal })
+      setResult(data)
+      setMessages(data.messages || null)
+      setRevisionLog(prev => [...prev, note])
+      setRevisionText('')
+      setSaved(null)
+    } catch (e) {
+      setError(e.name === 'AbortError'
+        ? 'The planner took too long to respond. Please try again — your request is still in the box.'
+        : e.message)
+    } finally {
+      window.clearTimeout(timeout)
+      setRevising(false)
     }
   }
 
@@ -990,6 +1034,37 @@ export default function SessionPlanner() {
               <div className="bg-accent-600/10 border border-accent-600/30 rounded-xl p-3">
                 <p className="text-xs font-semibold text-accent-400 uppercase tracking-wide mb-1.5">Expected Effects</p>
                 <p className="text-sm text-pool-200 leading-relaxed">{result.expected_effects}</p>
+              </div>
+            )}
+
+            {/* Revise in place — a lightweight, unsaved conversation to refine
+                this plan before committing it. Nothing here persists. */}
+            {messages && (
+              <div className="bg-pool-800 border border-pool-700 rounded-xl p-3 space-y-2">
+                <p className="text-xs font-semibold text-pool-300">Ask for a change</p>
+                {revisionLog.length > 0 && (
+                  <div className="space-y-1">
+                    {revisionLog.map((note, i) => (
+                      <p key={i} className="text-[11px] text-pool-500">• {note}</p>
+                    ))}
+                  </div>
+                )}
+                <div className="flex gap-2">
+                  <input
+                    value={revisionText}
+                    onChange={e => setRevisionText(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter' && !revising) revisePlan() }}
+                    placeholder="e.g. make the main set longer, swap kick for pull"
+                    className="flex-1 bg-pool-700 border border-pool-600 rounded-xl px-3 py-2.5 text-sm focus:border-accent-500 focus:outline-none"
+                  />
+                  <button
+                    onClick={revisePlan}
+                    disabled={revising || !revisionText.trim()}
+                    className="bg-pool-700 border border-pool-600 hover:border-accent-500 disabled:opacity-40 rounded-xl px-4 text-sm font-semibold transition-colors shrink-0"
+                  >
+                    {revising ? 'Revising…' : 'Revise'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

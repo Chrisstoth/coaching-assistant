@@ -2316,6 +2316,137 @@ class CoreFlowTests(unittest.TestCase):
                 )
                 db.commit()
 
+    def test_session_plan_revision_skips_swimmer_lookup_and_forwards_messages(self):
+        prior_messages = [
+            {"role": "user", "content": "Build me a threshold session."},
+            {"role": "assistant", "content": "{}"},
+        ]
+        revised = {
+            "parsed": {
+                "title": "Progressive threshold",
+                "coach_intent": "Build repeatable threshold pace.",
+                "energy_focus": "threshold",
+                "warm_up": None,
+                "cool_down": None,
+                "total_volume_m": "~1600m",
+                "groups": {"1": {"label": "Whole squad", "sets": ["4x400 on 5:30 progressive"]}},
+            },
+            "plan_alignment": "Fits the current block.",
+            "per_swimmer": [],
+            "expected_effects": "Build pace control.",
+            "messages": prior_messages + [
+                {"role": "user", "content": "Make it one rep longer."},
+                {"role": "assistant", "content": "{}"},
+            ],
+        }
+        analysis = {
+            "energy_system_focus": "threshold",
+            "primary_emphasis": "Threshold pace control",
+            "density": "high",
+            "total_metres": 1600,
+            "group_breakdowns": {"1": {"total_metres": 1600, "zones": {"aerobic": 200, "threshold": 1400}}},
+            "assumptions": [],
+        }
+        with patch(
+            "backend.routers.sessions.claude_service.plan_and_analyse_session",
+            return_value=revised,
+        ) as planner, patch(
+            "backend.routers.sessions.claude_service.analyse_session_energy",
+            return_value=analysis,
+        ), patch(
+            "backend.routers.coaching_context.get_current_coaching_context",
+        ) as coaching_context:
+            response = self.client.post(
+                "/sessions/plan",
+                headers=self.headers,
+                json={
+                    "date": "2026-08-24",
+                    "squad": "Planner Squad",
+                    # Deliberately a slot that does not exist — resolving it would 404,
+                    # which is exactly how this test catches a revision that forgot to
+                    # skip the timetable/swimmer lookup it doesn't need.
+                    "pool_slot_id": 999999,
+                    "text": "Make it one rep longer.",
+                    "messages": prior_messages,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        planner.assert_called_once()
+        self.assertEqual(planner.call_args.kwargs["messages"], prior_messages)
+        self.assertEqual(planner.call_args.kwargs["expected_swimmers"], [])
+        self.assertEqual(planner.call_args.kwargs["session_text"], "Make it one rep longer.")
+        coaching_context.assert_not_called()
+        self.assertEqual(response.json()["messages"], revised["messages"])
+
+    def test_plan_and_analyse_session_revision_continues_the_conversation(self):
+        from backend.services.claude_service import plan_and_analyse_session
+
+        prior_messages = [
+            {"role": "user", "content": "Build me a threshold session, one long progressive main set."},
+            {"role": "assistant", "content": json.dumps({
+                "parsed": {
+                    "title": "Progressive threshold",
+                    "coach_intent": "Build repeatable threshold pace.",
+                    "energy_focus": "threshold",
+                    "warm_up": None,
+                    "cool_down": None,
+                    "total_volume_m": "~1200m",
+                    "groups": {"1": {"label": "Whole squad", "sets": ["3x400 on 5:30 progressive"]}},
+                },
+                "plan_alignment": "Fits the current block.",
+                "per_swimmer": [],
+                "expected_effects": "Build pace control.",
+            })},
+        ]
+        revised_response = SimpleNamespace(content=[SimpleNamespace(text=json.dumps({
+            "parsed": {
+                "title": "Progressive threshold",
+                "coach_intent": "Build repeatable threshold pace.",
+                "energy_focus": "threshold",
+                "warm_up": None,
+                "cool_down": None,
+                "total_volume_m": "~1600m",
+                "groups": {"1": {"label": "Whole squad", "sets": ["4x400 on 5:30 progressive"]}},
+            },
+            "plan_alignment": "Fits the current block.",
+            "per_swimmer": [],
+            "expected_effects": "Build pace control, slightly longer.",
+        }))])
+
+        # The mock's call_args would alias the same list object the function later
+        # appends the assistant reply onto, so snapshot it at call-time instead —
+        # that's the only way to see exactly what was sent, not what it became.
+        sent_snapshot = []
+
+        def _capture_and_respond(*args, **kwargs):
+            sent_snapshot.extend(kwargs["messages"])
+            return revised_response
+
+        with SessionLocal() as db:
+            with patch("backend.services.claude_service.get_client") as client:
+                client.return_value.messages.create.side_effect = _capture_and_respond
+                result = plan_and_analyse_session(
+                    session_text="Make the main set one rep longer.",
+                    date_str="2026-08-24",
+                    squad="Planner Squad",
+                    expected_swimmers=[],
+                    coaching_context="",
+                    db=db,
+                    messages=prior_messages,
+                )
+
+        sent_messages = sent_snapshot
+        # The prior turns must survive untouched, with exactly one new user turn
+        # appended — never truncated, rewritten, or duplicated.
+        self.assertEqual(sent_messages[:2], prior_messages)
+        self.assertEqual(len(sent_messages), 3)
+        self.assertEqual(sent_messages[-1], {"role": "user", "content": "Make the main set one rep longer."})
+        self.assertEqual(result["parsed"]["groups"]["1"]["sets"], ["4x400 on 5:30 progressive"])
+        self.assertEqual(len(result["messages"]), 4)
+        self.assertEqual(result["messages"][-1]["role"], "assistant")
+        self.assertEqual(result["messages"][:3], sent_messages)
+
     def test_session_planner_photo_returns_editable_draft_without_saving(self):
         extracted = {
             "title": "Threshold board",

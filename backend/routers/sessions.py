@@ -1120,7 +1120,11 @@ def recommend_groups(session_id: int, db: DBSession = Depends(get_db)):
 def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
     """
     Parse a free-text session description and return a structured plan + AI analysis.
-    Pulls expected swimmers from schedule for the given date/squad.
+    Pulls expected swimmers from schedule for the given date/squad on the first turn.
+
+    Pass the `messages` array from a previous response back, with `text` as the
+    coach's follow-up note, to revise that plan in the same conversation instead
+    of generating a fresh one from scratch.
     """
     from backend.routers.coaching_context import get_current_coaching_context
     from datetime import date as date_type
@@ -1129,68 +1133,81 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
     date_str = body.get("date")
     squad = body.get("squad")
     pool_slot_id = body.get("pool_slot_id")
+    conversation = body.get("messages")
 
     if not text:
         raise HTTPException(400, "Session text required")
 
-    # Resolve expected swimmers from schedule
     expected_swimmers = []
     selected_slot = None
-    if date_str:
-        try:
-            d = date_type.fromisoformat(date_str)
-            day_of_week = d.weekday()  # 0=Mon … 6=Sun
-            if pool_slot_id is not None:
-                try:
-                    pool_slot_id = int(pool_slot_id)
-                except (TypeError, ValueError):
-                    raise HTTPException(400, "Pool slot ID must be a number")
-                selected_slot = db.query(models.PoolSlot).filter(
-                    models.PoolSlot.id == pool_slot_id,
-                    models.PoolSlot.active == True,
-                ).first()
-                if not selected_slot:
-                    raise HTTPException(404, "Timetable session not found")
-                if selected_slot.day_of_week != day_of_week:
-                    raise HTTPException(400, "Selected timetable session does not occur on this date")
-                slots = [selected_slot]
-                squad = selected_slot.squad
-            else:
-                slots_q = db.query(models.PoolSlot).filter(
-                    models.PoolSlot.day_of_week == day_of_week,
-                    models.PoolSlot.active == True,
-                )
-                if squad:
-                    slots_q = slots_q.filter(models.PoolSlot.squad == squad)
-                slots = slots_q.all()
 
-            slot_ids = [slot.id for slot in slots]
-            swimmer_ids = {
-                swimmer_id for swimmer_id, in db.query(models.SwimmerSlot.swimmer_id).filter(
-                    models.SwimmerSlot.pool_slot_id.in_(slot_ids)
-                ).all()
-            } if slot_ids else set()
-            swimmer_ids.difference_update(availability_on_date(db, swimmer_ids, d))
+    if conversation:
+        result = claude_service.plan_and_analyse_session(
+            session_text=text,
+            date_str=date_str,
+            squad=squad,
+            expected_swimmers=expected_swimmers,
+            coaching_context="",
+            db=db,
+            messages=conversation,
+        )
+    else:
+        # Resolve expected swimmers from schedule
+        if date_str:
+            try:
+                d = date_type.fromisoformat(date_str)
+                day_of_week = d.weekday()  # 0=Mon … 6=Sun
+                if pool_slot_id is not None:
+                    try:
+                        pool_slot_id = int(pool_slot_id)
+                    except (TypeError, ValueError):
+                        raise HTTPException(400, "Pool slot ID must be a number")
+                    selected_slot = db.query(models.PoolSlot).filter(
+                        models.PoolSlot.id == pool_slot_id,
+                        models.PoolSlot.active == True,
+                    ).first()
+                    if not selected_slot:
+                        raise HTTPException(404, "Timetable session not found")
+                    if selected_slot.day_of_week != day_of_week:
+                        raise HTTPException(400, "Selected timetable session does not occur on this date")
+                    slots = [selected_slot]
+                    squad = selected_slot.squad
+                else:
+                    slots_q = db.query(models.PoolSlot).filter(
+                        models.PoolSlot.day_of_week == day_of_week,
+                        models.PoolSlot.active == True,
+                    )
+                    if squad:
+                        slots_q = slots_q.filter(models.PoolSlot.squad == squad)
+                    slots = slots_q.all()
 
-            if swimmer_ids:
-                swimmers = db.query(models.Swimmer).filter(
-                    models.Swimmer.id.in_(swimmer_ids),
-                    models.Swimmer.active == True,
-                ).order_by(models.Swimmer.name).all()
-                expected_swimmers = [{"id": s.id, "name": s.name} for s in swimmers]
-        except (TypeError, ValueError):
-            raise HTTPException(400, "Date must use YYYY-MM-DD format")
+                slot_ids = [slot.id for slot in slots]
+                swimmer_ids = {
+                    swimmer_id for swimmer_id, in db.query(models.SwimmerSlot.swimmer_id).filter(
+                        models.SwimmerSlot.pool_slot_id.in_(slot_ids)
+                    ).all()
+                } if slot_ids else set()
+                swimmer_ids.difference_update(availability_on_date(db, swimmer_ids, d))
 
-    coaching_context = get_current_coaching_context(db)
+                if swimmer_ids:
+                    swimmers = db.query(models.Swimmer).filter(
+                        models.Swimmer.id.in_(swimmer_ids),
+                        models.Swimmer.active == True,
+                    ).order_by(models.Swimmer.name).all()
+                    expected_swimmers = [{"id": s.id, "name": s.name} for s in swimmers]
+            except (TypeError, ValueError):
+                raise HTTPException(400, "Date must use YYYY-MM-DD format")
 
-    result = claude_service.plan_and_analyse_session(
-        session_text=text,
-        date_str=date_str,
-        squad=squad,
-        expected_swimmers=expected_swimmers,
-        coaching_context=coaching_context,
-        db=db,
-    )
+        coaching_context = get_current_coaching_context(db)
+
+        result = claude_service.plan_and_analyse_session(
+            session_text=text,
+            date_str=date_str,
+            squad=squad,
+            expected_swimmers=expected_swimmers,
+            coaching_context=coaching_context,
+            db=db,
+        )
     parsed = result.get("parsed") or {}
     planned_groups = {}
     group_items = list((parsed.get("groups") or {}).items())
