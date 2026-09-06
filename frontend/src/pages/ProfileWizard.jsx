@@ -16,6 +16,12 @@ function ThinkingDots() {
   )
 }
 
+// Matches the sentinel the wizard's system prompt is told to append when the
+// interview is complete. Saying "yes" in the chat itself does nothing — only
+// tapping Save Profile calls the save endpoint — so this marker is used to put
+// a real, tappable button right where the AI just asked to save.
+const READY_TO_SAVE_MARKER = '[[READY_TO_SAVE]]'
+
 function MessageContent({ text }) {
   const lines = text.split('\n')
   return (
@@ -375,7 +381,8 @@ export default function ProfileWizard() {
     }
   }
 
-  const canSave = messages.length >= 6 && messages.at(-1)?.role === 'assistant' && !saved // at least a few exchanges
+  const readySignalled = messages.some(m => m.role === 'assistant' && m.content.includes(READY_TO_SAVE_MARKER))
+  const canSave = (readySignalled || (messages.length >= 6 && messages.at(-1)?.role === 'assistant')) && !saved
 
   return (
     <div className="fixed inset-0 bg-pool-950 flex flex-col max-w-lg mx-auto">
@@ -404,7 +411,7 @@ export default function ProfileWizard() {
             saved
               ? 'bg-green-800/50 text-green-400'
               : canSave
-              ? 'bg-accent-600 text-white hover:bg-accent-500'
+              ? `bg-accent-600 text-white hover:bg-accent-500 ${readySignalled ? 'animate-pulse' : ''}`
               : 'text-pool-600 cursor-not-allowed'
           }`}
         >
@@ -505,17 +512,31 @@ export default function ProfileWizard() {
           <p className="text-pool-500 text-sm text-center pt-8">Starting profiling session…</p>
         )}
 
-        {mode === 'chat' && messages.map((m, i) => (
-          <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-              m.role === 'user'
-                ? 'bg-accent-700 text-white rounded-br-sm'
-                : 'bg-pool-700 text-pool-200 rounded-bl-sm'
-            }`}>
-              <MessageContent text={m.content} />
+        {mode === 'chat' && messages.map((m, i) => {
+          const ready = m.role === 'assistant' && m.content.includes(READY_TO_SAVE_MARKER)
+          const displayText = ready ? m.content.split(READY_TO_SAVE_MARKER).join('').trim() : m.content
+          return (
+            <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+              <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-accent-700 text-white rounded-br-sm'
+                  : 'bg-pool-700 text-pool-200 rounded-bl-sm'
+              }`}>
+                <MessageContent text={displayText} />
+              </div>
+              {ready && !saved && (
+                <button
+                  type="button"
+                  onClick={saveProfile}
+                  disabled={saving}
+                  className="mt-2 bg-green-700 hover:bg-green-600 disabled:opacity-50 rounded-xl px-4 py-2.5 text-sm font-semibold text-white"
+                >
+                  {saving ? 'Saving…' : 'Save Profile'}
+                </button>
+              )}
             </div>
-          </div>
-        ))}
+          )
+        })}
 
         {mode === 'chat' && sending && (
           <div className="flex justify-start">
