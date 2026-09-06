@@ -78,7 +78,7 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey }) {
               <div className="grid grid-cols-3 gap-2 mt-3">
                 <button onClick={() => onRegister(session)} disabled={busyKey === key}
                   className="bg-accent-600 disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold">
-                  {busyKey === key ? 'Opening…' : 'Take register'}
+                  {busyKey === key ? 'Opening…' : session.registered ? 'Continue register' : 'Take register'}
                 </button>
                 <Link to={`/import?tab=excel&date=${session.date}&slot=${session.slot_id || ''}&session=${session.session_id || ''}`}
                   className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
