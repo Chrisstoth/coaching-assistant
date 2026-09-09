@@ -666,6 +666,7 @@ def _template_set_items_with_rows(ws, start_row: int) -> list[tuple[int, dict, s
                 "type": "set",
                 "repetitions": int(numeric_reps),
                 "distance": int(numeric_distance),
+                "stroke": _cell_text(as_word) or None,
                 "description": _cell_text(description),
                 "sendoff": _excel_clock(sendoff),
                 "effort": _cell_text(effort) or None,

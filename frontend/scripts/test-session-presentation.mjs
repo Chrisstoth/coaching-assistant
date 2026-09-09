@@ -52,4 +52,38 @@ const threeGroups = buildSessionPrintHtml({
 assert.match(threeGroups, /groups-grid count-3/)
 assert.match(threeGroups, /Group 1/)
 
+
+// Each set prints as aligned columns: dose left, wording middle, effort then
+// clock on the right — and a prescribed rest never reads as a send-off.
+const columns = buildSessionPrintHtml({
+  session: {
+    groups: [{
+      group_number: 1,
+      sets: { raw: [
+        'Warm up:',
+        '400 choice',
+        '8 x 50 kick with 20s rest',
+        '3x:',
+        '  4 x 100 free @ 1:30 Red',
+      ].join('\n') },
+    }],
+  },
+  settings: custom,
+  autoPrint: false,
+})
+assert.match(columns, /class="set-row is-columns"/)
+assert.match(columns, /<b class="col-dose">8 × 50<\/b>/)
+assert.match(columns, /<span class="col-what">kick<\/span>/)
+assert.match(columns, /class="col-clock is-rest"><i>rest<\/i> 20s/)
+assert.match(columns, /class="col-clock is-sendoff">@ 1:30/)
+assert.match(columns, /class="col-effort" style="--energy:#dc2626">Red/)
+assert.match(columns, /class="set-row is-heading">Warm up/)
+assert.match(columns, /class="set-row is-repeat"/)
+assert.match(columns, /class="set-row is-nested"/)
+// The rows carry the metres when the group never recorded a total.
+assert.match(columns, /class="group-total">2,000m/)
+
+const noSets = buildSessionPrintHtml({ session: { groups: [{ group_number: 1, description: 'Whole squad' }] }, settings: custom, autoPrint: false })
+assert.match(noSets, /No sets recorded/)
+
 console.log('session presentation checks passed')

@@ -2,7 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { sessionStatusLabel } from '../sessionStatus'
-import { DEFAULT_PRESENTATION, energyPresentation, groupSets, openSessionPrint } from '../sessionPresentation'
+import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
+import SetRows from '../components/SetRows'
 import {
   buildSessionOccurrences,
   indexSessionsByOccurrence,
@@ -623,14 +624,7 @@ export default function SessionPlanner() {
                             <span className="font-bold text-sm">Group {group.group_number}</span>
                             <span className="text-xs text-pool-400">{group.description}</span>
                           </div>
-                          <ul className="px-3 py-2 space-y-1.5">
-                            {groupSets(group).map((line, index) => (
-                              <li key={index} className="text-sm text-pool-200 flex gap-2">
-                                <span className="text-pool-600 shrink-0">›</span>
-                                <span>{line}</span>
-                              </li>
-                            ))}
-                          </ul>
+                          <SetRows sets={group.sets} settings={presentation} />
                           {Object.values(group.volume_breakdown || {}).some(value => Number(value) > 0) && (
                             <div className="px-3 pb-3 flex flex-wrap gap-1.5">
                               {Object.entries(group.volume_breakdown).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (

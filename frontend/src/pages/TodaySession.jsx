@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, weeklySessionQueue } from '../sessionProximity'
+import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, weekStartKey, weeklySessionQueue } from '../sessionProximity'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
+import SetRows from '../components/SetRows'
+import { setRows, rowsTotalMetres } from '../sessionSets'
+import { presentationZones } from '../sessionPresentation'
 
 function timeLabel(item) {
   const start = item?.start_time || item?.time
@@ -40,7 +43,10 @@ function WeeklyPlanCard({ plan }) {
 }
 
 function GroupCard({ group }) {
+  const { settings } = useSessionPresentation()
+  const rows = setRows(group.sets, presentationZones(settings))
   const volume = Object.values(group.volume_breakdown || {}).reduce((sum, value) => sum + (Number(value) || 0), 0)
+    || rowsTotalMetres(rows)
   return (
     <div className="bg-pool-800 border border-pool-700 rounded-xl p-3.5">
       <div className="flex items-center justify-between gap-3">
@@ -48,16 +54,14 @@ function GroupCard({ group }) {
         {volume > 0 && <span className="text-[11px] text-pool-500">{volume.toLocaleString()}m</span>}
       </div>
       {group.description && <p className="text-sm text-pool-200 mt-1.5 whitespace-pre-wrap">{group.description}</p>}
-      {group.sets?.raw && group.sets.raw !== group.description && (
-        <p className="text-xs text-pool-400 mt-2 whitespace-pre-wrap font-mono">{group.sets.raw}</p>
-      )}
+      <SetRows sets={group.sets} settings={settings} className="px-0 mt-2" />
       {group.sub_groups?.length > 0 && (
         <div className="mt-2.5 space-y-1.5 border-t border-pool-700 pt-2.5">
           {group.sub_groups.map(sub => (
             <div key={sub.id || sub.label} className="text-xs">
               <span className="font-semibold text-pool-300">{sub.label}</span>
               {sub.aim && <span className="text-pool-400"> · {sub.aim}</span>}
-              {sub.sets?.raw && <p className="text-pool-500 mt-0.5 whitespace-pre-wrap">{sub.sets.raw}</p>}
+              <SetRows sets={sub.sets} settings={settings} className="px-0 mt-1" />
             </div>
           ))}
         </div>
@@ -102,7 +106,7 @@ export default function TodaySession() {
     setError('')
     try {
       const [cal, coachingNotes, weeks] = await Promise.all([
-        api.getCalendar(),
+        api.getCalendar(weekStartKey()),
         api.getCoachingNotes().catch(() => []),
         api.getMicrocycles().catch(() => []),
       ])

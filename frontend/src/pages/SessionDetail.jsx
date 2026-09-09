@@ -3,6 +3,7 @@ import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
+import SetRows from '../components/SetRows'
 
 const VOL_KEYS = ['aerobic', 'threshold', 'vo2', 'race_pace', 'lact_tol', 'short_race_pace', 'kicking', 'sprint']
 const VOL_LABELS = { aerobic: 'Aerobic', threshold: 'Threshold', vo2: 'VO2', race_pace: 'Race Pace', lact_tol: 'Lact Tol', short_race_pace: 'Short Race', kicking: 'Kicking', sprint: 'Sprint' }
@@ -300,8 +301,8 @@ export default function SessionDetail() {
             )}
           </div>
           {g.description && <p className="text-sm text-pool-200 whitespace-pre-wrap">{g.description}</p>}
-          {g.sets?.raw && g.sets.raw !== g.description && (
-            <pre className="text-xs text-pool-400 mt-2 whitespace-pre-wrap font-mono">{g.sets.raw}</pre>
+          {g.sets?.raw !== g.description && (
+            <SetRows sets={g.sets} settings={presentation} className="px-0 mt-2" />
           )}
           {editingVolGroup === g.group_number ? (
             <div className="mt-3 pt-3 border-t border-pool-700">
