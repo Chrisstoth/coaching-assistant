@@ -1,3 +1,5 @@
+import { mondayFor } from './calendarDates.js'
+
 export function localDateKey(value = new Date()) {
   const year = value.getFullYear()
   const month = String(value.getMonth() + 1).padStart(2, '0')
@@ -43,15 +45,14 @@ export function calendarSessions(calendar) {
   )
 }
 
-export function weeklySessionQueue(calendar, now = new Date()) {
-  const monday = new Date(now)
-  const weekday = monday.getDay()
-  monday.setDate(monday.getDate() + (weekday === 0 ? -6 : 1 - weekday))
-  monday.setHours(0, 0, 0, 0)
-  const sunday = new Date(monday)
-  sunday.setDate(monday.getDate() + 6)
+export function weekStartKey(now = new Date()) {
+  return localDateKey(mondayFor(now))
+}
 
-  const from = localDateKey(monday)
+export function weeklySessionQueue(calendar, now = new Date()) {
+  const from = weekStartKey(now)
+  const sunday = new Date(`${from}T12:00:00`)
+  sunday.setDate(sunday.getDate() + 6)
   const to = localDateKey(sunday)
   return calendarSessions(calendar)
     .filter(item => item.date >= from && item.date <= to)

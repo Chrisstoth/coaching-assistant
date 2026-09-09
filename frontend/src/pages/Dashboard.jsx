@@ -1,16 +1,28 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { isSessionNear, localDateKey, weeklySessionQueue } from '../sessionProximity'
+import { isSessionNear, localDateKey, weekStartKey, weeklySessionQueue } from '../sessionProximity'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 
-function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey }) {
+function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, error, onRetry }) {
   if (sessions.length === 0) {
     return (
       <section className="bg-pool-800/70 border border-pool-700 rounded-2xl p-4">
         <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Session desk</p>
-        <p className="text-sm text-pool-300 mt-2">No outstanding sessions this week.</p>
-        <p className="text-xs text-pool-500 mt-1">Completed, cancelled and dismissed sessions stay in the calendar.</p>
+        {error ? (
+          <>
+            <p className="text-sm text-red-300 mt-2">This week’s timetable did not load.</p>
+            <p className="text-xs text-pool-500 mt-1">{error}</p>
+            <button onClick={onRetry} className="mt-3 rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white">
+              Try again
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-pool-300 mt-2">No outstanding sessions this week.</p>
+            <p className="text-xs text-pool-500 mt-1">Completed, cancelled and dismissed sessions stay in the calendar.</p>
+          </>
+        )}
       </section>
     )
   }
@@ -697,11 +709,43 @@ export default function Dashboard() {
   const [busyCheckInKey, setBusyCheckInKey] = useState('')
   const [busyResultsMeetId, setBusyResultsMeetId] = useState('')
   const [awaitingDebrief, setAwaitingDebrief] = useState([])
+  const [calendarError, setCalendarError] = useState('')
+  const [reload, setReload] = useState(0)
+  const firstLoad = useRef(true)
+
+  // The desk only ever shows the current week, so ask for it by name: a cached
+  // reply from a previous week can then never be served in its place.
+  const weekStart = weekStartKey()
+
+  // A phone left on the home screen keeps this component mounted for days.
+  // Re-fetch whenever the coach comes back to it so the week stays current.
+  useEffect(() => {
+    let lastLoad = Date.now()
+    let lastWeek = weekStartKey()
+    const refresh = () => {
+      if (document.hidden) return
+      const week = weekStartKey()
+      if (week === lastWeek && Date.now() - lastLoad < 60000) return
+      lastWeek = week
+      lastLoad = Date.now()
+      setReload(value => value + 1)
+    }
+    document.addEventListener('visibilitychange', refresh)
+    window.addEventListener('focus', refresh)
+    return () => {
+      document.removeEventListener('visibilitychange', refresh)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
 
   useEffect(() => {
-    setLoading(true)
+    if (firstLoad.current) setLoading(true)
+    setCalendarError('')
     Promise.all([
-      api.getCalendar().catch(() => []),
+      api.getCalendar(weekStart).catch(error => {
+        setCalendarError(error.message || 'Could not reach the server.')
+        return []
+      }),
       api.getCoachingNotes().catch(() => []),
       api.getAIContextStatus().catch(() => null),
       api.getSquadPulse().catch(() => []),
@@ -722,9 +766,10 @@ export default function Dashboard() {
       setAvailability(availabilityData)
       setDueCheckIns(checkIns.items || [])
       setAwaitingDebrief(debriefs.items || [])
+      firstLoad.current = false
       setLoading(false)
     })
-  }, [])
+  }, [weekStart, reload])
 
   const dismissResultsPrompt = async (item) => {
     setBusyResultsMeetId(item.meet_id)
@@ -865,6 +910,8 @@ export default function Dashboard() {
           onDismiss={dismissSession}
           onCancel={setCancelTarget}
           busyKey={busySessionKey}
+          error={calendarError}
+          onRetry={() => setReload(value => value + 1)}
         />
       )}
 

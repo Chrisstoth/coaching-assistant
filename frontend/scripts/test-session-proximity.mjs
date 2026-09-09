@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { isSessionNear, localDateKey, matchingWeeklySessions, proximateSessions, weeklySessionQueue } from '../src/sessionProximity.js'
+import { readFileSync } from 'node:fs'
+import { isSessionNear, localDateKey, matchingWeeklySessions, proximateSessions, weekStartKey, weeklySessionQueue } from '../src/sessionProximity.js'
 
 const mondayMorning = new Date(2026, 7, 24, 9, 30)
 const mondayEvening = new Date(2026, 7, 24, 18, 0)
@@ -41,5 +42,20 @@ assert.deepEqual(
   matchingWeeklySessions(microcycles, { time: '18:30' }, '2026-08-24').map(item => item.session_type),
   ['threshold'],
 )
+
+// The desk is week-scoped, so it must ask the API for the week it will render.
+// A bare /sessions/calendar call is cached under one key for every week, and the
+// service worker will happily serve last week's reply into today's desk.
+assert.equal(weekStartKey(new Date(2026, 8, 8, 7, 0)), '2026-09-07')   // Tuesday
+assert.equal(weekStartKey(new Date(2026, 8, 7, 23, 59)), '2026-09-07') // Monday itself
+assert.equal(weekStartKey(new Date(2026, 8, 13, 6, 0)), '2026-09-07')  // Sunday rolls back
+
+const staleWeek = [{ date: '2026-08-31', items: [{ slot_id: 9, time: '06:00', status: 'unlogged' }] }]
+assert.deepEqual(weeklySessionQueue(staleWeek, new Date(2026, 8, 8, 7, 0)), [])
+
+for (const page of ['../src/pages/Dashboard.jsx', '../src/pages/TodaySession.jsx']) {
+  const source = readFileSync(new URL(page, import.meta.url), 'utf8')
+  assert.match(source, /getCalendar\(week/, `${page} must request the calendar by week start`)
+}
 
 console.log('Session proximity checks passed')

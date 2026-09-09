@@ -17,7 +17,7 @@ export default function Import() {
   useEffect(() => {
     if (tab === 'photo') {
       // Fetch upcoming planned sessions
-      api.getCalendar().then(days => {
+      api.getCalendar(localDateIso(mondayFor())).then(days => {
         setPlannedSessions(days.flatMap(day => (day.items || [])
           .filter(item => item.session_id && !['cancelled', 'dismissed'].includes(item.status))
           .map(item => ({ ...item, id: item.session_id, date: day.date }))))
