@@ -1117,7 +1117,7 @@ Perform the adaptation review for {swimmer.name} now using the framework."""
         system=ADAPTATION_REVIEW_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    analysis = response.content[0].text.strip()
+    analysis = response_text(response).strip()
 
     # Prepend swimmer name as header
     reply = f"**Adaptation Review — {swimmer.name}**\n\n{analysis}"
@@ -1608,7 +1608,7 @@ Perform the block review for '{block.name}' now using the framework."""
         system=BLOCK_REVIEW_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    analysis = response.content[0].text.strip()
+    analysis = response_text(response).strip()
 
     reply = f"**Block Review — {block.name}**\n\n{analysis}"
     if brief:
@@ -2105,7 +2105,7 @@ Perform the race analysis for '{meet.name}' now using the framework."""
         system=RACE_ANALYSIS_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    analysis = response.content[0].text.strip()
+    analysis = response_text(response).strip()
 
     reply = f"**Race Analysis — {meet.name}**\n\n{analysis}"
     if brief:
@@ -2419,7 +2419,7 @@ Suggest the group composition now. Output valid JSON only."""
         system=SUGGEST_GROUPS_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response).strip()
 
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -2769,7 +2769,7 @@ Plan the full season macro now. If you need key competition dates first, ask. Ot
         system=MACRO_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response).strip()
 
     # Claude may ask a clarifying question (e.g. requesting competition dates)
     if not raw.startswith("{"):
@@ -3244,7 +3244,7 @@ Plan the next phase now. Output valid JSON only."""
         system=MESO_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response).strip()
 
     if raw.startswith("```"):
         raw = raw.split("```")[1]
@@ -3696,7 +3696,7 @@ Plan this week now. If you need the coach's qualitative read on the squad's stat
         system=MICRO_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response).strip()
 
     # The response might be a question (coach state check) rather than JSON
     if not raw.startswith("{"):
@@ -4041,7 +4041,7 @@ Design the personalised taper for {swimmer.name} ahead of {meet_name}. Output va
         system=TAPER_PLAN_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = response.content[0].text.strip()
+    raw = response_text(response).strip()
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):

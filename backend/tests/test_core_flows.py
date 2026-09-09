@@ -2988,6 +2988,40 @@ class CoreFlowTests(unittest.TestCase):
             self.assertIn("autumn base phase", memory)
             self.assertIsNotNone(thread.summarized_through_message_id)
 
+    def test_coaching_context_chat_reads_past_a_thinking_block(self):
+        """The primary model thinks before it answers, so the first content block
+        is a thinking block with no .text. Reading content[0].text crashed every
+        coaching-context message with an AttributeError."""
+        fake_response = SimpleNamespace(
+            content=[
+                SimpleNamespace(type="thinking", thinking=""),
+                SimpleNamespace(type="text", text="What does a typical main set look like?"),
+            ],
+            usage=SimpleNamespace(input_tokens=30, output_tokens=9),
+        )
+        fake_client = SimpleNamespace(messages=SimpleNamespace(create=lambda **kwargs: fake_response))
+        with patch("backend.services.claude_service._get_raw_client", return_value=fake_client):
+            reply = self.client.post(
+                "/coaching-context/chat",
+                headers=self.headers,
+                json={"message": "I coach a sprint squad of 24."},
+            )
+        self.assertEqual(reply.status_code, 200, reply.text)
+        self.assertEqual(reply.json()["reply"], "What does a typical main set look like?")
+
+        conversation = self.client.get("/coaching-context/conversation", headers=self.headers)
+        self.assertEqual(
+            [m["role"] for m in conversation.json()], ["coach", "ai"],
+            "the coach message and the reply should both be stored",
+        )
+        self.client.delete("/coaching-context/conversation", headers=self.headers)
+        with SessionLocal() as db:
+            db.query(models.AIOperation).filter(
+                models.AIOperation.operation_type == "chat",
+            ).delete()
+            db.query(models.AIUsageLog).filter(models.AIUsageLog.operation == "chat").delete()
+            db.commit()
+
 
 if __name__ == "__main__":
     unittest.main()

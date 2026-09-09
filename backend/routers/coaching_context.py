@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
-from backend.services.claude_service import get_client, MODEL
+from backend.services.claude_service import get_client, MODEL, response_text
 from backend.services.terminology import coach_terminology_context
 
 router = APIRouter()
@@ -140,12 +140,12 @@ The coach is now providing updates or additions to this context. Help them artic
 
     response = get_client().messages.create(
         model=MODEL,
-        max_tokens=800,
+        max_tokens=2000,
         system=system,
         messages=messages,
     )
 
-    ai_reply = response.content[0].text.strip()
+    ai_reply = response_text(response).strip()
 
     # Save AI reply
     db.add(models.CoachingConversation(role="ai", message=ai_reply))
@@ -206,11 +206,11 @@ CONVERSATION:
 
     response = get_client().messages.create(
         model=MODEL,
-        max_tokens=1500,
+        max_tokens=4000,
         messages=[{"role": "user", "content": synthesis_prompt}],
     )
 
-    summary = response.content[0].text.strip()
+    summary = response_text(response).strip()
 
     # Parse sections from summary
     def extract_section(text, heading):
