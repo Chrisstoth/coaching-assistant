@@ -154,7 +154,7 @@ function QualificationPanel({ meetId }) {
               </tr></thead>
               <tbody>{(review.standards || []).map(row => (
                 <tr key={row.id} className="border-t border-pool-700/70">
-                  <td className="p-2 whitespace-nowrap">{row.event_name} {row.course}</td>
+                  <td className="p-2 whitespace-nowrap">{row.event_name} {row.course === "ANY" ? "(25m or 50m)" : row.course}</td>
                   <td className="p-2 whitespace-nowrap text-pool-400">{row.gender} · {row.age_label}</td>
                   <td className="p-2 capitalize text-pool-400">{row.standard_type}</td>
                   <td className="p-2 text-right font-mono">{review.status === 'draft' ? (
@@ -194,7 +194,7 @@ function QualificationPanel({ meetId }) {
               <div className="mt-2 space-y-1">
                 {swimmer.events.filter(event => event.status !== 'no_time').sort((a, b) => (a.gap_seconds ?? 999) - (b.gap_seconds ?? 999)).slice(0, 12).map((event, index) => (
                   <div key={`${event.standard_id}-${index}`} className="grid grid-cols-[1fr_auto] gap-2 text-xs border-t border-pool-700/60 pt-1">
-                    <span>{event.event} · {event.standard_type} <span className="text-pool-500">({event.course})</span></span>
+                    <span>{event.event} · {event.standard_type} <span className="text-pool-500">({event.course === "ANY" ? "25m or 50m" : event.course})</span></span>
                     <span className={event.status === 'achieved' ? 'text-emerald-300' : event.status === 'chasing' ? 'text-amber-300' : 'text-pool-400'}>
                       {event.status === 'conversion_required' ? 'conversion needed' : event.best_time_display ? `${event.best_time_display} / ${event.standard_display}${event.gap_seconds > 0 ? ` (+${event.gap_seconds.toFixed(2)})` : ''}` : event.status}
                     </span>
@@ -1028,7 +1028,7 @@ export default function MeetDetail() {
 
       {/* Add/edit swimmer bottom sheet */}
       {showAddSwimmer && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-end">
+        <div className="fixed inset-0 bg-black/60 z-[70] flex items-end">
           <div className="w-full max-w-lg mx-auto bg-pool-800 rounded-t-2xl p-5 space-y-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center">
               <p className="font-semibold">{editingTarget ? 'Edit assignment' : 'Add swimmer'}</p>

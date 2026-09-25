@@ -2605,6 +2605,61 @@ class CoreFlowTests(unittest.TestCase):
         resolved = next(row for row in history if row["id"] == item["id"])
         self.assertEqual(resolved["status"], "resolved")
 
+    def test_birth_year_either_pool_standards_are_matched_by_birth_year(self):
+        def make(name, gender, dob):
+            res = self.client.post("/swimmers", headers=self.headers,
+                                   json={"name": name, "squad": "Silver 1", "gender": gender, "dob": dob})
+            self.assertEqual(res.status_code, 201, res.text)
+            return res.json()["id"]
+        young = make("Born 2011 Girl", "F", "2011-05-01")   # 'born 2010 or younger' column
+        older = make("Born 2008 Girl", "F", "2008-05-01")   # 'born 09/08' column
+        with SessionLocal() as db:
+            for swimmer_id in (young, older):
+                db.add(models.SwimTime(
+                    swimmer_id=swimmer_id, event="100 Freestyle LCM", distance=100, stroke="Freestyle",
+                    course="LCM", time_seconds=58.0, date=__import__("datetime").date(2026, 3, 1), level="2",
+                ))
+            db.commit()
+        extracted = {
+            "metadata": {"name": "National Winter 2026"},
+            "rules": {"entry_closing_date": "2026-11-25", "qualification_window_start": "2025-09-01",
+                      "accepted_license_levels": [1, 2], "long_course_conversions_accepted": False},
+            "tables": [
+                {"gender": "female", "age_label": "Born 10 or younger", "birth_year_min": "10", "course": "25/50m",
+                 "standard_type": "qualifying", "times": {"100m Freestyle": "58.30", "50m Freestyle": "27.00"}},
+                {"gender": "female", "age_label": "Born 09/08", "birth_year_min": "08", "birth_year_max": "09",
+                 "course": "ANY", "standard_type": "qualifying", "times": {"100m Freestyle": "57.70"}},
+            ],
+            "warnings": [],
+        }
+        with patch("backend.routers.qualification_standards.openai_service.parse_qualification_document", return_value=extracted):
+            uploaded = self.client.post(
+                "/qualification-standards/extract", headers=self.headers,
+                files={"document": ("national.pdf", b"%PDF-national", "application/pdf")},
+            )
+        self.assertEqual(uploaded.status_code, 201, uploaded.text)
+        standards = uploaded.json()["standards"]
+        self.assertEqual(len(standards), 3)
+        self.assertTrue(all(s["course"] == "ANY" for s in standards))
+        self.assertEqual({(s["birth_year_min"], s["birth_year_max"]) for s in standards}, {(2010, None), (2008, 2009)})
+        set_id = uploaded.json()["id"]
+        self.assertEqual(self.client.post(f"/qualification-standards/{set_id}/confirm", headers=self.headers).status_code, 200)
+        swimmers = {row["swimmer_id"]: row for row in self.client.get(
+            f"/qualification-standards/{set_id}/assessments", headers=self.headers).json()["swimmers"]}
+        self.assertEqual(len(swimmers[young]["events"]), 2)   # only the 2010+ column applies
+        self.assertEqual(len(swimmers[older]["events"]), 1)   # only the 09/08 column applies
+        self.assertEqual(swimmers[older]["events"][0]["status"], "chasing")   # 58.00 vs 57.70
+        young_100 = next(e for e in swimmers[young]["events"] if e["event"] == "100 freestyle")
+        self.assertEqual(young_100["status"], "achieved")
+
+    def test_unreadable_standards_document_returns_a_clear_error(self):
+        with patch("backend.routers.qualification_standards.openai_service.parse_qualification_document",
+                   side_effect=ValueError("Could not read the standards from that document.")):
+            res = self.client.post("/qualification-standards/extract", headers=self.headers,
+                                   files={"document": ("bad.pdf", b"%PDF-bad", "application/pdf")})
+        self.assertEqual(res.status_code, 422)
+        self.assertIn("Could not read", res.json()["detail"])
+
     def test_qualification_pdf_is_reviewed_stored_and_compared_locally(self):
         swimmer = self.client.post(
             "/swimmers", headers=self.headers,

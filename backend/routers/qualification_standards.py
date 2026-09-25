@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 from backend import models
 from backend.database import get_db
 from backend.services import openai_service
-from backend.services.claude_service import FAST_MODEL
+from backend.services.claude_service import MODEL
 from backend.services.qualification_service import (
-    assessment_summary, normalize_standard, recalculate_standard_set,
+    assessment_summary, expand_tables, normalize_standard, recalculate_standard_set,
 )
 
 router = APIRouter()
@@ -22,6 +22,7 @@ def _standard_out(row):
         "id": row.id, "event_name": row.event_name, "canonical_event": row.canonical_event,
         "distance": row.distance, "stroke": row.stroke, "gender": row.gender,
         "age_label": row.age_label, "age_min": row.age_min, "age_max": row.age_max,
+        "birth_year_min": row.birth_year_min, "birth_year_max": row.birth_year_max,
         "course": row.course, "standard_type": row.standard_type,
         "time_seconds": row.time_seconds, "time_display": row.time_display,
         "source_page": row.source_page,
@@ -94,24 +95,41 @@ async def extract_document(
     if existing:
         return _set_out(existing, detail=True)
 
-    extracted = openai_service.parse_qualification_document(content, mime_type)
+    try:
+        extracted = openai_service.parse_qualification_document(content, mime_type)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"The document reader failed: {exc}") from exc
     metadata, rules = extracted.get("metadata") or {}, extracted.get("rules") or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
+    if not isinstance(rules, dict):
+        rules = {}
+    meet_year = next((int(str(rules[k])[:4]) for k in ("age_as_of_date", "entry_closing_date", "qualification_window_end")
+                      if str(rules.get(k) or "")[:4].isdigit()), None)
+    items = [*(extracted.get("standards") or []), *expand_tables(extracted.get("tables"), meet_year)]
+    if not items:
+        raise HTTPException(422, "No standards times could be read from that document.")
     row = models.QualificationStandardSet(
         meet_id=meet_id, name=metadata.get("name") or document.filename or "Qualification standards",
         organiser=metadata.get("organiser"), season_label=metadata.get("season_label"),
         rules=rules, source_filename=document.filename, source_mime_type=mime_type,
-        source_sha256=digest, source_document=content, extraction_model=FAST_MODEL,
+        source_sha256=digest, source_document=content, extraction_model=MODEL,
         extraction_notes=extracted.get("warnings") or [], status="draft",
     )
     db.add(row)
     db.flush()
     invalid = 0
-    for item in extracted.get("standards") or []:
-        normalized = normalize_standard(item)
+    for item in items:
+        normalized = normalize_standard(item) if isinstance(item, dict) else None
         if not normalized:
             invalid += 1
             continue
         db.add(models.QualificationStandard(standard_set_id=row.id, **normalized))
+    if invalid == len(items):
+        db.rollback()
+        raise HTTPException(422, "No standards times could be read from that document.")
     if invalid:
         row.extraction_notes = [*(row.extraction_notes or []), f"{invalid} rows had no usable event/time and were skipped."]
     db.commit()

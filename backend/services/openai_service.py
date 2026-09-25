@@ -4,7 +4,7 @@ File kept as openai_service.py so import paths don't need changing.
 """
 import base64
 import json
-from backend.services.claude_service import get_client, MODEL, FAST_MODEL
+from backend.services.claude_service import get_client, MODEL, FAST_MODEL, response_text
 
 
 def parse_whiteboard_photo(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:
@@ -244,25 +244,43 @@ Return valid JSON only:
     "rules_summary": "concise faithful summary",
     "other_rules": ["every material remaining eligibility rule"]
   },
-  "standards": [
+  "tables": [
     {
-      "event_name": "100 Freestyle",
       "gender": "female|male_open|open",
-      "age_label": "13|11/12|open or equivalent",
-      "age_min": 13,
-      "age_max": 13,
-      "course": "SCM|LCM",
+      "age_label": "the column heading as printed, e.g. Born 2010 or younger / 13 / 11/12 / open",
+      "age_min": null, "age_max": null,
+      "birth_year_min": null, "birth_year_max": null,
+      "course": "SCM|LCM|ANY",
       "standard_type": "qualifying|automatic|base|consideration",
-      "time": "1:02.10",
-      "source_page": 1
+      "source_page": 1,
+      "times": {"50m Freestyle": "26.05", "100m Freestyle": "56.60", "400m Individual Medley": "5:05.00"}
     }
   ],
-  "warnings": ["ambiguities, illegible cells, inferred values, or omitted non-time para rules"]
+  "warnings": ["ambiguities, illegible cells, inferred values, or omitted para-swimming tables"]
 }
 
-Create one standards row for every populated event/gender/age/course/type cell. Preserve automatic, base,
-consideration and qualifying as distinct types. Convert SC/25m to SCM and LC/50m to LCM. Use null age bounds
-for open standards. Never invent dates, licence levels, conversions, age rules or missing table values."""
+Standards sheets are grids: each column is a gender + age group (sometimes a course or tier), each row an event.
+Return ONE "tables" entry per column holding that column's time for every event, not one entry per cell.
+
+Age rules:
+- Columns defined by AGE (e.g. "13 yrs", "15+"): use age_min/age_max (inclusive), leave birth years null.
+  The stated age reference date (e.g. "Age 31.12.2026") goes in rules.age_as_of_date.
+- Columns defined by BIRTH YEAR (e.g. "Born 2010 or younger", "Born 09/08", "Born 07 or older"): use
+  birth_year_min/birth_year_max (inclusive, four-digit years, resolved against the meet year), leave ages null.
+  "Born 2010 or younger" = birth_year_min 2010. "Born 09/08" = birth_year_min 2008 and birth_year_max 2009.
+  "Born 07 or older" = birth_year_max 2007.
+- A sheet with no age split is open: all four age/birth fields null and age_label "open".
+
+Gender: "Men/Open" or "Male/Open" columns = male_open; "Women"/"Female" = female; a column covering both = open.
+Course: 25m/SC pool = SCM, 50m/LC = LCM. A column marked "25/50m" or "either pool" (times accepted from either
+pool with no conversion) = ANY. If the sheet only says its standards are (25m), use SCM.
+standard_type: "qualifying" for qualifying times/standards, "automatic" for automatic, "consideration" for
+consideration times, "base" for base times. Where a sheet has several tiers, emit a separate table per tier.
+Rules: read the notes beneath the table for dates (window start, closing date), licence levels ("levels one, two
+and three" = [1,2,3]), conversions (name the converter) and where times may come from. Dates in ISO format.
+Event names as printed (e.g. "100m Individual Medley"). Skip blank cells.
+Do NOT extract para-swimming (S/SB/SM class) tables as times; add a warning that para standards were not extracted.
+Never invent dates, licence levels, conversions, age rules or missing table values."""
     content_type = "document" if mime_type == "application/pdf" else "image"
     source = {
         "type": "base64",
@@ -270,8 +288,8 @@ for open standards. Never invent dates, licence levels, conversions, age rules o
         "data": b64,
     }
     response = get_client().messages.create(
-        model=FAST_MODEL,
-        max_tokens=7000,
+        model=MODEL,
+        max_tokens=16000,
         messages=[{
             "role": "user",
             "content": [
@@ -280,15 +298,17 @@ for open standards. Never invent dates, licence levels, conversions, age rules o
             ],
         }],
     )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        raise ValueError("The document was too large to read in one pass. Try a cropped PDF of just the standards table.")
+    raw = response_text(response)
+    first, last = raw.find("{"), raw.rfind("}")
     try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, IndexError):
-        return {"metadata": {}, "rules": {}, "standards": [], "warnings": ["The extracted response was not valid JSON."]}
+        data = json.loads(raw[first:last + 1])
+    except json.JSONDecodeError as exc:
+        raise ValueError("Could not read the standards from that document (the reply was not valid JSON).") from exc
+    if not isinstance(data, dict):
+        raise ValueError("Could not read the standards from that document.")
+    return data
 
 
 def parse_entries_image(image_bytes: bytes, mime_type: str = "image/jpeg") -> dict:

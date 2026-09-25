@@ -135,6 +135,10 @@ def _apply_migrations():
         if "microcycles" in insp.get_table_names():
             add_col("microcycles", "sequence_index", "INTEGER DEFAULT 0")
 
+        if "qualification_standards" in insp.get_table_names():
+            add_col("qualification_standards", "birth_year_min", "INTEGER")
+            add_col("qualification_standards", "birth_year_max", "INTEGER")
+
         if "planning_pathways" in insp.get_table_names():
             add_col("planning_pathways", "qualification_standard_set_id", "INTEGER")
 

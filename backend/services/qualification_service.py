@@ -43,6 +43,39 @@ def format_time(seconds: Optional[float]) -> Optional[str]:
     return f"{int(minutes)}:{remainder:05.2f}"
 
 
+def _as_int(value) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(str(value).strip()))
+    except ValueError:
+        return None
+
+
+def _birth_year(value, reference_year: Optional[int]) -> Optional[int]:
+    """Accept 2010 or a two-digit '10', resolved against the meet year."""
+    year = _as_int(value)
+    if year is None or year >= 100:
+        return year
+    century = ((reference_year or date.today().year) // 100) * 100
+    return century + year if century + year <= (reference_year or date.today().year) else century - 100 + year
+
+
+def expand_tables(tables: list, reference_year: Optional[int] = None) -> list[dict]:
+    """Turn compact {age group, course, type, times{event: time}} tables into one row per cell."""
+    rows = []
+    for table in tables or []:
+        if not isinstance(table, dict) or not isinstance(table.get("times"), dict):
+            continue
+        shared = {k: v for k, v in table.items() if k != "times"}
+        for event, time in table["times"].items():
+            rows.append({**shared, "event_name": event, "time": time})
+    for row in rows:
+        for key in ("birth_year_min", "birth_year_max"):
+            row[key] = _birth_year(row.get(key), reference_year)
+    return rows
+
+
 def normalize_standard(item: dict) -> Optional[dict]:
     event_name = item.get("event_name") or item.get("event")
     supplied_time = item.get("time") if item.get("time") not in (None, "") else item.get("time_seconds")
@@ -57,8 +90,13 @@ def normalize_standard(item: dict) -> Optional[dict]:
         gender = "female"
     elif gender not in {"open", "mixed"}:
         gender = "open"
-    course = str(item.get("course") or "SCM").upper()
-    course = {"SC": "SCM", "25M": "SCM", "LC": "LCM", "50M": "LCM"}.get(course, course)
+    course = str(item.get("course") or "SCM").upper().replace(" ", "")
+    course = {
+        "SC": "SCM", "25M": "SCM", "LC": "LCM", "50M": "LCM",
+        "EITHER": "ANY", "BOTH": "ANY", "25/50M": "ANY", "25M/50M": "ANY", "SCM/LCM": "ANY",
+    }.get(course, course)
+    if course not in {"SCM", "LCM", "ANY"}:
+        course = "SCM"
     standard_type = str(item.get("standard_type") or "qualifying").lower().replace(" ", "_")
     return {
         "event_name": event_name,
@@ -66,13 +104,15 @@ def normalize_standard(item: dict) -> Optional[dict]:
         "distance": distance,
         "stroke": stroke,
         "gender": gender,
-        "age_label": item.get("age_label") or "open",
-        "age_min": item.get("age_min"),
-        "age_max": item.get("age_max"),
+        "age_label": str(item.get("age_label") or "open"),
+        "age_min": _as_int(item.get("age_min")),
+        "age_max": _as_int(item.get("age_max")),
+        "birth_year_min": _as_int(item.get("birth_year_min")),
+        "birth_year_max": _as_int(item.get("birth_year_max")),
         "course": course,
         "standard_type": standard_type,
         "time_seconds": seconds,
-        "time_display": item.get("time") or format_time(seconds),
+        "time_display": str(item.get("time")) if item.get("time") not in (None, "") else format_time(seconds),
         "source_page": item.get("source_page"),
         "raw_data": item,
     }
@@ -104,6 +144,15 @@ def _gender_matches(swimmer: models.Swimmer, standard: models.QualificationStand
 
 def _age_matches(swimmer: models.Swimmer, standard: models.QualificationStandard, rules: dict) -> tuple[bool, str]:
     age_date = _as_date(rules.get("age_as_of_date"))
+    if standard.birth_year_min is not None or standard.birth_year_max is not None:
+        if not swimmer.dob:
+            return False, "Date of birth is missing"
+        year = swimmer.dob.year
+        if standard.birth_year_min is not None and year < standard.birth_year_min:
+            return False, f"Born {year}, before {standard.birth_year_min}"
+        if standard.birth_year_max is not None and year > standard.birth_year_max:
+            return False, f"Born {year}, after {standard.birth_year_max}"
+        return True, f"Born {year}"
     minimum = standard.age_min if standard.age_min is not None else rules.get("minimum_age")
     maximum = standard.age_max if standard.age_max is not None else rules.get("maximum_age")
     if minimum is None and maximum is None:
@@ -157,15 +206,18 @@ def recalculate_standard_set(standard_set_id: int, db: DBSession) -> dict:
             dated = [t for t in event_times if (not window_start or (t.date and t.date >= window_start)) and
                      (not window_end or (t.date and t.date <= window_end))]
             licensed = [t for t in dated if _level_allowed(t, allowed_levels)]
-            same_course = [t for t in licensed if (t.course or "").upper() == standard.course]
+            same_course = [t for t in licensed if standard.course == "ANY" or (t.course or "").upper() == standard.course]
             best = min(same_course, key=lambda t: t.time_seconds) if same_course else None
-            other_course = [t for t in licensed if (t.course or "").upper() != standard.course]
+            other_course = [] if standard.course == "ANY" else [
+                t for t in licensed if (t.course or "").upper() != standard.course
+            ]
 
             if best:
                 gap = round(best.time_seconds - standard.time_seconds, 2)
                 gap_pct = round((gap / standard.time_seconds) * 100, 2)
                 status = "achieved" if gap <= 0 else ("chasing" if gap_pct <= 3 else "outside")
-                reason = f"Best eligible {standard.course} time; {age_reason}".strip("; ")
+                course_label = "either-pool" if standard.course == "ANY" else standard.course
+                reason = f"Best eligible {course_label} time; {age_reason}".strip("; ")
             elif other_course and conversion_allowed:
                 best = min(other_course, key=lambda t: t.time_seconds)
                 gap = gap_pct = None
