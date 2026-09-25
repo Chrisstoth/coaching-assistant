@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { api } from '../api'
+import { stashDraft } from '../planDrafts'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
@@ -265,6 +266,20 @@ export default function CoachAI() {
         })
       }
 
+      // Year-level and pathway drafts are reviewed on the planning page, where the
+      // timeline they change is on screen.
+      if ((res.skill_result?.type === 'season_macros' || res.skill_result?.type === 'pathway_plan')
+          && res.skill_result.draft) {
+        setSuggestedAction({
+          label: res.skill_result.type === 'season_macros'
+            ? 'Review these macrocycles'
+            : 'Review these pathways',
+          type: 'view_planning',
+          plan_kind: res.skill_result.type,
+          plan_draft: res.skill_result.draft,
+        })
+      }
+
       if (res.skill_result?.type === 'micro_plan' && res.skill_result.draft) {
         setSuggestedAction({
           label: 'Review and save this weekly plan',
@@ -440,6 +455,10 @@ export default function CoachAI() {
           setActionResult('error')
         }
         setSuggestedAction(null)
+        return
+      } else if (type === 'view_planning') {
+        stashDraft(suggestedAction.plan_kind, suggestedAction.plan_draft)
+        navigate('/planning')
         return
       } else if (type === 'view_season_plan') {
         if (suggestedAction.plan_type) {

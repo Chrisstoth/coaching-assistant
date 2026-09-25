@@ -13,13 +13,18 @@ assert.match(hub, /to="\/planning"/, 'Plan hub must lead to the planning workspa
 const workspace = await read('../src/pages/PlanningWorkspace.jsx')
 // The conversation and the picture must sit together on a wide screen, and the
 // phone falls back to one at a time rather than cramming both in.
-assert.match(workspace, /hidden lg:flex/, 'Wide screens show chat beside the plan.')
+assert.match(workspace, /useIsWide/, 'Wide screens show chat beside the plan.')
 assert.match(workspace, /lg:hidden/, 'Phones switch between chat and plan.')
+// Both layouts mounted at once would run two chat panels racing to open one thread.
+assert.doesNotMatch(workspace, /hidden lg:flex/, 'Only the layout that applies may be mounted.')
 assert.match(workspace, /<SeasonTimeline/, 'The workspace shows the timeline.')
 assert.match(workspace, /<PathwayBoard/, 'The workspace shows the pathways.')
 // The planning chat must reuse the season-plan thread, not start a rival history.
-assert.match(workspace, /getOrCreateSeasonPlanThread/, 'Chat must reuse the season plan thread.')
-assert.match(workspace, /dx_plan_handoff/, 'An agreed plan must ride the existing approval rail.')
+assert.match(workspace, /getOrCreateSeasonPlanThread\(\)/, 'One planning conversation covers the whole year.')
+assert.match(workspace, /saveDraft/, 'Every proposal is approved in place before anything is written.')
+assert.match(workspace, /takeStashedDraft/, 'A draft made on the AI page must arrive here for review.')
+assert.match(workspace, /macro \? macro\.id : null/, 'The macrocycle in focus must travel with every message.')
+assert.match(workspace, /selectedMacroId=\{macroId\}/, 'The timeline must show which macrocycle is in focus.')
 assert.match(workspace, /onPlanChanged/, 'The picture must refresh when the conversation changes the plan.')
 
 const board = await read('../src/components/PathwayBoard.jsx')

@@ -392,7 +392,21 @@ def _is_athlete_plan_navigation(text: str) -> bool:
     return any(k in t for k in _ATHLETE_PLAN_SIGNALS)
 
 
+_SEASON_MACROS_SIGNALS = [
+    "macros for the year", "macros for the season", "macrocycles for the year",
+    "divide the season", "divide the year", "split the season", "split the year",
+    "break the season", "break the year", "define the macros", "set up the macros",
+    "lay out the year", "lay out the season", "outline the year", "outline the season",
+    "how many macros", "macrocycles for the season",
+]
+
+def _is_season_macros(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _SEASON_MACROS_SIGNALS)
+
+
 _MACRO_PLAN_SIGNALS = [
+    "plan this macro", "fill in this macro", "plan out this macro", "plan the phases",
     "plan the macro", "plan a macro", "plan the season", "plan next season",
     "build the season", "season structure", "annual plan", "plan the year",
     "create a macro", "new macro", "build a macro",
@@ -1025,6 +1039,10 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     text = body.get("message", "").strip()
     thread_id = body.get("thread_id")
     brief = body.get("brief", False)
+    try:
+        selected_macro_id = int(body.get("macro_id")) if body.get("macro_id") else None
+    except (TypeError, ValueError):
+        selected_macro_id = None
     if not text:
         raise HTTPException(status_code=400, detail="Message required")
 
@@ -1162,11 +1180,35 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             "skill_result": None,
         }
 
+    # --- Season macros skill: divide the year into macrocycles ---
+    if is_season_plan_thread and route_matches(routed_skill, 'season_macros', _is_season_macros(text)):
+        from backend.routers.skills import run_plan_season_macros
+        try:
+            result = run_plan_season_macros(text, db, coach_context=thread_context)
+            reply = result["reply"]
+            draft = result.get("draft")
+        except Exception as e:
+            reply = f"I had trouble dividing the year: {str(e)}."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["season_macros"],
+            "suggested_action": None,
+            "intent": {"type": "season_macros"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "season_macros", "draft": draft} if draft else None,
+        }
+
     # In a season plan thread, also route plan_macro requests
     if is_season_plan_thread and route_matches(routed_skill, 'macro_plan', _is_macro_plan(text)):
         from backend.routers.skills import run_plan_macro
         try:
-            result = run_plan_macro(text, db, coach_context=thread_context)
+            result = run_plan_macro(text, db, coach_context=thread_context, macro_id=selected_macro_id)
             reply = result["reply"]
             draft = result.get("draft")
         except Exception as e:
@@ -1190,7 +1232,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     if route_matches(routed_skill, 'pathway_plan', _is_pathway_plan(text)):
         from backend.routers.skills import run_plan_pathways
         try:
-            result = run_plan_pathways(text, db, coach_context=thread_context)
+            result = run_plan_pathways(text, db, macro_id=selected_macro_id, coach_context=thread_context)
             reply = result["reply"]
             draft = result.get("draft")
         except Exception as e:
@@ -1203,11 +1245,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             "reply": reply,
             "context_injected": [],
             "topics_detected": ["pathway_plan"],
-            "suggested_action": {
-                "type": "review_plan", "plan_type": "pathway",
-                "label": "Review the proposed pathways",
-                "pathway_draft": draft,
-            } if draft else None,
+            "suggested_action": None,
             "intent": {"type": "pathway_plan"},
             "saved_benchmarks": [],
             "saved_intents": [],
@@ -1248,7 +1286,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     if route_matches(routed_skill, 'meso_plan', _is_meso_plan(text)):
         from backend.routers.skills import run_plan_meso
         try:
-            result = run_plan_meso(text, db, coach_context=thread_context, brief=brief)
+            result = run_plan_meso(text, db, macro_id=selected_macro_id, coach_context=thread_context, brief=brief)
             reply = result["reply"]
             draft = result.get("draft")
         except Exception as e:

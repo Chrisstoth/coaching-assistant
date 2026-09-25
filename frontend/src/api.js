@@ -326,7 +326,7 @@ export const api = {
 
   // AI Chat messages (thread-aware)
   getAIChatMessages: (threadId) => request('GET', `/ai-chat/messages${threadId != null ? `?thread_id=${threadId}` : ''}`),
-  sendAIChatMessage: (message, threadId, brief = false) => request('POST', '/ai-chat/messages', { message, thread_id: threadId, brief }),
+  sendAIChatMessage: (message, threadId, brief = false, macroId = null) => request('POST', '/ai-chat/messages', { message, thread_id: threadId, brief, ...(macroId ? { macro_id: macroId } : {}) }),
   clearAIChat: (threadId) => request('DELETE', `/ai-chat/messages${threadId != null ? `?thread_id=${threadId}` : ''}`),
   getAIContextStatus: () => request('GET', '/ai-chat/context-status'),
 

@@ -171,14 +171,19 @@ function WeekDetail({ week, macroId, onSaved, onClose }) {
 // Wide layout — weeks as columns, faithful to the planning spreadsheet
 // ---------------------------------------------------------------------------
 
-function ColumnView({ timeline, series, selected, onSelect }) {
+function ColumnView({ timeline, series, selected, onSelect, focusMacroId, onPickMacro }) {
   const weeks = timeline.weeks
   const width = weeks.length * COL
   const scrollRef = useRef(null)
   const todayIndex = currentWeekIndex(weeks)
 
   const macroBands = useMemo(() => bandRuns(weeks, w => w.macro_id), [weeks])
-  const mesoBands = useMemo(() => bandRuns(weeks, w => w.block_id), [weeks])
+  // Keyed by macro as well as block, so an unplanned macro reads as one empty band
+  // instead of a run of separate blank weeks.
+  const mesoBands = useMemo(
+    () => bandRuns(weeks, w => (w.macro_id ? `${w.macro_id}:${w.block_id || 0}` : null)),
+    [weeks],
+  )
 
   useEffect(() => {
     if (todayIndex < 0 || !scrollRef.current) return
@@ -207,9 +212,15 @@ function ColumnView({ timeline, series, selected, onSelect }) {
 
         {/* Macro / meso / micro bands */}
         <BandRow bands={macroBands} label="Macro" colourFor={() => '#1e88e5'}
+          focusKey={focusMacroId} onPick={onPickMacro}
           textFor={b => (b.weeks[0].macro_seq ? `${b.weeks[0].macro_seq} · ${b.weeks[0].macro_name}` : '')} />
         <BandRow bands={mesoBands} label="Meso" colourFor={b => phaseBar(b.weeks[0].phase_type)}
-          textFor={b => (b.weeks[0].block_seq ? `${b.weeks[0].block_seq} · ${b.weeks[0].block_name}` : '')} />
+          dimFn={b => Boolean(b.weeks[0].macro_id) && !b.weeks[0].block_id}
+          textFor={b => {
+            const w = b.weeks[0]
+            if (w.block_seq) return `${w.block_seq} · ${w.block_name}`
+            return w.macro_id ? 'Not planned yet' : ''
+          }} />
 
         <div className="flex border-b border-pool-700">
           {weeks.map(w => (
@@ -257,7 +268,7 @@ function ColumnView({ timeline, series, selected, onSelect }) {
         {/* The curve */}
         <svg width={width} height={PLOT_H} className="block" role="img"
           aria-label="Planned weekly load across the season">
-          {mesoBands.filter(b => b.key).map(b => {
+          {mesoBands.filter(b => b.weeks[0].block_id).map(b => {
             const tint = phaseTint(b.weeks[0].phase_type)
             return (
               <rect key={`tint-${b.start}`} x={b.start * COL} y={0}
@@ -339,19 +350,29 @@ function ColumnView({ timeline, series, selected, onSelect }) {
   )
 }
 
-function BandRow({ bands, label, colourFor, textFor }) {
+function BandRow({ bands, label, colourFor, textFor, focusKey, onPick, dimFn }) {
   return (
     <div className="flex border-b border-pool-700" title={label}>
       {bands.map(band => {
         const text = textFor(band)
+        const focused = focusKey !== undefined && focusKey !== null && band.key === focusKey
+        const dim = dimFn ? dimFn(band) : false
+        const clickable = Boolean(onPick) && Boolean(band.key)
+        const Tag = clickable ? 'button' : 'div'
         return (
-          <div
+          <Tag
             key={`${label}-${band.start}`}
-            style={{ width: band.span * COL, backgroundColor: band.key ? `${colourFor(band)}33` : undefined }}
-            className="shrink-0 px-1 py-1 text-[10px] font-semibold text-pool-200 truncate border-r border-pool-800"
+            onClick={clickable ? () => onPick(band.key) : undefined}
+            style={{
+              width: band.span * COL,
+              backgroundColor: band.key ? `${colourFor(band)}${focused ? '80' : dim ? '14' : '33'}` : undefined,
+            }}
+            className={`shrink-0 px-1 py-1 text-[10px] text-left truncate border-r border-pool-800 ${
+              dim ? 'italic text-pool-500' : 'font-semibold text-pool-200'
+            } ${focused ? 'ring-1 ring-inset ring-accent-400' : ''}`}
           >
             {text}
-          </div>
+          </Tag>
         )
       })}
     </div>
@@ -362,102 +383,150 @@ function BandRow({ bands, label, colourFor, textFor }) {
 // Narrow layout — weeks as rows, grouped by meso
 // ---------------------------------------------------------------------------
 
-function RowView({ timeline, series, selected, onSelect }) {
+function WeekRow({ week, weeks, primary, selected, onSelect }) {
+  const index = weeks.indexOf(week)
+  const value = primary ? primary.valueFn(week) : null
+  return (
+    <button
+      onClick={() => onSelect(index)}
+      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left ${
+        selected === index ? 'bg-pool-700' : week.is_current ? 'bg-accent-900/30' : ''
+      }`}
+    >
+      <span className={`text-[11px] tabular-nums w-14 shrink-0 ${
+        week.is_current ? 'text-accent-300 font-semibold' : 'text-pool-400'
+      }`}>
+        {weekLabel(week.week_start)}
+      </span>
+      <span className="text-[10px] text-pool-500 w-4 shrink-0 tabular-nums">{week.micro_index || ''}</span>
+      <span className="flex-1 h-4 bg-pool-800 rounded-sm overflow-hidden relative min-w-0">
+        {value !== null && value !== undefined && (
+          <span
+            className="absolute inset-y-0 left-0 rounded-sm"
+            style={{
+              width: `${Math.max(2, value)}%`,
+              backgroundColor: primary.colour,
+              opacity: week.load?.source === 'ai' ? 0.55 : 1,
+            }}
+          />
+        )}
+      </span>
+      <span className={`text-[11px] tabular-nums w-7 text-right shrink-0 ${
+        week.load?.coach_overrode ? 'text-yellow-400 font-semibold' : 'text-pool-300'
+      }`}>
+        {value ?? '·'}
+      </span>
+    </button>
+  )
+}
+
+function BlockNotes({ weeks }) {
+  if (!weeks.some(w => w.meets.length || w.load?.note || w.sessions?.cancelled)) return null
+  return (
+    <div className="mt-1 space-y-1 px-2">
+      {weeks.filter(w => w.meets.length).map(w => (
+        <p key={`m-${w.week_start}`} className="text-[10px] text-red-200">
+          {weekLabel(w.week_start)} · {w.meets.map(m => m.name).join(', ')}
+        </p>
+      ))}
+      {weeks.filter(w => w.sessions?.cancelled).map(w => (
+        <p key={`c-${w.week_start}`} className="text-[10px] text-red-400">
+          {weekLabel(w.week_start)} · {w.sessions.cancelled} session{w.sessions.cancelled > 1 ? 's' : ''} cancelled
+        </p>
+      ))}
+      {weeks.filter(w => w.load?.note).map(w => (
+        <p key={`n-${w.week_start}`} className="text-[10px] text-pool-400 italic">
+          {weekLabel(w.week_start)} · {w.load.note}
+        </p>
+      ))}
+    </div>
+  )
+}
+
+function RowView({ timeline, series, selected, onSelect, focusMacroId, onPickMacro }) {
   const weeks = timeline.weeks
-  const mesoBands = useMemo(() => bandRuns(weeks, w => w.block_id), [weeks])
+  const macroBands = useMemo(() => bandRuns(weeks, w => w.macro_id), [weeks])
   const primary = series[0]
 
   return (
-    <div className="space-y-3">
-      {mesoBands.map(band => (
-        <div key={`row-band-${band.start}`}>
-          <div
-            className="flex items-center gap-2 px-2 py-1.5 rounded-lg mb-1"
-            style={{ backgroundColor: band.key ? `${phaseBar(band.weeks[0].phase_type)}26` : '#1e1e1e' }}
-          >
-            <span className="text-xs font-semibold text-pool-200 truncate">
-              {band.key
-                ? `${band.weeks[0].macro_seq}.${band.weeks[0].block_seq} · ${band.weeks[0].block_name}`
-                : 'Unassigned weeks'}
-            </span>
-            {band.weeks[0].phase_type && (
-              <span className="text-[10px] capitalize text-pool-400 shrink-0">{band.weeks[0].phase_type}</span>
+    <div className="space-y-4">
+      {macroBands.map(macroBand => {
+        const first = macroBand.weeks[0]
+
+        // Weeks that belong to no macro: say so once rather than listing them.
+        if (!macroBand.key) {
+          return (
+            <p key={`gap-${macroBand.start}`} className="text-[10px] text-pool-600 px-2">
+              {weekLabel(first.week_start)} · {macroBand.span} week{macroBand.span > 1 ? 's' : ''} outside any macrocycle
+            </p>
+          )
+        }
+
+        const focused = focusMacroId === macroBand.key
+        const planned = macroBand.weeks.some(w => w.block_id)
+        const mesoBands = bandRuns(macroBand.weeks, w => w.block_id || 0)
+
+        return (
+          <div key={`macro-${macroBand.start}`} className="space-y-1.5">
+            <button
+              onClick={onPickMacro ? () => onPickMacro(macroBand.key) : undefined}
+              className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-left bg-accent-900/40 ${
+                focused ? 'ring-1 ring-accent-400' : ''
+              }`}
+            >
+              <span className="text-sm font-semibold text-pool-100 truncate">
+                {first.macro_seq} · {first.macro_name}
+              </span>
+              <span className="text-[10px] text-pool-400 ml-auto shrink-0">
+                {weekLabel(first.week_start)} · {macroBand.span}w
+              </span>
+            </button>
+
+            {!planned ? (
+              <p className="text-xs text-pool-500 italic px-3 py-2 bg-pool-800/60 rounded-lg">
+                Not planned yet. Select this macrocycle and ask the assistant to plan its blocks.
+              </p>
+            ) : (
+              mesoBands.map(band => {
+                const head = band.weeks[0]
+                return (
+                  <div key={`row-band-${head.week_start}`}>
+                    <div
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-lg mb-1"
+                      style={{ backgroundColor: head.block_id ? `${phaseBar(head.phase_type)}26` : '#1e1e1e' }}
+                    >
+                      <span className="text-xs font-semibold text-pool-200 truncate">
+                        {head.block_id ? `${head.macro_seq}.${head.block_seq} · ${head.block_name}` : 'Unassigned weeks'}
+                      </span>
+                      {head.phase_type && (
+                        <span className="text-[10px] capitalize text-pool-400 shrink-0">{head.phase_type}</span>
+                      )}
+                      <span className="text-[10px] text-pool-500 ml-auto shrink-0">{band.span}w</span>
+                    </div>
+                    <div className="space-y-0.5">
+                      {band.weeks.map(week => (
+                        <WeekRow key={week.week_start} week={week} weeks={weeks}
+                          primary={primary} selected={selected} onSelect={onSelect} />
+                      ))}
+                    </div>
+                    <BlockNotes weeks={band.weeks} />
+                  </div>
+                )
+              })
             )}
-            <span className="text-[10px] text-pool-500 ml-auto shrink-0">{band.span}w</span>
           </div>
-
-          <div className="space-y-0.5">
-            {band.weeks.map(week => {
-              const index = weeks.indexOf(week)
-              const value = primary ? primary.valueFn(week) : null
-              return (
-                <button
-                  key={week.week_start}
-                  onClick={() => onSelect(index)}
-                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left ${
-                    selected === index ? 'bg-pool-700' : week.is_current ? 'bg-accent-900/30' : ''
-                  }`}
-                >
-                  <span className={`text-[11px] tabular-nums w-14 shrink-0 ${
-                    week.is_current ? 'text-accent-300 font-semibold' : 'text-pool-400'
-                  }`}>
-                    {weekLabel(week.week_start)}
-                  </span>
-                  <span className="text-[10px] text-pool-500 w-4 shrink-0 tabular-nums">
-                    {week.micro_index || ''}
-                  </span>
-
-                  <span className="flex-1 h-4 bg-pool-800 rounded-sm overflow-hidden relative min-w-0">
-                    {value !== null && value !== undefined && (
-                      <span
-                        className="absolute inset-y-0 left-0 rounded-sm"
-                        style={{
-                          width: `${Math.max(2, value)}%`,
-                          backgroundColor: primary.colour,
-                          opacity: week.load?.source === 'ai' ? 0.55 : 1,
-                        }}
-                      />
-                    )}
-                  </span>
-
-                  <span className={`text-[11px] tabular-nums w-7 text-right shrink-0 ${
-                    week.load?.coach_overrode ? 'text-yellow-400 font-semibold' : 'text-pool-300'
-                  }`}>
-                    {value ?? '·'}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-
-          {band.weeks.some(w => w.meets.length || w.load?.note || w.sessions?.cancelled) && (
-            <div className="mt-1 space-y-1 px-2">
-              {band.weeks.filter(w => w.meets.length).map(w => (
-                <p key={`m-${w.week_start}`} className="text-[10px] text-red-200">
-                  {weekLabel(w.week_start)} · {w.meets.map(m => m.name).join(', ')}
-                </p>
-              ))}
-              {band.weeks.filter(w => w.sessions?.cancelled).map(w => (
-                <p key={`c-${w.week_start}`} className="text-[10px] text-red-400">
-                  {weekLabel(w.week_start)} · {w.sessions.cancelled} session{w.sessions.cancelled > 1 ? 's' : ''} cancelled
-                </p>
-              ))}
-              {band.weeks.filter(w => w.load?.note).map(w => (
-                <p key={`n-${w.week_start}`} className="text-[10px] text-pool-400 italic">
-                  {weekLabel(w.week_start)} · {w.load.note}
-                </p>
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
 
-export default function SeasonTimeline({ macros = [] }) {
+export default function SeasonTimeline({ macros = [], selectedMacroId, onSelectMacro }) {
+  // Embedded in the planning workspace the whole year is shown and the workspace
+  // owns which macrocycle is in focus; on its own the page picks one at a time.
+  const embedded = typeof onSelectMacro === 'function'
   const [timeline, setTimeline] = useState(null)
   const [loading, setLoading] = useState(true)
   const [macroId, setMacroId] = useState(null)
@@ -475,11 +544,14 @@ export default function SeasonTimeline({ macros = [] }) {
   }, [])
 
   useEffect(() => {
+    if (embedded) { load(null); return }
     const current = macros.find(m => m.is_current) || macros[0]
     const id = current ? current.id : null
     setMacroId(id)
     load(id)
-  }, [macros, load])
+  }, [macros, load, embedded])
+
+  const focusId = embedded ? selectedMacroId : macroId
 
   const series = useMemo(() => (timeline ? buildSeries(timeline) : []), [timeline])
 
@@ -499,7 +571,7 @@ export default function SeasonTimeline({ macros = [] }) {
             {weekLabel(timeline.date_from)} – {weekLabel(timeline.date_to)} · {timeline.weeks.length} weeks
           </p>
         </div>
-        {macros.length > 1 && (
+        {!embedded && macros.length > 1 && (
           <select
             value={macroId || ''}
             onChange={e => { const id = Number(e.target.value) || null; setMacroId(id); setSelected(null); load(id) }}
@@ -524,17 +596,19 @@ export default function SeasonTimeline({ macros = [] }) {
       )}
 
       <div className="hidden md:block">
-        <ColumnView timeline={timeline} series={series} selected={selected} onSelect={setSelected} />
+        <ColumnView timeline={timeline} series={series} selected={selected} onSelect={setSelected}
+          focusMacroId={embedded ? focusId : undefined} onPickMacro={embedded ? onSelectMacro : undefined} />
       </div>
       <div className="md:hidden">
-        <RowView timeline={timeline} series={series} selected={selected} onSelect={setSelected} />
+        <RowView timeline={timeline} series={series} selected={selected} onSelect={setSelected}
+          focusMacroId={embedded ? focusId : undefined} onPickMacro={embedded ? onSelectMacro : undefined} />
       </div>
 
       {selectedWeek && (
         <WeekDetail
           week={selectedWeek}
-          macroId={selectedWeek.macro_id || macroId}
-          onSaved={() => load(macroId)}
+          macroId={selectedWeek.macro_id || focusId}
+          onSaved={() => load(embedded ? null : macroId)}
           onClose={() => setSelected(null)}
         />
       )}

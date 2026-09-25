@@ -86,10 +86,10 @@ class PathwaySkillWiringTests(unittest.TestCase):
         self.assertIn("'pathway_plan'", self.chat_src)
 
     def test_the_draft_is_offered_for_approval_not_saved(self):
-        # The branch hands back a draft and a review action; it must not create
-        # pathways itself — the coach approves first.
+        # The branch hands the draft back in skill_result for review; it must not
+        # create pathways itself - the coach approves first.
         branch = self.chat_src.split("# --- Competition Pathway Skill ---")[1].split("# --- Taper")[0]
-        self.assertIn('"plan_type": "pathway"', branch)
+        self.assertIn('"skill_result": {"type": "pathway_plan"', branch)
         self.assertNotIn("PlanningPathway(", branch)
 
     def test_the_skill_refuses_swimmers_outside_the_squad(self):

@@ -3,12 +3,56 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import SeasonTimeline from '../components/SeasonTimeline'
 import PathwayBoard from '../components/PathwayBoard'
+import { describeDraft, draftFromResult, saveDraft, takeStashedDraft } from '../planDrafts'
 
-// The planning conversation and the picture it produces, side by side. The
-// chat is the same season-plan thread the AI page uses, so nothing said here
-// is lost to a separate history.
+// The planning conversation and the picture it produces, side by side.
+//
+// The year comes first: divide it into macrocycles, then pick one and plan what
+// goes inside it. The macrocycle in focus is passed with every message, so the
+// assistant plans that one rather than guessing from today's date.
 
-function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
+// Only one layout is mounted. Rendering both and hiding one with CSS would run
+// two chat panels, each trying to open the planning thread at once.
+function useIsWide() {
+  const query = '(min-width: 1024px)'
+  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    && window.matchMedia(query).matches
+  const [wide, setWide] = useState(read)
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return undefined
+    const mq = window.matchMedia(query)
+    const onChange = (e) => setWide(e.matches)
+    setWide(mq.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return wide
+}
+
+function weekSpan(macro) {
+  const days = (new Date(`${macro.date_to}T00:00:00`) - new Date(`${macro.date_from}T00:00:00`)) / 86400000
+  return Math.max(1, Math.round((days + 1) / 7))
+}
+
+function suggestionsFor(macros, macro) {
+  if (macros.length === 0) {
+    return [{ label: 'Divide the year into macrocycles', text: 'Divide the year into macrocycles around my key meets.' }]
+  }
+  const out = []
+  if (macro) {
+    const planned = (macro.mesos || []).length > 0
+    out.push(planned
+      ? { label: 'Plan the next block', text: 'Plan the next block in this macrocycle.' }
+      : { label: 'Plan this macrocycle', text: 'Plan the phases inside this macrocycle.' })
+  }
+  out.push({
+    label: 'Branch the pathways',
+    text: 'Who is aiming at which meet, and where do the others go if they miss the qualifying time?',
+  })
+  return out
+}
+
+function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
   const navigate = useNavigate()
   const [thread, setThread] = useState(null)
   const [messages, setMessages] = useState([])
@@ -17,9 +61,11 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
   const [action, setAction] = useState(null)
   const endRef = useRef(null)
 
+  // One planning conversation for the whole year. Which macrocycle it is about
+  // travels with each message instead of splitting the history per macro.
   useEffect(() => {
     let cancelled = false
-    api.getOrCreateSeasonPlanThread(macroId)
+    api.getOrCreateSeasonPlanThread()
       .then(async (t) => {
         if (cancelled) return
         setThread(t)
@@ -28,33 +74,29 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
       })
       .catch(() => {})
     return () => { cancelled = true }
-  }, [macroId])
+  }, [])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
   }, [messages, sending])
 
-  const send = async () => {
-    const text = input.trim()
+  const send = async (override) => {
+    const text = (override ?? input).trim()
     if (!text || sending || !thread) return
     setInput('')
     setAction(null)
     setMessages(prev => [...prev, { id: `local-${Date.now()}`, role: 'user', message: text }])
     setSending(true)
     try {
-      const res = await api.sendAIChatMessage(text, thread.id)
+      const res = await api.sendAIChatMessage(text, thread.id, false, macro ? macro.id : null)
       const fresh = await api.getAIChatMessages(thread.id).catch(() => null)
       if (Array.isArray(fresh)) setMessages(fresh)
       else if (res.reply) {
         setMessages(prev => [...prev, { id: `reply-${Date.now()}`, role: 'assistant', message: res.reply }])
       }
-      if (res.suggested_action?.plan_type === 'pathway' && res.suggested_action.pathway_draft) {
-        // Pathways are edited right here, so the draft stays on this page
-        // rather than being handed off to the season plan for approval.
-        onPathwayDraft(res.suggested_action.pathway_draft)
-      } else if (res.suggested_action) {
-        setAction(res.suggested_action)
-      }
+      const drafted = draftFromResult(res)
+      if (drafted) onDraft(drafted)
+      else if (res.suggested_action && typeof res.suggested_action === 'object') setAction(res.suggested_action)
       onPlanChanged()
     } catch (e) {
       setMessages(prev => [...prev, {
@@ -66,24 +108,27 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
   }
 
   const takeAction = () => {
-    if (!action) return
-    if (action.plan_type) {
-      sessionStorage.setItem('dx_plan_handoff', JSON.stringify(action))
-      navigate('/season')
-      return
-    }
-    if (action.meet_id) navigate(`/meets/${action.meet_id}`)
+    if (action && action.meet_id) navigate(`/meets/${action.meet_id}`)
   }
+
+  const suggestions = suggestionsFor(macros, macro)
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {macro && (
+        <p className="text-[11px] text-pool-400 pb-2 shrink-0 truncate">
+          Planning <span className="text-pool-200 font-semibold">{macro.name}</span>
+          <span className="text-pool-500"> · {weekSpan(macro)}w · {(macro.mesos || []).length} blocks</span>
+        </p>
+      )}
+
       <div className="flex-1 overflow-y-auto space-y-3 pr-1">
         {messages.length === 0 && (
           <div className="bg-pool-800 rounded-xl p-4 space-y-2">
-            <p className="text-sm text-pool-200 font-medium">Start with the shape of the season.</p>
+            <p className="text-sm text-pool-200 font-medium">Start with the shape of the year.</p>
             <p className="text-xs text-pool-400 leading-relaxed">
-              Which squad, when it runs, and the meets that matter. Then who is aiming at what —
-              and where they go instead if the time does not come. The picture builds as you talk.
+              Divide it into macrocycles around the meets that matter. Then pick one and plan what
+              goes inside it, and who is aiming at what. The picture builds as you talk.
             </p>
           </div>
         )}
@@ -91,9 +136,7 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
         {messages.map(m => (
           <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : ''}>
             <div className={`rounded-2xl px-3.5 py-2.5 max-w-[92%] text-sm leading-relaxed whitespace-pre-wrap ${
-              m.role === 'user'
-                ? 'bg-accent-700 text-white'
-                : 'bg-pool-800 text-pool-200'
+              m.role === 'user' ? 'bg-accent-700 text-white' : 'bg-pool-800 text-pool-200'
             }`}>
               {m.message}
             </div>
@@ -109,15 +152,28 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
             onClick={takeAction}
             className="w-full bg-accent-900/40 border border-accent-700/60 rounded-xl px-3 py-2.5 text-left"
           >
-            <p className="text-xs font-semibold text-accent-200">{action.label || 'Review this plan'}</p>
-            <p className="text-[11px] text-pool-400 mt-0.5">Tap to open it for approval</p>
+            <p className="text-xs font-semibold text-accent-200">{action.label || 'Open'}</p>
           </button>
         )}
 
         <div ref={endRef} />
       </div>
 
-      <div className="pt-2 shrink-0">
+      <div className="pt-2 shrink-0 space-y-2">
+        {suggestions.length > 0 && !sending && (
+          <div className="flex flex-wrap gap-1.5">
+            {suggestions.map(sug => (
+              <button
+                key={sug.label}
+                onClick={() => send(sug.text)}
+                disabled={!thread}
+                className="text-[11px] bg-pool-800 border border-pool-600 text-pool-300 rounded-full px-3 py-1 disabled:opacity-40"
+              >
+                {sug.label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-2 items-end">
           <textarea
             value={input}
@@ -130,7 +186,7 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
             className="flex-1 bg-pool-700 border border-pool-600 rounded-xl px-3 py-2.5 text-sm text-pool-100 placeholder-pool-500 focus:border-accent-500 focus:outline-none resize-none max-h-32"
           />
           <button
-            onClick={send}
+            onClick={() => send()}
             disabled={sending || !input.trim() || !thread}
             className="bg-accent-600 disabled:opacity-40 rounded-xl px-4 py-2.5 text-sm font-semibold text-white shrink-0"
           >
@@ -142,65 +198,39 @@ function ChatPanel({ macroId, onPlanChanged, onPathwayDraft }) {
   )
 }
 
-function PathwayDraftCard({ draft, macroId, onSaved, onDismiss }) {
+function DraftCard({ kind, draft, macros, macroId, onSaved, onDismiss }) {
   const [saving, setSaving] = useState(false)
+  const view = describeDraft(kind, draft)
 
   const save = async () => {
-    const targetMacro = draft.macro_id || macroId
-    if (!targetMacro) {
-      alert('There is no macrocycle to attach these pathways to yet.')
-      return
-    }
     setSaving(true)
     try {
-      for (const pathway of draft.pathways || []) {
-        const created = await api.createPlanningPathway({
-          macro_id: targetMacro,
-          name: pathway.name,
-          objective: pathway.objective || null,
-          primary_meet_id: pathway.primary_meet_id || null,
-          fallback_meet_id: pathway.fallback_meet_id || null,
-        })
-        const members = (pathway.swimmers || []).map(s => ({
-          swimmer_id: s.swimmer_id,
-          qualification_status: s.qualification_status || 'unknown',
-          notes: s.reason || null,
-        }))
-        if (members.length) await api.setPlanningPathwayMembers(created.id, members)
-      }
-      onSaved()
+      const result = await saveDraft(kind, draft, { api, macros, macroId })
+      onSaved(result)
     } catch (e) {
-      alert('Could not save the pathways: ' + e.message)
+      alert('Could not save this: ' + e.message)
     }
     setSaving(false)
   }
 
   return (
     <section className="bg-accent-900/30 border border-accent-700/60 rounded-2xl p-4 space-y-3">
-      <p className="text-xs uppercase tracking-wide font-semibold text-accent-300">
-        Proposed pathways
-      </p>
+      <div>
+        <p className="text-xs uppercase tracking-wide font-semibold text-accent-300">{view.heading}</p>
+        {view.title && <p className="text-sm font-semibold text-pool-100 mt-1">{view.title}</p>}
+        {view.note && <p className="text-xs text-pool-400 mt-1 leading-relaxed">{view.note}</p>}
+      </div>
 
       <div className="space-y-2">
-        {(draft.pathways || []).map((pathway, i) => (
-          <div key={i} className="bg-pool-900/40 rounded-xl p-3 space-y-1">
-            <p className="text-sm font-semibold text-pool-100">{pathway.name}</p>
-            <p className="text-xs text-pool-300">
-              → {pathway.primary_meet || 'no target meet'}
-              {pathway.fallback_meet && (
-                <span className="text-pool-400"> · else {pathway.fallback_meet}</span>
-              )}
-            </p>
-            {pathway.objective && (
-              <p className="text-xs text-pool-400 leading-relaxed">{pathway.objective}</p>
-            )}
-            {(pathway.swimmers || []).length > 0 && (
+        {view.items.map(item => (
+          <div key={item.key} className="bg-pool-900/40 rounded-xl p-3 space-y-1">
+            <p className="text-sm font-semibold text-pool-100">{item.title}</p>
+            {item.detail && <p className="text-xs text-pool-300">{item.detail}</p>}
+            {item.body && <p className="text-xs text-pool-400 leading-relaxed">{item.body}</p>}
+            {item.chips && item.chips.length > 0 && (
               <div className="flex flex-wrap gap-1 pt-0.5">
-                {pathway.swimmers.map(s => (
-                  <span key={s.swimmer_id}
-                    className="text-[10px] bg-pool-700 text-pool-300 rounded-full px-2 py-0.5">
-                    {s.name}
-                  </span>
+                {item.chips.map(name => (
+                  <span key={name} className="text-[10px] bg-pool-700 text-pool-300 rounded-full px-2 py-0.5">{name}</span>
                 ))}
               </div>
             )}
@@ -208,22 +238,17 @@ function PathwayDraftCard({ draft, macroId, onSaved, onDismiss }) {
         ))}
       </div>
 
-      {(draft.questions || []).length > 0 && (
-        <div className="space-y-1">
-          {draft.questions.map((q, i) => (
-            <p key={i} className="text-xs text-yellow-300">{q}</p>
-          ))}
-        </div>
-      )}
+      {view.warnings.map((w, i) => <p key={`w-${i}`} className="text-xs text-yellow-300">{w}</p>)}
+      {view.questions.map((q, i) => <p key={`q-${i}`} className="text-xs text-yellow-300">{q}</p>)}
 
       <div className="flex gap-2">
         <button onClick={onDismiss} className="px-4 py-2.5 text-xs bg-pool-700 rounded-xl">Dismiss</button>
         <button
           onClick={save}
-          disabled={saving}
+          disabled={saving || view.items.length === 0}
           className="flex-1 py-2.5 text-xs font-semibold bg-accent-600 rounded-xl disabled:opacity-40"
         >
-          {saving ? 'Saving…' : 'Save these pathways'}
+          {saving ? 'Saving…' : view.saveLabel}
         </button>
       </div>
     </section>
@@ -236,52 +261,86 @@ export default function PlanningWorkspace() {
   const [loading, setLoading] = useState(true)
   const [tab, setTab] = useState('plan')      // phone only: 'chat' | 'plan'
   const [refreshKey, setRefreshKey] = useState(0)
-  const [pathwayDraft, setPathwayDraft] = useState(null)
+  const [pending, setPending] = useState(null) // { kind, draft } awaiting approval
+  const wide = useIsWide()
 
   const loadMacros = async () => {
     try {
       const rows = await api.getMacros()
       const list = Array.isArray(rows) ? rows : []
       setMacros(list)
-      setMacroId(prev => prev ?? (list.find(m => m.is_current) || list[0])?.id ?? null)
+      setMacroId(prev => (prev && list.some(m => m.id === prev))
+        ? prev
+        : ((list.find(m => m.is_current) || list[0])?.id ?? null))
     } catch {
       setMacros([])
     }
     setLoading(false)
   }
 
-  useEffect(() => { loadMacros() }, [])
+  useEffect(() => {
+    loadMacros()
+    // A draft made on the main AI chat lands here to be reviewed.
+    const stashed = takeStashedDraft()
+    if (stashed) setPending(stashed)
+  }, [])
 
   const planChanged = () => {
     setRefreshKey(k => k + 1)
     loadMacros()
   }
 
+  const macro = macros.find(m => m.id === macroId) || null
+
   const visual = (
     <div className="space-y-4">
-      {pathwayDraft && (
-        <PathwayDraftCard
-          draft={pathwayDraft}
+      {pending && (
+        <DraftCard
+          kind={pending.kind}
+          draft={pending.draft}
+          macros={macros}
           macroId={macroId}
-          onSaved={() => { setPathwayDraft(null); planChanged() }}
-          onDismiss={() => setPathwayDraft(null)}
+          onSaved={(result) => {
+            setPending(null)
+            if (result && result.macroId) setMacroId(result.macroId)
+            planChanged()
+          }}
+          onDismiss={() => setPending(null)}
         />
       )}
+
       {macros.length > 0 ? (
-        <SeasonTimeline key={`tl-${refreshKey}`} macros={macros} />
+        <SeasonTimeline
+          key={`tl-${refreshKey}`}
+          macros={macros}
+          selectedMacroId={macroId}
+          onSelectMacro={setMacroId}
+        />
       ) : !loading && (
         <div className="bg-pool-800 rounded-2xl p-5 text-center space-y-2">
           <p className="text-sm text-pool-300 font-medium">Nothing planned yet</p>
           <p className="text-xs text-pool-500 leading-relaxed">
-            Describe the season in the chat and the timeline appears here as it takes shape.
+            Ask the assistant to divide the year into macrocycles. They appear here as empty bands,
+            and fill in as you plan each one.
           </p>
         </div>
       )}
+
       <PathwayBoard key={`pb-${refreshKey}`} macroId={macroId} />
+
       <Link to="/season" className="block text-center text-xs text-accent-400 underline pb-4">
         Open the full season plan →
       </Link>
     </div>
+  )
+
+  const chat = (
+    <ChatPanel
+      macro={macro}
+      macros={macros}
+      onDraft={(drafted) => { setPending(drafted); setTab('plan') }}
+      onPlanChanged={planChanged}
+    />
   )
 
   return (
@@ -290,7 +349,7 @@ export default function PlanningWorkspace() {
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h1 className="text-lg font-bold">Planning</h1>
-            <p className="text-xs text-pool-500 mt-0.5 truncate">Talk it through and watch the season take shape</p>
+            <p className="text-xs text-pool-500 mt-0.5 truncate">Divide the year, then plan each macrocycle</p>
           </div>
           {macros.length > 1 && (
             <select
@@ -309,7 +368,7 @@ export default function PlanningWorkspace() {
             <button
               key={key}
               onClick={() => setTab(key)}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg capitalize ${
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg ${
                 tab === key ? 'bg-pool-700 text-pool-100' : 'text-pool-500'
               }`}
             >
@@ -319,26 +378,24 @@ export default function PlanningWorkspace() {
         </div>
       </div>
 
-      {/* Wide: conversation beside the picture it produces */}
-      <div className="flex-1 min-h-0 hidden lg:flex">
-        <div className="w-[38%] min-w-[320px] max-w-[520px] border-r border-pool-700 p-4 flex flex-col min-h-0">
-          <ChatPanel macroId={macroId} onPlanChanged={planChanged}
-            onPathwayDraft={(d) => { setPathwayDraft(d); setTab('plan') }} />
-        </div>
-        <div className="flex-1 overflow-y-auto p-4">{visual}</div>
-      </div>
-
-      {/* Phone: whichever tab is showing */}
-      <div className="flex-1 min-h-0 lg:hidden">
-        {tab === 'chat' ? (
-          <div className="h-full p-4 flex flex-col min-h-0">
-            <ChatPanel macroId={macroId} onPlanChanged={planChanged}
-            onPathwayDraft={(d) => { setPathwayDraft(d); setTab('plan') }} />
+      {wide ? (
+        /* Wide: conversation beside the picture it produces */
+        <div className="flex-1 min-h-0 flex">
+          <div className="w-[38%] min-w-[320px] max-w-[520px] border-r border-pool-700 p-4 flex flex-col min-h-0">
+            {chat}
           </div>
-        ) : (
-          <div className="h-full overflow-y-auto p-4">{visual}</div>
-        )}
-      </div>
+          <div className="flex-1 overflow-y-auto p-4">{visual}</div>
+        </div>
+      ) : (
+        /* Phone: whichever tab is showing */
+        <div className="flex-1 min-h-0">
+          {tab === 'chat' ? (
+            <div className="h-full p-4 flex flex-col min-h-0">{chat}</div>
+          ) : (
+            <div className="h-full overflow-y-auto p-4">{visual}</div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -2676,7 +2676,7 @@ def _build_macro_plan_context(db: DBSession) -> str:
 
     # Active squad summary: swimmer count, event mix, group labels if already defined
     active_swimmers = db.query(models.Swimmer).filter(
-        models.Swimmer.is_active == True,
+        models.Swimmer.active.is_(True),
     ).all()
 
     if active_swimmers:
@@ -2741,10 +2741,69 @@ def _build_macro_plan_context(db: DBSession) -> str:
     return "\n".join(lines)
 
 
+def _clamp_phases_to_window(phases: list, window_from: date, window_to: date) -> list:
+    """Keep every phase inside its macrocycle.
+
+    The model is told the window, but a phase that strays outside it would land
+    as a block belonging to the wrong macro, so the boundary is enforced here.
+    """
+    kept = []
+    for phase in phases or []:
+        try:
+            start = date.fromisoformat(str(phase.get("date_from")))
+            end = date.fromisoformat(str(phase.get("date_to")))
+        except (TypeError, ValueError):
+            continue
+        if end < window_from or start > window_to or end < start:
+            continue
+        lo, hi = max(start, window_from), min(end, window_to)
+        clamped = dict(phase)
+        clamped["date_from"] = lo.isoformat()
+        clamped["date_to"] = hi.isoformat()
+        clamped["weeks"] = max(1, round(((hi - lo).days + 1) / 7))
+        kept.append(clamped)
+    kept.sort(key=lambda ph: ph["date_from"])
+    return kept
+
+
+def _macro_scope_block(macro: models.TrainingMacro, db: DBSession) -> str:
+    """Tell the macro skill it is filling in one existing macrocycle, not designing a season."""
+    lines = [
+        "SCOPE - PLAN ONE MACROCYCLE ONLY:",
+        f"This macrocycle already exists: '{macro.name}' (id {macro.id}), "
+        f"{macro.date_from} to {macro.date_to}"
+        + (f", squad {macro.squad}" if macro.squad else "") + ".",
+    ]
+    if macro.narrative:
+        lines.append(f"Its intent: {macro.narrative[:300]}")
+    if macro.primary_meet:
+        lines.append(f"Its target meet: {macro.primary_meet.name} on {macro.primary_meet.date}.")
+    lines += [
+        "Design ONLY the phases (mesocycles) inside it. Do not plan other macrocycles.",
+        f"Every phase must fall within {macro.date_from} to {macro.date_to}; the first phase "
+        f"starts on {macro.date_from} and the last ends on {macro.date_to}.",
+        f'Return name "{macro.name}", date_from "{macro.date_from}", date_to "{macro.date_to}" unchanged.',
+    ]
+    meets = db.query(models.Meet).filter(
+        models.Meet.date >= macro.date_from, models.Meet.date <= macro.date_to,
+    ).order_by(models.Meet.date).all()
+    if meets:
+        lines.append("Meets inside this macrocycle (place phases around them):")
+        lines += [f"  {m.date}: {m.name}" + (f" ({m.level})" if m.level else "") for m in meets]
+    existing = db.query(models.SeasonBlock).filter(
+        models.SeasonBlock.macro_id == macro.id,
+    ).order_by(models.SeasonBlock.date_from).all()
+    if existing:
+        lines.append("Phases already saved in it (do not duplicate; plan only what is missing):")
+        lines += [f"  {b.name} | {b.phase_type or ''} | {b.date_from} to {b.date_to}" for b in existing]
+    return "\n".join(lines)
+
+
 def run_plan_macro(
     request_text: str,
     db: DBSession,
     coach_context: Optional[str] = None,
+    macro_id: Optional[int] = None,
 ) -> dict:
     """
     Core macro planning skill — callable from HTTP endpoint or internal chat routing.
@@ -2752,15 +2811,25 @@ def run_plan_macro(
     If Claude needs more info (e.g. asks for competition dates), returns { reply, draft: None, needs_input: True }.
     """
     context = _build_macro_plan_context(db)
+    scoped = None
+    if macro_id:
+        scoped = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+    if scoped:
+        context = f"{context}\n\n{_macro_scope_block(scoped, db)}"
 
     thread_block = f"\n\n{coach_context}" if coach_context else ""
+    ask = (
+        "Plan the phases inside this macrocycle now. If you need key competition dates first, ask. Otherwise output valid JSON only."
+        if scoped else
+        "Plan the full season macro now. If you need key competition dates first, ask. Otherwise output valid JSON only."
+    )
     user_message = f"""SEASON CONTEXT:
 {context}{thread_block}
 
 COACH REQUEST:
 {request_text}
 
-Plan the full season macro now. If you need key competition dates first, ask. Otherwise output valid JSON only."""
+{ask}"""
 
     response = get_client().messages.create(
         model=MODEL,
@@ -2783,6 +2852,14 @@ Plan the full season macro now. If you need key competition dates first, ask. Ot
     raw = raw.strip().rstrip("```").strip()
 
     draft = json.loads(raw)
+    if scoped:
+        draft["macro_id"] = scoped.id
+        draft["name"] = scoped.name
+        draft["date_from"] = scoped.date_from.isoformat()
+        draft["date_to"] = scoped.date_to.isoformat()
+        draft["phases"] = _clamp_phases_to_window(
+            draft.get("phases"), scoped.date_from, scoped.date_to,
+        )
     reply = _build_macro_reply(draft)
 
     _save_skill_output(db, "macro_plan", reply, entity_type="squad")
@@ -3438,7 +3515,7 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
     lines.append(f"TODAY: {today}")
     lines.append(f"PLANNING WEEK: {week_start} (Mon) to {week_end} (Sun)")
     lines.append("")
-    active_swimmers = db.query(models.Swimmer).filter(models.Swimmer.is_active == True).all()
+    active_swimmers = db.query(models.Swimmer).filter(models.Swimmer.active.is_(True)).all()
     swimmer_name_by_id = {swimmer.id: swimmer.name for swimmer in active_swimmers}
 
     # Coaching philosophy
@@ -4419,3 +4496,216 @@ def plan_pathways(body: dict = Body(default={}), db: DBSession = Depends(get_db)
         raise HTTPException(500, "The pathway plan came back in a shape I could not read. Try again.")
     except Exception as e:
         raise HTTPException(500, f"Pathway planning failed: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Season macros skill — divide the year into macrocycles
+# ---------------------------------------------------------------------------
+
+SEASON_MACROS_SYSTEM = """You are a season architect for competitive swimming. Your job is ONE thing:
+divide the year into macrocycles. You do not plan the blocks inside them - that
+happens later, one macrocycle at a time.
+
+A macrocycle is a competition-led stretch of training, usually 8-20 weeks, that
+builds toward a priority meet and finishes just after it. A season normally holds
+two to four of them (for example a short-course autumn block, a winter block
+towards a championship, and a long-course summer block).
+
+KEY COMPETITIONS FIRST:
+If no meets are listed and the coach has not named the priority competitions,
+ask for them in plain text instead of producing JSON:
+"Before I split the year - which meets matter most, and roughly when?"
+
+RULES:
+- Macrocycles are contiguous: each starts the day after the previous one ends.
+  A short transition or rest stretch may be its own macrocycle.
+- Each macrocycle should end at or just after the priority meet it builds to.
+- Do not overlap the EXISTING MACROS. Plan only the time they do not cover,
+  unless the coach explicitly asks to restructure.
+- Use only meet ids from the MEETS list for primary_meet_id, or null.
+- Name each macrocycle for what it is about, e.g. "Autumn - Regional qualifying".
+- Keep each focus to one sentence a coach would actually say.
+
+Return valid JSON only, no markdown fences:
+{
+  "name": "2026/27 Season",
+  "date_from": "YYYY-MM-DD",
+  "date_to": "YYYY-MM-DD",
+  "narrative": "2-3 sentences on the shape of the year",
+  "macros": [
+    {
+      "name": "Autumn - Regional qualifying",
+      "date_from": "YYYY-MM-DD",
+      "date_to": "YYYY-MM-DD",
+      "primary_meet_id": 3,
+      "focus": "Build the aerobic base and get as many swimmers as possible to the Regional times."
+    }
+  ],
+  "questions": ["anything you need the coach to confirm"]
+}"""
+
+
+def _parse_iso(value) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def normalise_season_macros(macros: list, known_meet_ids: set, existing: list) -> tuple[list, list]:
+    """Make a proposed run of macrocycles safe to save.
+
+    Drops entries with unreadable or reversed dates, orders them, trims an
+    overlap with the previous macrocycle rather than letting two macros claim
+    the same week, unknown meet ids become None, and any macro that lands on an
+    existing one is flagged so the coach sees it before approving.
+
+    ``existing`` is a list of (name, date_from, date_to). Returns (macros, warnings).
+    """
+    cleaned = []
+    for item in macros or []:
+        start, end = _parse_iso(item.get("date_from")), _parse_iso(item.get("date_to"))
+        if not start or not end or end < start:
+            continue
+        entry = dict(item)
+        entry["date_from"], entry["date_to"] = start, end
+        if entry.get("primary_meet_id") not in known_meet_ids:
+            entry["primary_meet_id"] = None
+        cleaned.append(entry)
+    cleaned.sort(key=lambda m: m["date_from"])
+
+    result, warnings = [], []
+    for entry in cleaned:
+        if result and entry["date_from"] <= result[-1]["date_to"]:
+            entry["date_from"] = result[-1]["date_to"] + timedelta(days=1)
+            if entry["date_from"] > entry["date_to"]:
+                continue
+        for name, ex_from, ex_to in existing:
+            if entry["date_from"] <= ex_to and entry["date_to"] >= ex_from:
+                warnings.append(f"'{entry.get('name', 'Macro')}' overlaps the existing macro '{name}'.")
+                break
+        result.append(entry)
+
+    for entry in result:
+        entry["date_from"] = entry["date_from"].isoformat()
+        entry["date_to"] = entry["date_to"].isoformat()
+        entry["weeks"] = max(1, round(((_parse_iso(entry["date_to"]) - _parse_iso(entry["date_from"])).days + 1) / 7))
+    return result, warnings
+
+
+def _build_season_macros_context(db: DBSession) -> str:
+    today = date.today()
+    lines = [f"TODAY: {today}", ""]
+
+    philosophy = _get_coaching_philosophy(db)
+    if philosophy:
+        lines.append("COACHING PHILOSOPHY:")
+        lines += [f"  {ln}" for ln in philosophy.split("\n")]
+        lines.append("")
+
+    meets = db.query(models.Meet).filter(
+        models.Meet.date >= today - timedelta(days=30),
+        models.Meet.date <= today + timedelta(weeks=60),
+    ).order_by(models.Meet.date).limit(40).all()
+    lines.append("MEETS (use these ids for primary_meet_id):")
+    if meets:
+        for m in meets:
+            lines.append(f"  id {m.id}: {m.date} - {m.name}" + (f" ({m.level})" if m.level else "")
+                         + (f" {m.course}" if m.course else ""))
+    else:
+        lines.append("  (none recorded - ask the coach for the priority competitions)")
+    lines.append("")
+
+    existing = db.query(models.TrainingMacro).order_by(models.TrainingMacro.date_from).all()
+    lines.append("EXISTING MACROS (already saved; do not overlap):")
+    if existing:
+        for m in existing:
+            lines.append(f"  {m.name} | {m.date_from} to {m.date_to}" + (f" | {m.squad}" if m.squad else ""))
+    else:
+        lines.append("  (none)")
+    return "\n".join(lines)
+
+
+def run_plan_season_macros(
+    request_text: str,
+    db: DBSession,
+    coach_context: Optional[str] = None,
+) -> dict:
+    """Year-level skill: propose the macrocycles, nothing inside them.
+
+    Returns { reply, draft }. When the model needs the key meets first it asks in
+    plain text and draft is None. Nothing is written until the coach approves.
+    """
+    context = _build_season_macros_context(db)
+    thread_block = f"\n\n{coach_context}" if coach_context else ""
+    user_message = f"""{context}{thread_block}
+
+COACH REQUEST:
+{request_text}
+
+Divide the year into macrocycles now. If you need the key competitions first, ask. Otherwise output valid JSON only."""
+
+    response = get_client().messages.create(
+        model=MODEL,
+        effort=PLANNING_EFFORT,
+        max_tokens=2400,
+        system=SEASON_MACROS_SYSTEM,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    raw = response_text(response).strip()
+
+    if not raw.startswith("{") and not raw.startswith("```"):
+        _save_skill_output(db, "season_macros", raw, entity_type="squad")
+        return {"reply": raw, "draft": None, "needs_input": True}
+
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip().rstrip("```").strip()
+
+    draft = json.loads(raw)
+    meets = {m.id: m for m in db.query(models.Meet).all()}
+    existing = [(m.name, m.date_from, m.date_to) for m in db.query(models.TrainingMacro).all()]
+    draft["macros"], warnings = normalise_season_macros(draft.get("macros"), set(meets), existing)
+    for macro in draft["macros"]:
+        meet = meets.get(macro.get("primary_meet_id"))
+        macro["primary_meet"] = meet.name if meet else None
+    draft["warnings"] = warnings
+
+    reply = _build_season_macros_reply(draft)
+    _save_skill_output(db, "season_macros", reply, entity_type="squad")
+    return {"reply": reply, "draft": draft}
+
+
+def _build_season_macros_reply(draft: dict) -> str:
+    lines = [f"**{draft.get('name', 'Season')}**"]
+    if draft.get("narrative"):
+        lines += ["", draft["narrative"]]
+    lines += ["", "**Macrocycles:**"]
+    for i, macro in enumerate(draft.get("macros") or [], 1):
+        line = f"  {i}. {macro.get('name', 'Macro')} | {macro['date_from']} to {macro['date_to']} ({macro['weeks']}w)"
+        if macro.get("primary_meet"):
+            line += f" | target {macro['primary_meet']}"
+        lines.append(line)
+        if macro.get("focus"):
+            lines.append(f"     {macro['focus']}")
+    for warning in draft.get("warnings") or []:
+        lines.append(f"\n{warning}")
+    for question in draft.get("questions") or []:
+        lines.append(f"- {question}")
+    lines += ["", "Review the draft below. Nothing is saved until you approve it, "
+                  "and each macrocycle gets planned in detail afterwards."]
+    return "\n".join(lines)
+
+
+@router.post("/plan-season-macros")
+def plan_season_macros(body: dict = Body(default={}), db: DBSession = Depends(get_db)):
+    """Year-level skill: divide the season into macrocycles."""
+    request_text = body.get("request", "Divide the year into macrocycles.")
+    try:
+        return run_plan_season_macros(request_text, db)
+    except json.JSONDecodeError:
+        raise HTTPException(500, "The season plan came back in a shape I could not read. Try again.")
+    except Exception as e:
+        raise HTTPException(500, f"Season planning failed: {str(e)}")

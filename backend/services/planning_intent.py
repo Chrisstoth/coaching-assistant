@@ -20,9 +20,13 @@ from backend.services.claude_service import FAST_MODEL, get_client, response_tex
 # One label per skill the chat can route to. Descriptions are what the model
 # reads, so they carry the distinctions the keyword lists could not.
 SKILL_CATALOGUE = [
+    ("season_macros",
+     "Divide a whole year or season into its macrocycles - how many there are, "
+     "when each starts and ends, and which meet each builds towards. Does not "
+     "plan what happens inside them."),
     ("macro_plan",
-     "Build or restructure a macrocycle: the overall shape of a season or a "
-     "multi-month block, its phases and its target meets."),
+     "Plan the phases (mesocycles) inside ONE macrocycle - the base, build, "
+     "peak and taper sequence that leads to its target meet."),
     ("meso_plan",
      "Plan one training block or phase within a season — what the next few "
      "weeks should emphasise."),
