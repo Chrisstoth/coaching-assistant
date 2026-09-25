@@ -427,6 +427,15 @@ export const api = {
   deleteSeasonBlock: (id) => request('DELETE', `/season/blocks/${id}`),
   getSeasonSummary: () => request('GET', '/season/summary'),
   getBlockProgress: (id) => request('GET', `/season/blocks/${id}/progress`),
+  getSeasonTimeline: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== ''),
+    ).toString()
+    return request('GET', `/season/timeline${qs ? '?' + qs : ''}`)
+  },
+  putSeasonLoadProfile: (data) => request('PUT', '/season/load-profile', data),
+  putSeasonLoadWeek: (data) => request('PUT', '/season/load-profile/week', data),
+  getSeasonLoadEdits: (macroId) => request('GET', `/season/load-profile/edits?macro_id=${macroId}`),
   analyseBlock: (id) => request('POST', `/season/blocks/${id}/ai-analysis`),
   getMicrocycles: (params = {}) => {
     const qs = new URLSearchParams(params).toString()

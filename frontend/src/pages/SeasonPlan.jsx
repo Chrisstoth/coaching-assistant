@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
+import SeasonTimeline from '../components/SeasonTimeline'
 
 const VOLUME_LABELS = {
   aerobic: 'Aer', threshold: 'Thr', vo2: 'VO2', race_pace: 'RP',
@@ -964,6 +965,8 @@ export default function SeasonPlan() {
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+        {macros.length > 0 && <SeasonTimeline macros={macros} />}
 
         {macros.length > 0 && <PlanningAgentPanel macros={macros} />}
 

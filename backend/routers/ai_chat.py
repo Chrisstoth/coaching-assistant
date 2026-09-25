@@ -350,6 +350,18 @@ _MICRO_PLAN_SIGNALS = [
     'map out the week', 'structure the week',
 ]
 
+_PATHWAY_PLAN_SIGNALS = [
+    'pathway', 'pathways', 'branch', 'branching', 'target meet', 'target meets',
+    'who is aiming', "who's aiming", 'qualifying times', 'if they qualify',
+    "if they don't qualify", 'if they dont qualify', 'split the group',
+    'which meet', 'aiming at', 'competition route', 'fallback meet',
+]
+
+def _is_pathway_plan(text: str) -> bool:
+    t = text.lower()
+    return any(k in t for k in _PATHWAY_PLAN_SIGNALS)
+
+
 def _is_micro_plan(text: str) -> bool:
     t = text.lower()
     return any(k in t for k in _MICRO_PLAN_SIGNALS)
@@ -1110,6 +1122,14 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     recent_thread_context = _format_thread_context(messages[:-1]) if len(messages) > 1 else ""
     thread_context = "\n\n".join(part for part in (memory, recent_thread_context) if part) or None
 
+    # One model call names the skill this message wants; every branch below
+    # then defers to it, falling back to its own keyword matcher when the
+    # classifier has no opinion.
+    from backend.services.planning_intent import (
+        classify_planning_intent, route_allows, route_matches,
+    )
+    routed_skill = classify_planning_intent(text)
+
     # --- Season Plan Navigation (general thread only) ---
     if not is_season_plan_thread and not is_athlete_plan_thread and _is_season_plan_navigation(text):
         reply = "Opening the season planning chat for you."
@@ -1143,7 +1163,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         }
 
     # In a season plan thread, also route plan_macro requests
-    if is_season_plan_thread and _is_macro_plan(text):
+    if is_season_plan_thread and route_matches(routed_skill, 'macro_plan', _is_macro_plan(text)):
         from backend.routers.skills import run_plan_macro
         try:
             result = run_plan_macro(text, db, coach_context=thread_context)
@@ -1166,8 +1186,38 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
             "skill_result": {"type": "macro_plan", "draft": draft} if draft else None,
         }
 
+    # --- Competition Pathway Skill ---
+    if route_matches(routed_skill, 'pathway_plan', _is_pathway_plan(text)):
+        from backend.routers.skills import run_plan_pathways
+        try:
+            result = run_plan_pathways(text, db, coach_context=thread_context)
+            reply = result["reply"]
+            draft = result.get("draft")
+        except Exception as e:
+            reply = f"I had trouble working out the pathways: {str(e)}."
+            draft = None
+
+        db.add(models.CoachAIMessage(role="assistant", message=reply, thread_id=thread_id))
+        db.commit()
+        return {
+            "reply": reply,
+            "context_injected": [],
+            "topics_detected": ["pathway_plan"],
+            "suggested_action": {
+                "type": "review_plan", "plan_type": "pathway",
+                "label": "Review the proposed pathways",
+                "pathway_draft": draft,
+            } if draft else None,
+            "intent": {"type": "pathway_plan"},
+            "saved_benchmarks": [],
+            "saved_intents": [],
+            "skill_result": {"type": "pathway_plan", "draft": draft} if draft else None,
+        }
+
     # --- Taper Planning Skill ---
     taper_swimmer_name = _is_taper_plan(text, db)
+    if not route_allows(routed_skill, 'taper_plan', taper_swimmer_name):
+        taper_swimmer_name = None
     if taper_swimmer_name:
         from backend.routers.skills import run_plan_taper
         try:
@@ -1195,7 +1245,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
 
     # --- Meso Planning Skill ---
     # "What should the next block be?" type requests get the periodization specialist.
-    if _is_meso_plan(text):
+    if route_matches(routed_skill, 'meso_plan', _is_meso_plan(text)):
         from backend.routers.skills import run_plan_meso
         try:
             result = run_plan_meso(text, db, coach_context=thread_context, brief=brief)
@@ -1219,7 +1269,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         }
 
     # --- Group Composition Skill ---
-    if _is_suggest_groups(text):
+    if route_matches(routed_skill, 'suggest_groups', _is_suggest_groups(text)):
         from backend.routers.skills import run_suggest_groups
         try:
             result = run_suggest_groups(text, db, coach_context=thread_context)
@@ -1243,7 +1293,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         }
 
     # --- Micro Planning Skill ---
-    if _is_micro_plan(text):
+    if route_matches(routed_skill, 'micro_plan', _is_micro_plan(text)):
         from backend.routers.skills import run_plan_micro
         target_date = _extract_target_date(text)
         try:
@@ -1270,6 +1320,8 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     # --- Race Analysis Skill ---
     # "How did we do at the meet?" type requests get the specialist post-meet analysis.
     race_meet_id = _is_race_analysis(text, db)
+    if not route_allows(routed_skill, 'race_analysis', race_meet_id):
+        race_meet_id = None
     if race_meet_id:
         from backend.routers.skills import run_race_analysis
         try:
@@ -1298,6 +1350,8 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     # --- Block Review Skill ---
     # "How did the last block go?" type requests get the squad-level meso analysis.
     review_block_id = _is_block_review(text, db)
+    if not route_allows(routed_skill, 'block_review', review_block_id):
+        review_block_id = None
     if review_block_id:
         from backend.routers.skills import run_block_review
         try:
@@ -1326,6 +1380,8 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     # --- Swimmer Adaptation Review Skill ---
     # "How is [name] doing?" type requests get the systematic framework, not a general answer.
     review_swimmer_name = _is_swimmer_review(text, db)
+    if not route_allows(routed_skill, 'swimmer_review', review_swimmer_name):
+        review_swimmer_name = None
     if review_swimmer_name:
         from backend.routers.skills import run_adaptation_review
         try:
@@ -1353,7 +1409,7 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
 
     # --- Session Planning Skill ---
     # Explicit "generate a session" requests go to the specialized skill, not the general AI.
-    if _is_session_generation(text):
+    if route_matches(routed_skill, 'session_generation', _is_session_generation(text)):
         from backend.routers.skills import run_plan_session
         target_date = _extract_target_date(text)
         try:

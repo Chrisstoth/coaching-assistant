@@ -4194,3 +4194,228 @@ def get_swimmer_skill_history(
         }
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Pathway planning skill — who targets which meet, and where they go instead
+# ---------------------------------------------------------------------------
+
+PATHWAY_PLAN_SYSTEM = """You are a swimming periodisation specialist working with a head coach on
+competition pathways for a squad.
+
+A pathway is a route through the season: a group of swimmers, the meet they are
+aiming at, and the meet they go to instead if the qualifying time does not come.
+Coaches branch a pathway when part of a group is on a different trajectory from
+the rest — for example regional qualifiers carrying on to Regionals while those
+still chasing the time target a county meet.
+
+Rules:
+- Only use meets from the MEETS list, and refer to them by their given id.
+- Only place swimmers who appear in the SQUAD list, by their given id.
+- A swimmer belongs to at most one pathway.
+- Base branching on the qualification status given. Do not invent times.
+- Leave a swimmer out rather than guessing where they belong.
+- If the coach named specific swimmers or a group, honour that exactly.
+- Keep each objective to one sentence a coach would actually say.
+
+Return valid JSON only, in this shape:
+{
+  "reasoning": "one short paragraph on why the pathways split this way",
+  "pathways": [
+    {
+      "name": "Regional qualifiers",
+      "objective": "Carry aerobic base through to Regionals in March.",
+      "primary_meet_id": 3,
+      "fallback_meet_id": 7,
+      "swimmers": [
+        {"swimmer_id": 12, "qualification_status": "qualified", "reason": "Has the 200 free time."}
+      ]
+    }
+  ],
+  "questions": ["anything you need the coach to confirm"]
+}
+
+qualification_status must be one of: qualified, close, not_qualified, unknown."""
+
+
+def _build_pathway_context(db: DBSession, macro_id: Optional[int] = None) -> str:
+    """Macro window, the meets inside it, the squad, and any existing pathways."""
+    today = date.today()
+    macro = None
+    if macro_id:
+        macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
+    if not macro:
+        macro = db.query(models.TrainingMacro).filter(
+            models.TrainingMacro.date_from <= today,
+            models.TrainingMacro.date_to >= today,
+        ).order_by(models.TrainingMacro.date_from).first()
+    if not macro:
+        macro = db.query(models.TrainingMacro).order_by(
+            models.TrainingMacro.date_from.desc()
+        ).first()
+    if not macro:
+        return "No macrocycle exists yet. The coach needs a season shape before pathways mean anything."
+
+    lines = [
+        f"MACRO: {macro.name} (id {macro.id}), {macro.date_from} to {macro.date_to}"
+        + (f", squad {macro.squad}" if macro.squad else ""),
+        "",
+        "MEETS in this window:",
+    ]
+    meets = db.query(models.Meet).filter(
+        models.Meet.date >= macro.date_from,
+        models.Meet.date <= macro.date_to,
+    ).order_by(models.Meet.date).all()
+    if meets:
+        for meet in meets:
+            level = getattr(meet, "level", None)
+            lines.append(f"  id {meet.id}: {meet.name} — {meet.date}" + (f" ({level})" if level else ""))
+    else:
+        lines.append("  (none in range)")
+
+    lines += ["", "SQUAD:"]
+    swimmer_q = db.query(models.Swimmer)
+    if macro.squad:
+        swimmer_q = swimmer_q.filter(models.Swimmer.squad == macro.squad)
+    swimmers = swimmer_q.order_by(models.Swimmer.name).all()
+    if not swimmers:
+        swimmers = db.query(models.Swimmer).order_by(models.Swimmer.name).limit(40).all()
+
+    existing = db.query(models.PlanningPathway).filter(
+        models.PlanningPathway.macro_id == macro.id,
+        models.PlanningPathway.active.is_(True),
+    ).all()
+    placed = {}
+    for pathway in existing:
+        for member in pathway.memberships:
+            placed[member.swimmer_id] = (pathway.name, member.qualification_status)
+
+    for swimmer in swimmers[:60]:
+        bits = [f"  id {swimmer.id}: {swimmer.name}"]
+        if getattr(swimmer, "squad", None):
+            bits.append(swimmer.squad)
+        if swimmer.id in placed:
+            name, status = placed[swimmer.id]
+            bits.append(f"currently on '{name}' ({status or 'unknown'})")
+        else:
+            bits.append("unassigned")
+        lines.append(" — ".join(bits))
+
+    if existing:
+        lines += ["", "EXISTING PATHWAYS:"]
+        for pathway in existing:
+            lines.append(
+                f"  id {pathway.id}: {pathway.name} → "
+                f"{pathway.primary_meet.name if pathway.primary_meet else 'no target'}"
+                + (f", else {pathway.fallback_meet.name}" if pathway.fallback_meet else "")
+                + f" ({len(pathway.memberships)} swimmers)"
+            )
+
+    return "\n".join(lines)
+
+
+def run_plan_pathways(
+    request_text: str,
+    db: DBSession,
+    macro_id: Optional[int] = None,
+    coach_context: Optional[str] = None,
+) -> dict:
+    """Competition pathway skill — proposes who targets what, and the branches.
+
+    Returns { reply, draft }; nothing is written until the coach approves.
+    """
+    context = _build_pathway_context(db, macro_id=macro_id)
+    thread_block = f"\n\n{coach_context}" if coach_context else ""
+    user_message = f"""{context}{thread_block}
+
+COACH REQUEST:
+{request_text}
+
+Propose the pathways now. Output valid JSON only."""
+
+    response = get_client().messages.create(
+        model=MODEL,
+        max_tokens=2500,
+        system=PATHWAY_PLAN_SYSTEM,
+        messages=[{"role": "user", "content": user_message}],
+    )
+    raw = response_text(response).strip()
+
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip().rstrip("```").strip()
+
+    draft = json.loads(raw)
+    draft = _resolve_pathway_draft(draft, db, macro_id=macro_id)
+    reply = _build_pathway_reply(draft)
+
+    _save_skill_output(db, "pathway_plan", reply, entity_type="squad")
+    return {"reply": reply, "draft": draft}
+
+
+def _resolve_pathway_draft(draft: dict, db: DBSession, macro_id: Optional[int] = None) -> dict:
+    """Attach the names behind the ids so the coach reads meets and swimmers, not numbers."""
+    today = date.today()
+    if not macro_id:
+        macro = db.query(models.TrainingMacro).filter(
+            models.TrainingMacro.date_from <= today,
+            models.TrainingMacro.date_to >= today,
+        ).order_by(models.TrainingMacro.date_from).first()
+        macro_id = macro.id if macro else None
+    draft["macro_id"] = macro_id
+
+    meet_names = {m.id: m.name for m in db.query(models.Meet).all()}
+    swimmer_names = {s.id: s.name for s in db.query(models.Swimmer).all()}
+
+    for pathway in draft.get("pathways") or []:
+        pathway["primary_meet"] = meet_names.get(pathway.get("primary_meet_id"))
+        pathway["fallback_meet"] = meet_names.get(pathway.get("fallback_meet_id"))
+        members = []
+        for member in pathway.get("swimmers") or []:
+            name = swimmer_names.get(member.get("swimmer_id"))
+            if not name:
+                continue            # never invent a swimmer the squad does not have
+            member["name"] = name
+            members.append(member)
+        pathway["swimmers"] = members
+    return draft
+
+
+def _build_pathway_reply(draft: dict) -> str:
+    lines = ["**Proposed Pathways**", ""]
+    for pathway in draft.get("pathways") or []:
+        lines.append(f"**{pathway.get('name', 'Pathway')}**")
+        target = pathway.get("primary_meet") or "no target meet"
+        fallback = pathway.get("fallback_meet")
+        lines.append(f"→ {target}" + (f", else {fallback}" if fallback else ""))
+        if pathway.get("objective"):
+            lines.append(f"*{pathway['objective']}*")
+        swimmers = pathway.get("swimmers") or []
+        if swimmers:
+            lines.append(f"{len(swimmers)}: " + ", ".join(s["name"] for s in swimmers[:14]))
+        else:
+            lines.append("No swimmers assigned yet.")
+        lines.append("")
+
+    if draft.get("reasoning"):
+        lines += [draft["reasoning"], ""]
+    for question in draft.get("questions") or []:
+        lines.append(f"- {question}")
+    if draft.get("questions"):
+        lines.append("")
+    lines.append("Review the draft below — nothing is saved until you approve it.")
+    return "\n".join(lines)
+
+
+@router.post("/plan-pathways")
+def plan_pathways(body: dict = Body(default={}), db: DBSession = Depends(get_db)):
+    """Competition pathway skill — proposes target meets, branches and membership."""
+    request_text = body.get("request", "Propose the competition pathways for this squad.")
+    try:
+        return run_plan_pathways(request_text, db, macro_id=body.get("macro_id"))
+    except json.JSONDecodeError:
+        raise HTTPException(500, "The pathway plan came back in a shape I could not read. Try again.")
+    except Exception as e:
+        raise HTTPException(500, f"Pathway planning failed: {str(e)}")

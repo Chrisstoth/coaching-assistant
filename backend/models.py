@@ -441,7 +441,9 @@ class QualificationStandard(Base):
     age_label = Column(String, nullable=True)
     age_min = Column(Integer, nullable=True)
     age_max = Column(Integer, nullable=True)
-    course = Column(String(3), nullable=False)      # SCM / LCM
+    birth_year_min = Column(Integer, nullable=True)  # born in or after (e.g. "born 2010 or younger")
+    birth_year_max = Column(Integer, nullable=True)  # born in or before (e.g. "born 2007 or older")
+    course = Column(String(3), nullable=False)      # SCM / LCM / ANY (either pool, no conversion)
     standard_type = Column(String, nullable=False)  # qualifying / automatic / base / consideration
     time_seconds = Column(Float, nullable=False)
     time_display = Column(String, nullable=True)
@@ -996,6 +998,7 @@ class TrainingMacro(Base):
     microcycles = relationship("Microcycle", back_populates="macro", cascade="all, delete-orphan")
     pathways = relationship("PlanningPathway", back_populates="macro", cascade="all, delete-orphan")
     planning_snapshots = relationship("PlanningSnapshot", back_populates="macro", cascade="all, delete-orphan")
+    load_points = relationship("SeasonLoadPoint", back_populates="macro", cascade="all, delete-orphan")
 
 
 class SeasonBlock(Base):
@@ -1043,6 +1046,31 @@ class Microcycle(Base):
     macro = relationship("TrainingMacro", back_populates="microcycles")
     block = relationship("SeasonBlock", back_populates="microcycles")
     linked_sessions = relationship("Session", back_populates="microcycle")
+
+
+class SeasonLoadPoint(Base):
+    """One week's planned load on the 0-100 scale the coach plans in.
+
+    These figures are agreed in the planning conversation rather than derived
+    from logged sessions: ``ai_value`` keeps whatever the assistant last
+    proposed so a coach override stays visible to it afterwards.
+    """
+    __tablename__ = "season_load_points"
+
+    id = Column(Integer, primary_key=True, index=True)
+    macro_id = Column(Integer, ForeignKey("training_macros.id"), nullable=False, index=True)
+    pathway_id = Column(Integer, ForeignKey("planning_pathways.id"), nullable=True, index=True)
+    week_start = Column(Date, nullable=False, index=True)
+    overall = Column(Integer, nullable=True)
+    components = Column(JSON, nullable=True)   # {aerobic, speed, endurance, race_pace}
+    note = Column(Text, nullable=True)         # week callout, e.g. "Rest week - not taper"
+    source = Column(String, default="coach")   # coach / ai
+    ai_value = Column(Integer, nullable=True)  # last value the assistant proposed
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+    macro = relationship("TrainingMacro", back_populates="load_points")
+    pathway = relationship("PlanningPathway")
 
 
 class PlanningCohort(Base):

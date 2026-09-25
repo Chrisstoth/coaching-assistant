@@ -254,6 +254,23 @@ export default function PlanHub() {
         </svg>
       </Link>
 
+      {/* Planning workspace — the conversation and the picture together */}
+      <Link
+        to="/planning"
+        className="flex items-start gap-3 bg-pool-800 rounded-2xl p-4 active:bg-pool-700 transition-colors"
+      >
+        <span className="p-2 bg-pool-700 rounded-xl text-accent-400 shrink-0">
+          <SeasonIcon />
+        </span>
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-pool-100">Plan the season</p>
+          <p className="text-sm text-pool-400 mt-0.5">Talk it through and watch the timeline, meets and pathways take shape.</p>
+        </div>
+        <svg className="w-5 h-5 text-pool-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+        </svg>
+      </Link>
+
       {/* Season overview link */}
       <Link
         to="/season"

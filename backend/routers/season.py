@@ -566,3 +566,323 @@ def get_season_summary(db: Session = Depends(get_db)):
         "gap_analysis": gap_analysis,
         "active_intents": intents_out,
     }
+
+
+# ---------------------------------------------------------------------------
+# Season timeline — the week-by-week view the coach plans against
+# ---------------------------------------------------------------------------
+
+LOAD_COMPONENTS = ['aerobic', 'speed', 'endurance', 'race_pace']
+
+
+class LoadWeekIn(BaseModel):
+    week_start: date
+    overall: Optional[int] = Field(default=None, ge=0, le=100)
+    components: Optional[dict] = None
+    note: Optional[str] = None
+
+
+class LoadProfileIn(BaseModel):
+    macro_id: int
+    pathway_id: Optional[int] = None
+    source: str = "coach"
+    weeks: list[LoadWeekIn]
+
+
+def _monday(d: date) -> date:
+    return d - timedelta(days=d.weekday())
+
+
+def _clean_components(raw: Optional[dict]) -> Optional[dict]:
+    if not isinstance(raw, dict):
+        return None
+    out = {}
+    for key in LOAD_COMPONENTS:
+        value = raw.get(key)
+        if isinstance(value, (int, float)):
+            out[key] = max(0, min(100, int(round(value))))
+    return out or None
+
+
+def _load_point_out(point):
+    if not point:
+        return None
+    return {
+        "overall": point.overall,
+        "components": point.components or {},
+        "note": point.note,
+        "source": point.source or "coach",
+        "ai_value": point.ai_value,
+        "coach_overrode": bool(
+            point.source == "coach"
+            and point.ai_value is not None
+            and point.overall is not None
+            and point.ai_value != point.overall
+        ),
+    }
+
+
+@router.get("/timeline")
+def get_timeline(
+    macro_id: Optional[int] = None,
+    squad: Optional[str] = None,
+    pathway_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    """Everything the season timeline draws, in one request.
+
+    Weeks are the spine: each carries its macro/meso/micro position, any meets
+    landing in it, and the agreed load figure.
+    """
+    if ensure_cycle_sequences(db):
+        db.commit()
+    today = date.today()
+
+    macro_q = db.query(models.TrainingMacro)
+    if macro_id:
+        macro_q = macro_q.filter(models.TrainingMacro.id == macro_id)
+    if squad:
+        macro_q = macro_q.filter(models.TrainingMacro.squad == squad)
+    macros = macro_q.order_by(models.TrainingMacro.date_from).all()
+    if not macros:
+        return {"date_from": None, "date_to": None, "weeks": [],
+                "macros": [], "pathways": [], "squads": []}
+
+    date_from = _monday(min(m.date_from for m in macros))
+    date_to = max(m.date_to for m in macros)
+
+    macro_ids = [m.id for m in macros]
+    blocks = db.query(models.SeasonBlock).filter(
+        models.SeasonBlock.macro_id.in_(macro_ids)
+    ).order_by(models.SeasonBlock.date_from).all()
+    blocks_by_macro = defaultdict(list)
+    for block in blocks:
+        blocks_by_macro[block.macro_id].append(block)
+
+    micros = db.query(models.Microcycle).filter(
+        models.Microcycle.week_start >= date_from,
+        models.Microcycle.week_start <= date_to,
+    ).all()
+    micro_by_week = {(m.block_id, m.week_start): m for m in micros}
+
+    meets = db.query(models.Meet).filter(
+        models.Meet.date >= date_from,
+        models.Meet.date <= date_to,
+    ).order_by(models.Meet.date).all()
+
+    load_q = db.query(models.SeasonLoadPoint).filter(
+        models.SeasonLoadPoint.macro_id.in_(macro_ids)
+    )
+    if pathway_id:
+        load_q = load_q.filter(models.SeasonLoadPoint.pathway_id == pathway_id)
+    loads = load_q.all()
+    load_by_key = {(p.macro_id, p.pathway_id, p.week_start): p for p in loads}
+    pathway_ids_with_load = sorted({p.pathway_id for p in loads if p.pathway_id})
+
+    pathways = db.query(models.PlanningPathway).filter(
+        models.PlanningPathway.macro_id.in_(macro_ids),
+        models.PlanningPathway.active.is_(True),
+    ).all()
+
+    # Delivery against the plan: a week that lost sessions is why a load figure
+    # was not met, so the timeline has to show it next to the intent.
+    session_q = db.query(models.Session).filter(
+        models.Session.date >= date_from,
+        models.Session.date <= date_to,
+    )
+    if squad:
+        session_q = session_q.filter(models.Session.squad == squad)
+    sessions_by_week = defaultdict(lambda: {"planned": 0, "cancelled": 0})
+    for row in session_q.all():
+        bucket = sessions_by_week[_monday(row.date)]
+        if row.status == "cancelled":
+            bucket["cancelled"] += 1
+        else:
+            bucket["planned"] += 1
+
+    # Micro position counts from the first week of each block, so a week shows a
+    # number whether or not a weekly plan has been written for it yet. A saved
+    # microcycle keeps its own sequence; unplanned weeks fill the gaps around it.
+    block_weeks = defaultdict(list)
+    probe = date_from
+    while probe <= date_to:
+        probe_end = probe + timedelta(days=6)
+        probe_macro = next((m for m in macros if m.date_from <= probe_end and m.date_to >= probe), None)
+        if probe_macro:
+            probe_block = next(
+                (b for b in blocks_by_macro[probe_macro.id]
+                 if b.date_from <= probe_end and b.date_to >= probe),
+                None,
+            )
+            if probe_block:
+                block_weeks[probe_block.id].append(probe)
+        probe += timedelta(days=7)
+
+    micro_index_by_week = {}
+    for block_id, week_list in block_weeks.items():
+        claimed = set()
+        for week in week_list:
+            row = micro_by_week.get((block_id, week))
+            if row and row.sequence_index:
+                micro_index_by_week[(block_id, week)] = row.sequence_index
+                claimed.add(row.sequence_index)
+        nxt = 1
+        for week in week_list:
+            if (block_id, week) in micro_index_by_week:
+                continue
+            while nxt in claimed:
+                nxt += 1
+            micro_index_by_week[(block_id, week)] = nxt
+            claimed.add(nxt)
+            nxt += 1
+
+    weeks = []
+    cursor = date_from
+    while cursor <= date_to:
+        week_end = cursor + timedelta(days=6)
+        macro = next((m for m in macros if m.date_from <= week_end and m.date_to >= cursor), None)
+        block = None
+        if macro:
+            block = next(
+                (b for b in blocks_by_macro[macro.id] if b.date_from <= week_end and b.date_to >= cursor),
+                None,
+            )
+
+        micro_index = None
+        micro_row = None
+        if block:
+            micro_index = micro_index_by_week.get((block.id, cursor))
+            micro_row = micro_by_week.get((block.id, cursor))
+
+        week_meets = [
+            {"id": mt.id, "name": mt.name, "date": mt.date.isoformat(),
+             "level": getattr(mt, "level", None)}
+            for mt in meets if cursor <= mt.date <= week_end
+        ]
+
+        cycle_code = None
+        if macro and block and micro_index:
+            cycle_code = "{0}.{1}.{2}".format(macro.sequence_index, block.sequence_index, micro_index)
+
+        load_rows = {}
+        for key, point in load_by_key.items():
+            if key[2] != cursor:
+                continue
+            if macro and key[0] != macro.id:
+                continue
+            load_rows[key[1] or 0] = _load_point_out(point)
+
+        year, week_no, _ = cursor.isocalendar()
+        weeks.append({
+            "week_start": cursor.isoformat(),
+            "week_end": week_end.isoformat(),
+            "iso_week": "{0}-W{1:02d}".format(year, week_no),
+            "macro_id": macro.id if macro else None,
+            "macro_name": macro.name if macro else None,
+            "macro_seq": macro.sequence_index if macro else None,
+            "block_id": block.id if block else None,
+            "block_name": block.name if block else None,
+            "block_seq": block.sequence_index if block else None,
+            "phase_type": block.phase_type if block else None,
+            "micro_index": micro_index,
+            "microcycle_id": micro_row.id if micro_row else None,
+            "micro_status": micro_row.status if micro_row else None,
+            "cycle_code": cycle_code,
+            "is_current": cursor <= today <= week_end,
+            "is_past": week_end < today,
+            "meets": week_meets,
+            "sessions": dict(sessions_by_week.get(cursor, {"planned": 0, "cancelled": 0})),
+            "load": load_rows.get(0),
+            "load_by_pathway": {str(k): v for k, v in load_rows.items() if k},
+        })
+        cursor += timedelta(days=7)
+
+    return {
+        "date_from": date_from.isoformat(),
+        "date_to": date_to.isoformat(),
+        "today": today.isoformat(),
+        "components": LOAD_COMPONENTS,
+        "weeks": weeks,
+        "macros": [
+            {"id": m.id, "name": m.name, "squad": m.squad,
+             "sequence_index": m.sequence_index,
+             "date_from": m.date_from.isoformat(), "date_to": m.date_to.isoformat(),
+             "is_current": m.date_from <= today <= m.date_to}
+            for m in macros
+        ],
+        "pathways": [
+            {"id": p.id, "name": p.name, "colour": p.colour,
+             "has_load": p.id in pathway_ids_with_load}
+            for p in pathways
+        ],
+        "squads": sorted({m.squad for m in macros if m.squad}),
+    }
+
+
+@router.put("/load-profile")
+def put_load_profile(data: LoadProfileIn, db: Session = Depends(get_db)):
+    """Upsert a run of weeks at once — how an agreed AI draft lands."""
+    macro = db.query(models.TrainingMacro).filter(
+        models.TrainingMacro.id == data.macro_id
+    ).first()
+    if not macro:
+        raise HTTPException(404, "Macro not found")
+    source = data.source if data.source in ("coach", "ai") else "coach"
+
+    written = 0
+    for week in data.weeks:
+        week_start = _monday(week.week_start)
+        point = db.query(models.SeasonLoadPoint).filter(
+            models.SeasonLoadPoint.macro_id == data.macro_id,
+            models.SeasonLoadPoint.pathway_id == data.pathway_id,
+            models.SeasonLoadPoint.week_start == week_start,
+        ).first()
+        if not point:
+            point = models.SeasonLoadPoint(
+                macro_id=data.macro_id,
+                pathway_id=data.pathway_id,
+                week_start=week_start,
+            )
+            db.add(point)
+        if week.overall is not None:
+            point.overall = week.overall
+            if source == "ai":
+                point.ai_value = week.overall
+        components = _clean_components(week.components)
+        if components:
+            point.components = components
+        if week.note is not None:
+            point.note = week.note or None
+        point.source = source
+        written += 1
+
+    db.commit()
+    return {"written": written, "macro_id": data.macro_id, "pathway_id": data.pathway_id}
+
+
+@router.put("/load-profile/week")
+def put_load_week(data: LoadProfileIn, db: Session = Depends(get_db)):
+    """Set one week by hand. Always records the coach as the source."""
+    if len(data.weeks) != 1:
+        raise HTTPException(400, "Expected exactly one week")
+    data.source = "coach"
+    return put_load_profile(data, db)
+
+
+@router.get("/load-profile/edits")
+def get_load_edits(macro_id: int, db: Session = Depends(get_db)):
+    """Weeks the coach moved away from the assistant's proposal.
+
+    The planning skills read this so the assistant can ask about a change it
+    did not make rather than silently planning around it.
+    """
+    points = db.query(models.SeasonLoadPoint).filter(
+        models.SeasonLoadPoint.macro_id == macro_id,
+        models.SeasonLoadPoint.source == "coach",
+        models.SeasonLoadPoint.ai_value.isnot(None),
+    ).order_by(models.SeasonLoadPoint.week_start).all()
+    return [
+        {"week_start": p.week_start.isoformat(), "from": p.ai_value,
+         "to": p.overall, "note": p.note}
+        for p in points if p.overall is not None and p.overall != p.ai_value
+    ]

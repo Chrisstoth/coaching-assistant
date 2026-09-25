@@ -20,6 +20,7 @@ import PlanHub from './pages/PlanHub'
 import CoachAI from './pages/CoachAI'
 import Settings from './pages/Settings'
 import SeasonPlan from './pages/SeasonPlan'
+import PlanningWorkspace from './pages/PlanningWorkspace'
 import SessionPrint from './pages/SessionPrint'
 import Login from './pages/Login'
 import ProfileWizard from './pages/ProfileWizard'
@@ -262,6 +263,7 @@ export default function App() {
           <Route path="/plan" element={<PlanHub />} />
           <Route path="/session-planner" element={<SessionPlanner />} />
           <Route path="/season" element={<SeasonPlan />} />
+          <Route path="/planning" element={<PlanningWorkspace />} />
                 <Route path="/assistant" element={<AssistantInbox />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/ai-operations" element={<AIOperations />} />
