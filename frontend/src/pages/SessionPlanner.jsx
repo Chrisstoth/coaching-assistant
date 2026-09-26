@@ -4,6 +4,7 @@ import { api } from '../api'
 import { sessionStatusLabel } from '../sessionStatus'
 import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
 import SetRows from '../components/SetRows'
+import LiveSessionWorkshop from '../components/LiveSessionWorkshop'
 import StaffVoices, { StaffThinking } from '../components/StaffVoices'
 import { sessionTopic, workInText } from '../staffRoom'
 import {
@@ -99,6 +100,7 @@ export default function SessionPlanner() {
   // The staff chip in on each draft. Their notes are tracked by id so this
   // page shows only the meeting about the session on screen.
   const [staffNotes, setStaffNotes] = useState([])
+  const [workshopId, setWorkshopId] = useState(null)   // writing live with the staff
   const [staffBusy, setStaffBusy] = useState(false)
   const [expected, setExpected] = useState([])
   const staffIds = useRef([])
@@ -191,6 +193,7 @@ export default function SessionPlanner() {
 
   const clearPreview = () => {
     setResult(null)
+    setWorkshopId(null)
     setSaved(null)
     setError(null)
     setMessages(null)
@@ -360,6 +363,7 @@ export default function SessionPlanner() {
     setLoading(true)
     setError(null)
     setResult(null)
+    setWorkshopId(null)
     setSaved(null)
     setMessages(null)
     setRevisionLog([])
@@ -394,6 +398,39 @@ export default function SessionPlanner() {
       window.clearTimeout(timeout)
       setLoading(false)
     }
+  }
+
+  // Write it with the staff, live: the draft and their suggestions appear as
+  // they are made, and the finished session lands here like any other draft.
+  const startWorkshop = async () => {
+    if (!text.trim() || (!unscheduled && occurrences.length > 0 && !selectedSlot)) return
+    setError(null)
+    setResult(null)
+    setSaved(null)
+    setMessages(null)
+    setRevisionLog([])
+    setStaffNotes([])
+    staffIds.current = []
+    draftSeq.current += 1
+    try {
+      const ws = await api.startSessionWorkshop({
+        text,
+        date,
+        pool_slot_id: selectedSlot?.id || null,
+        squad: selectedSlot?.squad || null,
+      })
+      setWorkshopId(ws.id)
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  const useWorkshop = (data) => {
+    // The staff have already had their say line by line, so no second meeting.
+    setWorkshopId(null)
+    setResult(data)
+    setMessages(data.messages || null)
+    setExpected(data.expected_swimmers || [])
   }
 
   const revisePlan = async (override) => {
@@ -433,11 +470,11 @@ export default function SessionPlanner() {
     try {
       const parsed = result.parsed
       const groupEntries = Object.entries(parsed.groups || {})
-      const groups = Object.fromEntries(groupEntries.map(([num, group], index) => {
+      const groups = Object.fromEntries(groupEntries.map(([num, group]) => {
         const lines = []
-        if (index === 0 && parsed.warm_up) lines.push(`Warm up: ${parsed.warm_up}`)
+        if (parsed.warm_up) lines.push(`Warm up: ${parsed.warm_up}`)
         lines.push(...(Array.isArray(group.sets) ? group.sets : [group.sets]).filter(Boolean))
-        if (index === groupEntries.length - 1 && parsed.cool_down) lines.push(`Cool down: ${parsed.cool_down}`)
+        if (parsed.cool_down) lines.push(`Cool down: ${parsed.cool_down}`)
         return [num, {
           description: group.label || `Group ${num}`,
           sets: lines.join('\n'),
@@ -923,6 +960,22 @@ export default function SessionPlanner() {
                 : 'Build session template'}
           </button>
 
+          {inputMethod === 'text' && (
+            <button
+              onClick={startWorkshop}
+              disabled={loading || slotsLoading || !text.trim() || Boolean(workshopId) || (!unscheduled && occurrences.length > 0 && !selectedSlot)}
+              className="w-full border border-accent-600 text-accent-300 hover:bg-accent-600/10 disabled:opacity-40 rounded-xl py-3 text-sm font-semibold transition-colors"
+            >
+              Write it with the staff (live)
+            </button>
+          )}
+          {inputMethod === 'text' && !workshopId && (
+            <p className="text-[11px] text-pool-500 text-center -mt-2">
+              Type your aims for the session. The Session Writer drafts it from the plan and the staff suggest
+              changes as you watch. Nothing changes until you accept.
+            </p>
+          )}
+
           {error && (
             <p className="text-red-400 text-sm bg-red-900/20 rounded-xl px-3 py-2">{error}</p>
           )}
@@ -936,6 +989,10 @@ export default function SessionPlanner() {
             </p>
           )}
         </div>
+        )}
+
+        {!showingRecord && workshopId && !result && (
+          <LiveSessionWorkshop workshopId={workshopId} onUse={useWorkshop} onClose={() => setWorkshopId(null)} />
         )}
 
         {/* Results */}

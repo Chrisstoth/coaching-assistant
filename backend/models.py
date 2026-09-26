@@ -1134,6 +1134,32 @@ class StaffNote(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class SessionWorkshop(Base):
+    """A session being written with the staff, live.
+
+    The Session Writer drafts from the coach's brief and the plan; the other
+    specialists then suggest changes line by line. Nothing in the draft changes
+    until the coach accepts a suggestion. When the coach is happy, the draft
+    goes to the session planner to be saved like any other.
+    """
+    __tablename__ = "session_workshops"
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=True)
+    squad = Column(String, nullable=True)
+    pool_slot_id = Column(Integer, nullable=True)
+    brief = Column(Text, nullable=False)
+    status = Column(String, default="drafting")   # drafting / reviewing / ready / failed
+    draft = Column(JSON, nullable=True)            # {title, coach_intent, sections: [{key, label, lines: [{id, text}]}]}
+    result = Column(JSON, nullable=True)           # the planner's own output: per_swimmer, messages...
+    expected = Column(JSON, default=list)          # [{id, name}]
+    pool_slot = Column(JSON, nullable=True)
+    voices = Column(JSON, default=list)            # [{role, title, status, comment}]
+    suggestions = Column(JSON, default=list)       # [{id, role, line_id, change, text, reason, status}]
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class TrainingGroup(Base):
     """A training group in the squad - who trains together.
 

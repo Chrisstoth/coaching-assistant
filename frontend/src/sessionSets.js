@@ -187,6 +187,8 @@ function extractEffort(text, zones) {
 
 function tidyDescription(text) {
   return clean(text)
+    .replace(/\s+([,;.])/g, '$1')
+    .replace(/([,;])(?:\s*[,;])+/g, '$1')
     .replace(/\s*\|\s*/g, ' · ')
     .replace(/\(\s*\)/g, '')
     .replace(/(?:^|\s)@\s*(?=$|\s)/g, ' ')
@@ -336,6 +338,29 @@ export function rowFromItem(item, zones = []) {
  * Every row for one group or sub-group, from whichever shape its sets took:
  * structured import items, an array of lines, or one newline-joined block.
  */
+// A part that starts with a real swim: "4x100 ...", "200m ...", "400 easy".
+// Not a count of seconds, a percentage or a clock, and at least a length.
+const PART_DOSE = /^(?:(\d{1,3})\s*[x×]\s*)?(\d{2,4})\s*m?\b(?!\s*(?:%|s\b|secs?\b|seconds\b|:|\/|\.\d))/i
+
+/**
+ * "Warm up: 400 easy choice, 4x100 IM drill/swim @1:50" is two swims on one
+ * line. Split it so each gets its own row, dose and clock - but only where the
+ * next part really is a swim, so "6x50 kick, 15m underwater" stays whole.
+ */
+export function splitCompoundLine(line) {
+  const text = String(line ?? '')
+  const indent = text.match(/^\s*/)[0]
+  const parts = text.split(/[,;]\s+/)
+  if (parts.length < 2) return [text]
+  const out = [parts[0]]
+  for (const part of parts.slice(1)) {
+    const dose = part.match(PART_DOSE)
+    if (dose && Number(dose[2]) >= SHORTEST_REAL_DISTANCE) out.push(indent + part.trim())
+    else out[out.length - 1] += `, ${part}`
+  }
+  return out
+}
+
 export function setRows(sets, zones = []) {
   if (!sets) return []
   if (Array.isArray(sets.items) && sets.items.length) {
@@ -348,6 +373,7 @@ export function setRows(sets, zones = []) {
     : []
   return lines
     .flatMap(line => String(line ?? '').split('\n'))
+    .flatMap(splitCompoundLine)
     .map(line => parseSetLine(line, zones))
     .filter(Boolean)
 }

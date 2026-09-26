@@ -474,6 +474,13 @@ export const api = {
   decideStaffNote: (id, { choice = null, text = null } = {}) =>
     request('POST', `/staff/notes/${id}/decide`, { choice, text }),
   getSeasonGrid: (macroId) => request('GET', `/season/grid?macro_id=${macroId}`),
+  // A session written with the staff, live
+  startSessionWorkshop: (data) => request('POST', '/session-workshops', data),
+  getSessionWorkshop: (id) => request('GET', `/session-workshops/${id}`),
+  decideWorkshopSuggestion: (id, suggestionId, accept) =>
+    request('POST', `/session-workshops/${id}/suggestions/${suggestionId}`, { accept }),
+  editWorkshopLine: (id, lineId, text) => request('PATCH', `/session-workshops/${id}/lines/${lineId}`, { text }),
+  finishSessionWorkshop: (id) => request('POST', `/session-workshops/${id}/finish`, {}),
   // Training groups - who trains together, and since when
   getGroups: () => request('GET', '/groups'),
   createGroup: (data) => request('POST', '/groups', data),
