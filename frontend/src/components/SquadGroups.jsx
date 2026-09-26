@@ -44,7 +44,7 @@ function SwimmerRow({ swimmer, selecting, selected, onTap, flagMissingPathway })
   )
 }
 
-function GroupForm({ initial, onSave, onCancel, onClose, onUp, onDown }) {
+function GroupForm({ initial, picked = 0, onSave, onCancel, onClose, onUp, onDown }) {
   const [name, setName] = useState(initial?.name || '')
   const [description, setDescription] = useState(initial?.description || '')
   const [confirmClose, setConfirmClose] = useState(false)
@@ -59,10 +59,15 @@ function GroupForm({ initial, onSave, onCancel, onClose, onUp, onDown }) {
       )}
       <textarea value={description} onChange={e => setDescription(e.target.value)} rows={2}
         placeholder="Who it is for, e.g. older swimmers, five sessions a week" className={inputClass} />
+      <p className={`text-[11px] ${picked ? 'text-accent-300' : 'text-pool-400'}`}>
+        {picked
+          ? `${picked} swimmer${picked === 1 ? '' : 's'} ticked to add from today.`
+          : 'Tap swimmers below to add them to this group.'}
+      </p>
       <div className="flex flex-wrap gap-2 items-center">
         <button onClick={() => onSave({ name, description })} disabled={!name.trim()}
           className="bg-accent-600 disabled:opacity-40 text-white rounded-lg px-3 py-1.5 text-xs font-semibold">
-          Save
+          {picked ? `Save and add ${picked}` : 'Save'}
         </button>
         <button onClick={onCancel} className="text-xs text-pool-400 px-2">Cancel</button>
         {onUp && <button onClick={onUp} className="text-xs text-pool-400 px-1" aria-label="Move group up">↑</button>}
@@ -106,8 +111,9 @@ function MoveSheet({ data, ids, today, onDone, onCancel }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={onCancel}>
-      <div className="w-full max-w-lg bg-pool-900 rounded-t-2xl p-4 space-y-3 pb-8 max-h-[85dvh] overflow-y-auto"
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60" onClick={onCancel}>
+      <div className="w-full max-w-lg bg-pool-900 rounded-t-2xl p-4 space-y-3 max-h-[85dvh] overflow-y-auto"
+        style={{ paddingBottom: 'calc(1.5rem + env(safe-area-inset-bottom, 0px))' }}
         onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <p className="text-sm font-semibold text-pool-100">
@@ -115,6 +121,12 @@ function MoveSheet({ data, ids, today, onDone, onCancel }) {
           </p>
           <button onClick={onCancel} className="text-pool-500 text-lg" aria-label="Close">✕</button>
         </div>
+        {data.groups.length === 0 && (
+          <p className="text-sm text-pool-300">
+            There are no groups to move them into yet. Close this, tap <b>+ New group</b>, name it, then tap
+            swimmers to add them before you save.
+          </p>
+        )}
         <div className="grid grid-cols-2 gap-2">
           {data.groups.map(g => (
             <button key={g.id} onClick={() => setTarget(g.id)} disabled={from?.id === g.id}
@@ -163,6 +175,7 @@ export default function SquadGroups() {
   const [selecting, setSelecting] = useState(false)
   const [selected, setSelected] = useState(new Set())
   const [moving, setMoving] = useState(null)          // swimmer ids
+  const [adding, setAdding] = useState(new Set())     // ticked into the group being made or edited
   const [staffNotes, setStaffNotes] = useState([])
   const [staffBusy, setStaffBusy] = useState(false)
   const staffIds = useRef([])
@@ -192,12 +205,23 @@ export default function SquadGroups() {
     setStaffBusy(false)
   }
 
+  const edit = (key) => {
+    setEditing(key)
+    setAdding(new Set())
+    setSelecting(false)
+    setSelected(new Set())
+  }
+
   const save = async (group, form) => {
     setError('')
     try {
+      let id = group?.id
       if (group) await api.updateGroup(group.id, form)
-      else await api.createGroup(form)
+      else id = (await api.createGroup(form)).id
+      const newcomers = [...adding].filter(sid => !group || !group.swimmers.some(s => s.id === sid))
+      if (newcomers.length) await api.moveToGroup(movePayload(newcomers, id, todayIso(), null))
       setEditing(null)
+      setAdding(new Set())
       load()
     } catch (e) {
       setError(e.message)
@@ -206,7 +230,7 @@ export default function SquadGroups() {
 
   const close = async (group) => {
     await api.closeGroup(group.id).catch(e => setError(e.message))
-    setEditing(null)
+    edit(null)
     load()
   }
 
@@ -216,6 +240,14 @@ export default function SquadGroups() {
   }
 
   const tap = (swimmer) => {
+    if (editing !== null) {
+      // Making or editing a group: a tap ticks the swimmer in (or out again).
+      return setAdding(prev => {
+        const next = new Set(prev)
+        next.has(swimmer.id) ? next.delete(swimmer.id) : next.add(swimmer.id)
+        return next
+      })
+    }
     if (!selecting) return setMoving([swimmer.id])
     setSelected(prev => {
       const next = new Set(prev)
@@ -235,7 +267,8 @@ export default function SquadGroups() {
   if (!data) return <p className="text-sm text-pool-400">Loading…</p>
 
   const rows = (swimmers) => swimmers.map(s => (
-    <SwimmerRow key={s.id} swimmer={s} selecting={selecting} selected={selected.has(s.id)} onTap={() => tap(s)}
+    <SwimmerRow key={s.id} swimmer={s} selecting={selecting || editing !== null}
+      selected={editing !== null ? adding.has(s.id) : selected.has(s.id)} onTap={() => tap(s)}
       flagMissingPathway={data.pathways_in_use} />
   ))
 
@@ -247,7 +280,7 @@ export default function SquadGroups() {
           keep their old group. What each swimmer is aiming at is their pathway (in teal) - it can differ
           within a group, and is set on <Link to="/planning" className="text-accent-400">Planning</Link>.
         </p>
-        {data.groups.length > 0 && (
+        {data.groups.length > 0 && editing === null && (
           <button onClick={() => { setSelecting(v => !v); setSelected(new Set()) }}
             className="text-xs text-pool-400 border border-pool-700 rounded-full px-3 py-1 shrink-0">
             {selecting ? 'Cancel' : 'Select'}
@@ -270,7 +303,8 @@ export default function SquadGroups() {
       {data.groups.map((group, i) => (
         <section key={group.id} className="bg-pool-800 rounded-xl p-3 space-y-1.5">
           {editing === group.id ? (
-            <GroupForm initial={group} onSave={form => save(group, form)} onCancel={() => setEditing(null)}
+            <GroupForm initial={group} picked={[...adding].filter(sid => !group.swimmers.some(s => s.id === sid)).length}
+              onSave={form => save(group, form)} onCancel={() => edit(null)}
               onClose={() => close(group)}
               onUp={i > 0 ? () => shift(i, -1) : null}
               onDown={i < data.groups.length - 1 ? () => shift(i, 1) : null} />
@@ -282,7 +316,7 @@ export default function SquadGroups() {
                 </h2>
                 {group.description && <p className="text-xs text-pool-400">{group.description}</p>}
               </div>
-              <button onClick={() => setEditing(group.id)} className="text-xs text-accent-400 shrink-0">Edit</button>
+              <button onClick={() => edit(group.id)} className="text-xs text-accent-400 shrink-0">Edit</button>
             </div>
           )}
           {group.swimmers.length ? rows(group.swimmers)
@@ -292,10 +326,10 @@ export default function SquadGroups() {
 
       {editing === 'new' ? (
         <section className="bg-pool-800 rounded-xl p-3">
-          <GroupForm onSave={form => save(null, form)} onCancel={() => setEditing(null)} />
+          <GroupForm picked={adding.size} onSave={form => save(null, form)} onCancel={() => edit(null)} />
         </section>
       ) : (
-        <button onClick={() => setEditing('new')}
+        <button onClick={() => edit('new')}
           className="w-full border border-dashed border-pool-600 rounded-xl py-2.5 text-sm text-pool-300">
           + New group
         </button>
