@@ -90,7 +90,6 @@ export default function PlanHub() {
   const navigate = useNavigate()
   const [sessions, setSessions] = useState([])
   const [loadingSessions, setLoadingSessions] = useState(true)
-  const [openingPlan, setOpeningPlan] = useState(false)
   const [cohorts, setCohorts] = useState([])
   const [showCohortForm, setShowCohortForm] = useState(false)
   const [newCohort, setNewCohort] = useState({ name: '', colour: 'teal', goals: '' })
@@ -150,48 +149,29 @@ export default function PlanHub() {
     setOpeningAthlete(null)
   }
 
-  const openSeasonPlan = async () => {
-    setOpeningPlan(true)
-    try {
-      const thread = await api.getOrCreateSeasonPlanThread()
-      navigate('/ai', { state: { threadId: thread.id } })
-    } catch {
-      navigate('/ai')
-    }
-    setOpeningPlan(false)
-  }
-
   return (
     <div className="px-4 pt-4 pb-6 space-y-5">
 
       {/* Season Planning */}
-      <button
-        onClick={openSeasonPlan}
-        disabled={openingPlan}
-        className="w-full text-left bg-teal-900/40 border border-teal-700/50 rounded-2xl p-4 active:bg-teal-900/60 transition-colors"
+      <Link
+        to="/planning"
+        className="block w-full text-left bg-teal-900/40 border border-teal-700/50 rounded-2xl p-4 active:bg-teal-900/60 transition-colors"
       >
         <div className="flex items-start gap-3">
           <span className="p-2 bg-teal-800/50 rounded-xl text-teal-300 shrink-0">
             <SeasonIcon />
           </span>
           <div className="flex-1 min-w-0">
-            <p className="font-semibold text-teal-200">Season Planning</p>
+            <p className="font-semibold text-teal-200">Plan your season</p>
             <p className="text-sm text-teal-400/80 mt-0.5">
-              Macro → meso → micro planning with AI. Build your full season progressively.
+              Outline the year around your meets, then plan each block and week, with the timeline building as you go.
             </p>
           </div>
-          {openingPlan ? (
-            <svg className="w-5 h-5 text-teal-400 animate-spin shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-            </svg>
-          ) : (
-            <svg className="w-5 h-5 text-teal-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-          )}
+          <svg className="w-5 h-5 text-teal-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+          </svg>
         </div>
-      </button>
+      </Link>
 
       <Link
         to="/coach-checkins"
@@ -250,23 +230,6 @@ export default function PlanHub() {
           <p className="text-xs text-pool-500">Browse previous and saved sessions</p>
         </div>
         <svg className="w-4 h-4 text-pool-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-        </svg>
-      </Link>
-
-      {/* Planning workspace — the conversation and the picture together */}
-      <Link
-        to="/planning"
-        className="flex items-start gap-3 bg-pool-800 rounded-2xl p-4 active:bg-pool-700 transition-colors"
-      >
-        <span className="p-2 bg-pool-700 rounded-xl text-accent-400 shrink-0">
-          <SeasonIcon />
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-pool-100">Plan the season</p>
-          <p className="text-sm text-pool-400 mt-0.5">Talk it through and watch the timeline, meets and pathways take shape.</p>
-        </div>
-        <svg className="w-5 h-5 text-pool-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
         </svg>
       </Link>

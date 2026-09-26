@@ -7,6 +7,7 @@ import PathwayBoard from '../components/PathwayBoard'
 import { describeDraft, draftFromResult, saveDraft, takeStashedDraft } from '../planDrafts'
 import StaffVoices, { StaffThinking } from '../components/StaffVoices'
 import StaffNotesPanel from '../components/StaffNotesPanel'
+import SeasonStarter, { NextStepCard } from '../components/SeasonStarter'
 import { draftTopic, mergeConversation } from '../staffRoom'
 
 // The planning conversation and the picture it produces, side by side.
@@ -17,21 +18,30 @@ import { draftTopic, mergeConversation } from '../staffRoom'
 
 // Only one layout is mounted. Rendering both and hiding one with CSS would run
 // two chat panels, each trying to open the planning thread at once.
-function useIsWide() {
-  const query = '(min-width: 1024px)'
-  const read = () => typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    && window.matchMedia(query).matches
-  const [wide, setWide] = useState(read)
+//
+// Wide means the page itself has room, not the browser window: the app is laid
+// out at phone width even on a laptop, and judging by the window put two
+// squeezed panels side by side with no way to switch between them.
+const WIDE_PX = 900
+
+function useIsWide(ref) {
+  const [wide, setWide] = useState(false)
   useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined
-    const mq = window.matchMedia(query)
-    const onChange = (e) => setWide(e.matches)
-    setWide(mq.matches)
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
+    const el = ref.current
+    if (!el) return undefined
+    const check = () => setWide(el.clientWidth >= WIDE_PX)
+    check()
+    if (typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver(check)
+    observer.observe(el)
+    return () => observer.disconnect()
   }, [])
   return wide
 }
+
+// The page fills the space between the app's top bar (3rem) and bottom menu
+// (5rem plus the phone's safe area), so the chat box is never underneath it.
+const PAGE_HEIGHT = 'calc(100dvh - 8rem - env(safe-area-inset-bottom, 0px))'
 
 function weekSpan(macro) {
   const days = (new Date(`${macro.date_to}T00:00:00`) - new Date(`${macro.date_from}T00:00:00`)) / 86400000
@@ -56,7 +66,7 @@ function suggestionsFor(macros, macro) {
   return out
 }
 
-function ChatPanel({ macro, macros, onDraft, onPlanChanged, onStaffChanged }) {
+function ChatPanel({ macro, macros, onDraft, onPlanChanged, onStaffChanged, queued, onQueuedTaken, onBusy, visible = true }) {
   const navigate = useNavigate()
   const [thread, setThread] = useState(null)
   const [messages, setMessages] = useState([])
@@ -90,7 +100,18 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged, onStaffChanged }) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, sending, staffNotes, staffThinking])
+  }, [messages, sending, staffNotes, staffThinking, visible])
+
+  useEffect(() => { if (onBusy) onBusy(sending) }, [sending])
+
+  // A request started from the plan side (the season set-up, "Plan next week")
+  // is sent here, so it lands in the one conversation like anything typed.
+  useEffect(() => {
+    if (queued && thread && !sending) {
+      onQueuedTaken()
+      send(queued.text)
+    }
+  }, [queued, thread, sending])
 
   const send = async (override) => {
     const text = (override ?? input).trim()
@@ -164,10 +185,11 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged, onStaffChanged }) {
       <div className="flex-1 overflow-y-auto space-y-3 pr-1">
         {messages.length === 0 && (
           <div className="bg-pool-800 rounded-xl p-4 space-y-2">
-            <p className="text-sm text-pool-200 font-medium">Start with the shape of the year.</p>
+            <p className="text-sm text-pool-200 font-medium">Talk the season through here.</p>
             <p className="text-xs text-pool-400 leading-relaxed">
-              Divide it into macrocycles around the meets that matter. Then pick one and plan what
-              goes inside it, and who is aiming at what. The picture builds as you talk.
+              {macros.length === 0
+                ? 'Tell me when your season starts and ends and which meets matter most, and I will split it into macrocycles. Or use the set-up on the Plan tab, which fills this in from your meet calendar.'
+                : 'Ask for the next step, change anything in the plan, or ask who is aiming at which meet. Anything I propose appears on the Plan tab for you to approve.'}
             </p>
           </div>
         )}
@@ -304,6 +326,7 @@ function DraftCard({ kind, draft, macros, macroId, onSaved, onDismiss }) {
 }
 
 export default function PlanningWorkspace() {
+  const rootRef = useRef(null)
   const [macros, setMacros] = useState([])
   const [macroId, setMacroId] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -311,7 +334,16 @@ export default function PlanningWorkspace() {
   const [refreshKey, setRefreshKey] = useState(0)
   const [pending, setPending] = useState(null) // { kind, draft } awaiting approval
   const [staffKey, setStaffKey] = useState(0)
-  const wide = useIsWide()
+  const [queued, setQueued] = useState(null)   // a request from the plan side, waiting for the chat
+  const [chatBusy, setChatBusy] = useState(false)
+  const wide = useIsWide(rootRef)
+
+  // Ask the assistant from the plan side. On a phone, show the conversation so
+  // the coach sees the reply arrive; the proposal then comes back to Plan.
+  const ask = (text) => {
+    setQueued({ text, at: Date.now() })
+    if (!wide) setTab('chat')
+  }
 
   const loadMacros = async () => {
     try {
@@ -358,6 +390,10 @@ export default function PlanningWorkspace() {
         />
       )}
 
+      {macros.length > 0 && !pending && (
+        <NextStepCard macros={macros} macro={macro} onAsk={ask} busy={chatBusy || Boolean(queued)} />
+      )}
+
       {macros.length > 0 ? (
         <SeasonTimeline
           key={`tl-${refreshKey}-${staffKey}`}
@@ -365,24 +401,22 @@ export default function PlanningWorkspace() {
           selectedMacroId={macroId}
           onSelectMacro={setMacroId}
         />
-      ) : !loading && (
-        <div className="bg-pool-800 rounded-2xl p-5 text-center space-y-2">
-          <p className="text-sm text-pool-300 font-medium">Nothing planned yet</p>
-          <p className="text-xs text-pool-500 leading-relaxed">
-            Ask the assistant to divide the year into macrocycles. They appear here as empty bands,
-            and fill in as you plan each one.
-          </p>
-        </div>
+      ) : !loading && !pending && (
+        <SeasonStarter onAsk={ask} busy={chatBusy || Boolean(queued)} />
       )}
 
-      <StaffNotesPanel macroId={macroId} refreshKey={staffKey} onActed={planChanged}
-        title="Staff notes on this macrocycle" />
+      {macros.length > 0 && (
+        <>
+          <StaffNotesPanel macroId={macroId} refreshKey={staffKey} onActed={planChanged}
+            title="Staff notes on this macrocycle" />
 
-      <PathwayBoard key={`pb-${refreshKey}`} macroId={macroId} />
+          <PathwayBoard key={`pb-${refreshKey}`} macroId={macroId} />
 
-      <Link to="/season" className="block text-center text-xs text-accent-400 underline pb-4">
-        Open the full season plan →
-      </Link>
+          <Link to="/season" className="block text-center text-xs text-accent-400 underline pb-4">
+            Open the full season plan →
+          </Link>
+        </>
+      )}
     </div>
   )
 
@@ -393,16 +427,20 @@ export default function PlanningWorkspace() {
       onDraft={(drafted) => { setPending(drafted); setTab('plan') }}
       onPlanChanged={planChanged}
       onStaffChanged={() => setStaffKey(k => k + 1)}
+      queued={queued}
+      onQueuedTaken={() => setQueued(null)}
+      onBusy={setChatBusy}
+      visible={wide || tab === 'chat'}
     />
   )
 
   return (
-    <div className="flex flex-col h-screen">
+    <div ref={rootRef} className="flex flex-col" style={{ height: PAGE_HEIGHT }}>
       <div className="bg-pool-800 px-4 pt-4 pb-3 shrink-0 border-b border-pool-700">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h1 className="text-lg font-bold">Planning</h1>
-            <p className="text-xs text-pool-500 mt-0.5 truncate">Divide the year, then plan each macrocycle</p>
+            <p className="text-xs text-pool-500 mt-0.5 truncate">Outline the year, then plan each part</p>
           </div>
           <div className="flex items-center gap-2 max-w-[60%]">
           {macros.length > 0 && <ExportPlanButton />}
@@ -418,20 +456,23 @@ export default function PlanningWorkspace() {
           </div>
         </div>
 
-        {/* Phone: one at a time. Wide: both at once, so this is hidden. */}
-        <div className="flex gap-1 mt-3 lg:hidden">
-          {['plan', 'chat'].map(key => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg ${
-                tab === key ? 'bg-pool-700 text-pool-100' : 'text-pool-500'
-              }`}
-            >
-              {key === 'plan' ? 'Plan' : 'Discuss'}
-            </button>
-          ))}
-        </div>
+        {/* Narrow: one at a time. Wide: both at once, so no tabs. */}
+        {!wide && (
+          <div className="flex gap-1 mt-3">
+            {['plan', 'chat'].map(key => (
+              <button
+                key={key}
+                onClick={() => setTab(key)}
+                className={`flex-1 py-1.5 text-xs font-semibold rounded-lg ${
+                  tab === key ? 'bg-pool-700 text-pool-100' : 'text-pool-500'
+                }`}
+              >
+                {key === 'plan' ? 'Plan' : 'Discuss'}
+                {key === 'chat' && tab !== 'chat' && chatBusy && ' …'}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {wide ? (
@@ -443,13 +484,12 @@ export default function PlanningWorkspace() {
           <div className="flex-1 overflow-y-auto p-4">{visual}</div>
         </div>
       ) : (
-        /* Phone: whichever tab is showing */
+        /* Phone: whichever tab is showing. The conversation stays mounted
+           while the plan is on screen, so a reply still arriving is not lost
+           and switching back does not reload the thread. */
         <div className="flex-1 min-h-0">
-          {tab === 'chat' ? (
-            <div className="h-full p-4 flex flex-col min-h-0">{chat}</div>
-          ) : (
-            <div className="h-full overflow-y-auto p-4">{visual}</div>
-          )}
+          <div className={`h-full px-4 pt-3 pb-3 flex-col min-h-0 ${tab === 'chat' ? 'flex' : 'hidden'}`}>{chat}</div>
+          {tab !== 'chat' && <div className="h-full overflow-y-auto p-4">{visual}</div>}
         </div>
       )}
     </div>
