@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes, session_debriefs
-from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs, staff, lanewatch
 from backend.services.ai_operations import recover_interrupted_operations, run_operation_worker
 from backend.auth_dep import verify_token
 
@@ -298,6 +298,8 @@ app.include_router(session_presentation.router, prefix="/session-presentation", 
 app.include_router(coach_checkins.router, prefix="/coach-checkins", tags=["Coach Check-ins"], dependencies=_auth)
 app.include_router(ai_operations.router, prefix="/ai-operations", tags=["AI Operations"], dependencies=_auth)
 app.include_router(session_debriefs.router, prefix="/session-debriefs", tags=["Session Debriefs"], dependencies=_auth)
+app.include_router(staff.router, prefix="/staff", tags=["Staff"], dependencies=_auth)
+app.include_router(lanewatch.router, prefix="/lanewatch", tags=["LaneWatch"], dependencies=_auth)
 
 
 @app.get("/health")

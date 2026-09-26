@@ -677,6 +677,18 @@ def get_timeline(
         load_q = load_q.filter(models.SeasonLoadPoint.pathway_id == pathway_id)
     loads = load_q.all()
     load_by_key = {(p.macro_id, p.pathway_id, p.week_start): p for p in loads}
+
+    notes_by_week = defaultdict(list)
+    for note in db.query(models.StaffNote).filter(
+        models.StaffNote.status == "open",
+        models.StaffNote.week_start >= date_from,
+        models.StaffNote.week_start <= date_to,
+    ).order_by(models.StaffNote.id).all():
+        if note.macro_id and note.macro_id not in macro_ids:
+            continue
+        notes_by_week[note.week_start].append({
+            "id": note.id, "role": note.role, "kind": note.kind, "message": note.message,
+        })
     pathway_ids_with_load = sorted({p.pathway_id for p in loads if p.pathway_id})
 
     pathways = db.query(models.PlanningPathway).filter(
@@ -790,6 +802,7 @@ def get_timeline(
             "cycle_code": cycle_code,
             "is_current": cursor <= today <= week_end,
             "is_past": week_end < today,
+            "staff_notes": notes_by_week.get(cursor, []),
             "meets": week_meets,
             "sessions": dict(sessions_by_week.get(cursor, {"planned": 0, "cancelled": 0})),
             "load": load_rows.get(0),

@@ -139,6 +139,14 @@ def _apply_migrations():
             add_col("qualification_standards", "birth_year_min", "INTEGER")
             add_col("qualification_standards", "birth_year_max", "INTEGER")
 
+        if "staff_notes" in insp.get_table_names():
+            add_col("staff_notes", "proposed_action", "JSON")
+            add_col("staff_notes", "action_status", "VARCHAR")
+            add_col("staff_notes", "action_result", "TEXT")
+            add_col("staff_notes", "options", "JSON")
+            add_col("staff_notes", "decision", "TEXT")
+            add_col("staff_notes", "decided_at", "TIMESTAMP")
+
         if "planning_pathways" in insp.get_table_names():
             add_col("planning_pathways", "qualification_standard_set_id", "INTEGER")
 

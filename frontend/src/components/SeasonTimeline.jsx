@@ -4,6 +4,7 @@ import {
   bandRuns, loadSegments, smoothPath, pointFor, buildSeries,
   weekLabel, phaseBar, currentWeekIndex,
 } from '../seasonTimeline'
+import { staffStyle } from '../staffRoom'
 
 const COL = 44          // column width on the wide layout
 const PLOT_H = 170
@@ -133,6 +134,18 @@ function WeekDetail({ week, macroId, onSaved, onClose }) {
         </p>
       ) : null}
 
+      {week.staff_notes?.length > 0 && (
+        <div className="space-y-1">
+          {week.staff_notes.map(n => (
+            <p key={n.id} className="text-xs text-pool-300 leading-relaxed">
+              <span className="font-semibold" style={{ color: staffStyle(n.role).colour }}>
+                {staffStyle(n.role).title}:
+              </span>{' '}{n.message}
+            </p>
+          ))}
+        </div>
+      )}
+
       {week.meets.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {week.meets.map(m => (
@@ -206,6 +219,10 @@ function ColumnView({ timeline, series, selected, onSelect, focusMacroId, onPick
               } ${selected === i ? 'bg-pool-700' : ''}`}
             >
               {weekLabel(w.week_start)}
+              {w.staff_notes?.length > 0 && (
+                <span className="block mx-auto mt-0.5 w-1.5 h-1.5 rounded-full bg-yellow-400"
+                  title={`${w.staff_notes.length} staff note${w.staff_notes.length > 1 ? 's' : ''}`} />
+              )}
             </button>
           ))}
         </div>
@@ -399,6 +416,9 @@ function WeekRow({ week, weeks, primary, selected, onSelect }) {
         {weekLabel(week.week_start)}
       </span>
       <span className="text-[10px] text-pool-500 w-4 shrink-0 tabular-nums">{week.micro_index || ''}</span>
+      {week.staff_notes?.length > 0 && (
+        <span className="w-1.5 h-1.5 rounded-full bg-yellow-400 shrink-0" aria-label="Staff note" />
+      )}
       <span className="flex-1 h-4 bg-pool-800 rounded-sm overflow-hidden relative min-w-0">
         {value !== null && value !== undefined && (
           <span

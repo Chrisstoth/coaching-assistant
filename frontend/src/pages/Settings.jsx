@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import LaneWatchPanel from '../components/LaneWatchPanel'
 
 const SECTIONS = [
   {
@@ -192,6 +193,8 @@ export default function Settings() {
           {checkInError && <p className="text-xs text-red-300 mt-3">Could not update check-ins: {checkInError}</p>}
         </div>
       </section>
+
+      <LaneWatchPanel />
 
       {SECTIONS.map(({ heading, items }) => (
         <section key={heading} className="space-y-2">

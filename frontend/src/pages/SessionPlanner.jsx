@@ -4,6 +4,8 @@ import { api } from '../api'
 import { sessionStatusLabel } from '../sessionStatus'
 import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
 import SetRows from '../components/SetRows'
+import StaffVoices, { StaffThinking } from '../components/StaffVoices'
+import { sessionTopic, workInText } from '../staffRoom'
 import {
   buildSessionOccurrences,
   indexSessionsByOccurrence,
@@ -94,6 +96,13 @@ export default function SessionPlanner() {
   const [record, setRecord] = useState(null)
   const [recordLoading, setRecordLoading] = useState(false)
   const [replacing, setReplacing] = useState(false)
+  // The staff chip in on each draft. Their notes are tracked by id so this
+  // page shows only the meeting about the session on screen.
+  const [staffNotes, setStaffNotes] = useState([])
+  const [staffBusy, setStaffBusy] = useState(false)
+  const [expected, setExpected] = useState([])
+  const staffIds = useRef([])
+  const draftSeq = useRef(0)   // bumps whenever the draft on screen is replaced
   const carouselRef = useRef(null)
   const cardRefs = useRef({})
   const scrollTimer = useRef(null)
@@ -187,6 +196,10 @@ export default function SessionPlanner() {
     setMessages(null)
     setRevisionText('')
     setRevisionLog([])
+    staffIds.current = []
+    draftSeq.current += 1
+    setStaffNotes([])
+    setExpected([])
   }
 
   const selectOccurrence = (occurrence, scroll = true) => {
@@ -299,6 +312,47 @@ export default function SessionPlanner() {
     clearPreview()
   }
 
+  const loadStaff = async () => {
+    if (!staffIds.current.length) {
+      setStaffNotes([])
+      return
+    }
+    const rows = await api.getStaffNotes({ ids: staffIds.current.join(','), limit: 100 }).catch(() => null)
+    if (!Array.isArray(rows)) return
+    staffIds.current = [...new Set([...staffIds.current, ...rows.map(row => row.id)])]
+    setStaffNotes(rows)
+  }
+
+  // Runs behind the plan: the draft is usable straight away and the staff's
+  // points arrive when they are ready. A failed meeting costs nothing.
+  const conveneOnDraft = async (data, coachText, attendees) => {
+    const topic = sessionTopic(data, coachText)
+    if (!topic) return
+    const seq = draftSeq.current
+    setStaffBusy(true)
+    try {
+      const out = await api.conveneStaff({
+        topic,
+        coach_text: coachText || null,
+        trigger: 'session_draft',
+        session_date: date,
+        squad: selectedSlot?.squad || null,
+        attendee_ids: (attendees || []).map(swimmer => swimmer.id),
+      })
+      const ids = (out.notes || []).map(note => note.id)
+      // The coach moved to another session while the staff talked.
+      if (seq !== draftSeq.current) return
+      if (ids.length) {
+        staffIds.current = [...new Set([...staffIds.current, ...ids])]
+        await loadStaff()
+      }
+    } catch {
+      // The session stands without the staff's comments.
+    } finally {
+      setStaffBusy(false)
+    }
+  }
+
   const analyse = async () => {
     const draftText = editablePhotoDraftText(photoDraft)
     const hasInput = inputMethod === 'photo' ? (photoDraft ? draftText : photoFile) : text.trim()
@@ -317,14 +371,21 @@ export default function SessionPlanner() {
         setPhotoDraft(extraction.draft)
         return
       }
+      const coachText = inputMethod === 'photo' ? draftText : text
       const data = await api.planSession({
-        text: inputMethod === 'photo' ? draftText : text,
+        text: coachText,
         date,
         pool_slot_id: selectedSlot?.id || null,
         squad: selectedSlot?.squad || null,
       }, { signal: controller.signal })
       setResult(data)
       setMessages(data.messages || null)
+      const attendees = data.expected_swimmers || []
+      setExpected(attendees)
+      staffIds.current = []
+      draftSeq.current += 1
+      setStaffNotes([])
+      conveneOnDraft(data, coachText, attendees)
     } catch (e) {
       setError(e.name === 'AbortError'
         ? 'The planner took too long to respond. Please try again; your session idea is still in the box.'
@@ -335,8 +396,8 @@ export default function SessionPlanner() {
     }
   }
 
-  const revisePlan = async () => {
-    const note = revisionText.trim()
+  const revisePlan = async (override) => {
+    const note = (typeof override === 'string' ? override : revisionText).trim()
     if (!note || !messages || revising) return
     setRevising(true)
     setError(null)
@@ -353,8 +414,9 @@ export default function SessionPlanner() {
       setResult(data)
       setMessages(data.messages || null)
       setRevisionLog(prev => [...prev, note])
-      setRevisionText('')
+      if (typeof override !== 'string') setRevisionText('')
       setSaved(null)
+      conveneOnDraft(data, note, expected)
     } catch (e) {
       setError(e.name === 'AbortError'
         ? 'The planner took too long to respond. Please try again — your request is still in the box.'
@@ -1059,6 +1121,20 @@ export default function SessionPlanner() {
                     {revising ? 'Revising…' : 'Revise'}
                   </button>
                 </div>
+              </div>
+            )}
+
+            {/* The staff chip in on the draft; "Work this in" sends a point
+                back to the Session Writer as a revision. */}
+            {(staffBusy || staffNotes.length > 0) && (
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-pool-400 uppercase tracking-wide">The staff on this session</p>
+                <StaffVoices
+                  notes={staffNotes}
+                  onChanged={loadStaff}
+                  onWorkIn={messages && !revising ? note => revisePlan(workInText(note)) : null}
+                />
+                {staffBusy && <StaffThinking />}
               </div>
             )}
           </div>

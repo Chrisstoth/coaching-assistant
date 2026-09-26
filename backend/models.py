@@ -1073,6 +1073,59 @@ class SeasonLoadPoint(Base):
     pathway = relationship("PlanningPathway")
 
 
+class StaffNote(Base):
+    """Something a member of the coaching staff raised.
+
+    The staff are specialists - physiologist, performance analyst, periodisation
+    planner, swimmer manager - who speak up when they have something to say.
+    Each note keeps what it is about (a swimmer, a week, a macrocycle, a session)
+    so it can be pinned where it applies as well as shown in the conversation.
+
+    Kept apart from chat messages on purpose: chat history is replayed to the
+    model as user/assistant turns, and a staff role there would break it.
+    """
+    __tablename__ = "staff_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String, nullable=False, index=True)    # physiologist / analyst / planner / manager
+    kind = Column(String, default="observation")         # concern / question / observation
+    message = Column(Text, nullable=False)
+    question = Column(Text, nullable=True)               # what they want the coach to answer
+
+    # What the note is about - any may be empty.
+    swimmer_ids = Column(JSON, default=list)
+    macro_id = Column(Integer, ForeignKey("training_macros.id", ondelete="SET NULL"), nullable=True, index=True)
+    block_id = Column(Integer, ForeignKey("season_blocks.id", ondelete="SET NULL"), nullable=True)
+    week_start = Column(Date, nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    meet_id = Column(Integer, ForeignKey("meets.id", ondelete="SET NULL"), nullable=True)
+
+    # Where it came from.
+    thread_id = Column(Integer, ForeignKey("ai_threads.id", ondelete="SET NULL"), nullable=True, index=True)
+    parent_id = Column(Integer, ForeignKey("staff_notes.id", ondelete="SET NULL"), nullable=True)
+    addressed_to = Column(String, nullable=True)         # colleague role it answers, or "coach"
+    trigger = Column(String, nullable=True)              # coach_message / plan_draft / swimmer_review / reply
+    topic = Column(Text, nullable=True)                  # the short subject the meeting was about
+
+    status = Column(String, default="open", index=True)  # open / resolved / dismissed
+    coach_reply = Column(Text, nullable=True)
+
+    # Something the specialist proposes to change. Nothing happens until the
+    # coach approves it; the result of doing it is kept alongside.
+    proposed_action = Column(JSON, nullable=True)
+    action_status = Column(String, nullable=True)         # proposed / applied / declined / failed
+    action_result = Column(Text, nullable=True)
+
+    # "Your call": when specialists disagree, nobody settles it but the coach.
+    # A decision note (role "chair", kind "decision") lays out each position;
+    # the coach's choice becomes the plan of action the staff work to.
+    options = Column(JSON, nullable=True)                 # [{role, position, because, note_id}]
+    decision = Column(Text, nullable=True)
+    decided_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
 class PlanningCohort(Base):
     __tablename__ = "planning_cohorts"
     id = Column(Integer, primary_key=True, index=True)
@@ -1205,3 +1258,41 @@ class PlanningRecommendationEvent(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     recommendation = relationship("PlanningRecommendation", back_populates="events")
+
+
+class LaneWatchConnection(Base):
+    """The coach's link to LaneWatch, where the detailed race analysis lives.
+
+    Holds a read-only key LaneWatch issued to this app while the coach was
+    signed in there - never the coach's LaneWatch login. The key can only read
+    the coach's roster and the swims each swimmer has shared with them; it is
+    stored encrypted and revoked with "Disconnect".
+    """
+    __tablename__ = "lanewatch_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    key_encrypted = Column(Text, nullable=False)
+    key_hint = Column(String, nullable=True)          # last four characters
+    connected_as = Column(String, nullable=True)      # LaneWatch display name
+    lanewatch_role = Column(String, nullable=True)
+    last_checked_at = Column(DateTime(timezone=True), nullable=True)
+    last_error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class LaneWatchSwimmerLink(Base):
+    """Which LaneWatch swimmer is which swimmer here. Confirmed by the coach.
+
+    Only the pairing is kept. Race data itself is read live from LaneWatch
+    each time it is needed and never copied into this database - a swimmer
+    who stops sharing stops being readable straight away.
+    """
+    __tablename__ = "lanewatch_swimmer_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id", ondelete="CASCADE"), nullable=False, unique=True)
+    lanewatch_swimmer_id = Column(String, nullable=False, index=True)
+    lanewatch_name = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    swimmer = relationship("Swimmer")

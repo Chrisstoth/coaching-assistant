@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
+import AskTheStaff from '../components/AskTheStaff'
 
 const LEVEL_LABELS = { club: 'Club', regional: 'Regional', national: 'National', international: 'International' }
 
@@ -1016,6 +1017,18 @@ export default function MeetDetail() {
           </div>
         )}
       </div>
+
+      {/* The staff, led by the meet manager: entries, timetable, results */}
+      {meet && (
+        <AskTheStaff
+          subject={{ meet_id: meet.id }}
+          subjectLabel={meet.name}
+          roles={['meets']}
+          trigger="coach_question"
+          onActed={load}
+          placeholder="e.g. Ruby 1:02.45 in the 100 free heat, Leo 31.20 in the 50 fly - or who still needs entering?"
+        />
+      )}
 
       {/* Delete meet */}
       <button

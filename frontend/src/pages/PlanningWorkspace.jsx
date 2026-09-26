@@ -4,6 +4,9 @@ import { api } from '../api'
 import SeasonTimeline from '../components/SeasonTimeline'
 import PathwayBoard from '../components/PathwayBoard'
 import { describeDraft, draftFromResult, saveDraft, takeStashedDraft } from '../planDrafts'
+import StaffVoices, { StaffThinking } from '../components/StaffVoices'
+import StaffNotesPanel from '../components/StaffNotesPanel'
+import { draftTopic, mergeConversation } from '../staffRoom'
 
 // The planning conversation and the picture it produces, side by side.
 //
@@ -52,14 +55,21 @@ function suggestionsFor(macros, macro) {
   return out
 }
 
-function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
+function ChatPanel({ macro, macros, onDraft, onPlanChanged, onStaffChanged }) {
   const navigate = useNavigate()
   const [thread, setThread] = useState(null)
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [action, setAction] = useState(null)
+  const [staffNotes, setStaffNotes] = useState([])
+  const [staffThinking, setStaffThinking] = useState(false)
   const endRef = useRef(null)
+
+  const loadStaff = async (threadId) => {
+    const rows = await api.getStaffNotes({ thread_id: threadId, limit: 100 }).catch(() => null)
+    if (Array.isArray(rows)) setStaffNotes(rows)
+  }
 
   // One planning conversation for the whole year. Which macrocycle it is about
   // travels with each message instead of splitting the history per macro.
@@ -71,6 +81,7 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
         setThread(t)
         const msgs = await api.getAIChatMessages(t.id).catch(() => [])
         if (!cancelled) setMessages(Array.isArray(msgs) ? msgs : [])
+        if (!cancelled) loadStaff(t.id)
       })
       .catch(() => {})
     return () => { cancelled = true }
@@ -78,7 +89,7 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
-  }, [messages, sending])
+  }, [messages, sending, staffNotes, staffThinking])
 
   const send = async (override) => {
     const text = (override ?? input).trim()
@@ -98,6 +109,7 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
       if (drafted) onDraft(drafted)
       else if (res.suggested_action && typeof res.suggested_action === 'object') setAction(res.suggested_action)
       onPlanChanged()
+      convene(text, res.reply, drafted)
     } catch (e) {
       setMessages(prev => [...prev, {
         id: `err-${Date.now()}`, role: 'assistant',
@@ -105,6 +117,32 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
       }])
     }
     setSending(false)
+  }
+
+  // The staff hear what the coach said, what the lead assistant answered, and any
+  // plan it proposed. The chair decides whether anyone has something to add, so
+  // most exchanges cost one cheap call and produce nothing.
+  const convene = async (coachText, reply, drafted) => {
+    const topic = [
+      `Coach: ${coachText}`,
+      reply ? `Lead assistant replied: ${String(reply).slice(0, 900)}` : '',
+      drafted ? draftTopic(describeDraft(drafted.kind, drafted.draft)) : '',
+    ].filter(Boolean).join('\n\n')
+    setStaffThinking(true)
+    try {
+      await api.conveneStaff({
+        topic,
+        trigger: drafted ? 'plan_draft' : 'coach_message',
+        coach_text: coachText,
+        thread_id: thread.id,
+        macro_id: macro ? macro.id : null,
+      })
+      await loadStaff(thread.id)
+      if (onStaffChanged) onStaffChanged()
+    } catch {
+      // A quiet staff room is better than a broken conversation.
+    }
+    setStaffThinking(false)
   }
 
   const takeAction = () => {
@@ -133,15 +171,24 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged }) {
           </div>
         )}
 
-        {messages.map(m => (
-          <div key={m.id} className={m.role === 'user' ? 'flex justify-end' : ''}>
+        {mergeConversation(messages, staffNotes).map(item => item.type === 'staff' ? (
+          <StaffVoices
+            key={`staff-${item.thread.note.id}`}
+            notes={[item.thread.note, ...item.thread.replies]}
+            onChanged={() => { loadStaff(thread.id); if (onStaffChanged) onStaffChanged() }}
+            onActed={onPlanChanged}
+          />
+        ) : (
+          <div key={item.message.id} className={item.message.role === 'user' ? 'flex justify-end' : ''}>
             <div className={`rounded-2xl px-3.5 py-2.5 max-w-[92%] text-sm leading-relaxed whitespace-pre-wrap ${
-              m.role === 'user' ? 'bg-accent-700 text-white' : 'bg-pool-800 text-pool-200'
+              item.message.role === 'user' ? 'bg-accent-700 text-white' : 'bg-pool-800 text-pool-200'
             }`}>
-              {m.message}
+              {item.message.message}
             </div>
           </div>
         ))}
+
+        {staffThinking && <StaffThinking />}
 
         {sending && (
           <div className="bg-pool-800 rounded-2xl px-3.5 py-2.5 text-sm text-pool-500 w-fit">Thinking…</div>
@@ -262,6 +309,7 @@ export default function PlanningWorkspace() {
   const [tab, setTab] = useState('plan')      // phone only: 'chat' | 'plan'
   const [refreshKey, setRefreshKey] = useState(0)
   const [pending, setPending] = useState(null) // { kind, draft } awaiting approval
+  const [staffKey, setStaffKey] = useState(0)
   const wide = useIsWide()
 
   const loadMacros = async () => {
@@ -311,7 +359,7 @@ export default function PlanningWorkspace() {
 
       {macros.length > 0 ? (
         <SeasonTimeline
-          key={`tl-${refreshKey}`}
+          key={`tl-${refreshKey}-${staffKey}`}
           macros={macros}
           selectedMacroId={macroId}
           onSelectMacro={setMacroId}
@@ -325,6 +373,9 @@ export default function PlanningWorkspace() {
           </p>
         </div>
       )}
+
+      <StaffNotesPanel macroId={macroId} refreshKey={staffKey} onActed={planChanged}
+        title="Staff notes on this macrocycle" />
 
       <PathwayBoard key={`pb-${refreshKey}`} macroId={macroId} />
 
@@ -340,6 +391,7 @@ export default function PlanningWorkspace() {
       macros={macros}
       onDraft={(drafted) => { setPending(drafted); setTab('plan') }}
       onPlanChanged={planChanged}
+      onStaffChanged={() => setStaffKey(k => k + 1)}
     />
   )
 

@@ -4,9 +4,10 @@ import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
 import VoiceInput from '../components/VoiceInput'
 import ObservationsTab from '../components/ObservationsTab'
+import AskTheStaff from '../components/AskTheStaff'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
-const TABS = ['Overview', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Context']
+const TABS = ['Overview', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Staff', 'Context']
 
 const VOLUME_COLOURS = {
   aerobic: 'bg-blue-500', threshold: 'bg-yellow-500', vo2: 'bg-orange-500',
@@ -2166,6 +2167,15 @@ export default function SwimmerDetail() {
               ))
             )}
           </div>
+        )}
+
+        {tab === 'Staff' && swimmer && (
+          <AskTheStaff
+            subject={{ swimmer_ids: [swimmer.id] }}
+            subjectLabel={swimmer.name}
+            trigger="swimmer_review"
+            placeholder={`e.g. Is ${swimmer.name.split(' ')[0]} ready for the step up in load?`}
+          />
         )}
 
         {tab === 'Context' && (

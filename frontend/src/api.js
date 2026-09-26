@@ -436,6 +436,27 @@ export const api = {
   putSeasonLoadProfile: (data) => request('PUT', '/season/load-profile', data),
   putSeasonLoadWeek: (data) => request('PUT', '/season/load-profile/week', data),
   getSeasonLoadEdits: (macroId) => request('GET', `/season/load-profile/edits?macro_id=${macroId}`),
+  // Coaching staff - specialists who raise points about a plan, swimmer or session
+  getStaffRoster: () => request('GET', '/staff/roster'),
+  conveneStaff: (data) => request('POST', '/staff/convene', data),
+  getStaffNotes: (params = {}) => {
+    const qs = new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== ''),
+    ).toString()
+    return request('GET', `/staff/notes${qs ? '?' + qs : ''}`)
+  },
+  replyToStaffNote: (id, text) => request('POST', `/staff/notes/${id}/reply`, { text }),
+  updateStaffNote: (id, status) => request('PATCH', `/staff/notes/${id}`, { status }),
+  applyStaffAction: (id) => request('POST', `/staff/notes/${id}/apply`, {}),
+  declineStaffAction: (id) => request('POST', `/staff/notes/${id}/decline`, {}),
+  decideStaffNote: (id, { choice = null, text = null } = {}) =>
+    request('POST', `/staff/notes/${id}/decide`, { choice, text }),
+  getLaneWatchStatus: () => request('GET', '/lanewatch/status'),
+  connectLaneWatch: (idToken) => request('POST', '/lanewatch/connect', { id_token: idToken }),
+  disconnectLaneWatch: () => request('POST', '/lanewatch/disconnect', {}),
+  getLaneWatchLinks: () => request('GET', '/lanewatch/links'),
+  saveLaneWatchLinks: (links) => request('POST', '/lanewatch/links', { links }),
+  unlinkLaneWatch: (swimmerId) => request('DELETE', `/lanewatch/links/${swimmerId}`),
   analyseBlock: (id) => request('POST', `/season/blocks/${id}/ai-analysis`),
   getMicrocycles: (params = {}) => {
     const qs = new URLSearchParams(params).toString()

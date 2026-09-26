@@ -6,17 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node scripts/check-api-contract.mjs && node scripts/test-offline-queue.mjs && node scripts/check-chat-behaviour.mjs && node scripts/test-session-proximity.mjs && node scripts/test-calendar-dates.mjs && node scripts/test-session-planner-schedule.mjs && node scripts/test-coach-checkins.mjs && node scripts/test-ai-operations.mjs && node scripts/test-session-import.mjs && node scripts/test-meet-import.mjs && node scripts/test-profile-import.mjs && node scripts/test-session-sets.mjs && node scripts/test-session-presentation.mjs && node scripts/test-session-debrief.mjs && node scripts/test-season-timeline.mjs && node scripts/test-planning-workspace.mjs && node scripts/test-plan-drafts.mjs",
+    "test": "node scripts/check-api-contract.mjs && node scripts/test-offline-queue.mjs && node scripts/check-chat-behaviour.mjs && node scripts/test-session-proximity.mjs && node scripts/test-calendar-dates.mjs && node scripts/test-session-planner-schedule.mjs && node scripts/test-coach-checkins.mjs && node scripts/test-ai-operations.mjs && node scripts/test-session-import.mjs && node scripts/test-meet-import.mjs && node scripts/test-profile-import.mjs && node scripts/test-session-sets.mjs && node scripts/test-session-presentation.mjs && node scripts/test-session-debrief.mjs && node scripts/test-season-timeline.mjs && node scripts/test-planning-workspace.mjs && node scripts/test-plan-drafts.mjs && node scripts/test-staff-room.mjs && node scripts/test-lanewatch.mjs",
     "preview": "vite preview",
     "serve": "vite build && vite preview --host --port 5173"
   },
   "dependencies": {
+    "firebase": "^11.10.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.27.0"
   },
   "devDependencies": {
-"@vitejs/plugin-react": "^4.3.2",
+    "@vitejs/plugin-react": "^4.3.2",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",

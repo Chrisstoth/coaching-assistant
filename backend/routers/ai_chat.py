@@ -1134,6 +1134,11 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
     memory = _thread_memory(thread_obj, recent, db, history_limit)
     if memory:
         system_tail.append(f"---\n{memory}")
+    if is_season_plan_thread or is_athlete_plan_thread:
+        from backend.services.staff_room import staff_context_lines
+        staff_lines = staff_context_lines(db, thread_id=thread_id)
+        if staff_lines:
+            system_tail.append("---\n" + "\n".join(staff_lines))
 
     # Build thread context string to pass to specialist skills
     from backend.routers.skills import _format_thread_context
