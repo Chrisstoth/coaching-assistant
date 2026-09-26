@@ -3,6 +3,13 @@
   publish = "dist"
   command = "npm run build"
 
+[build.environment]
+  # Firebase's type files carry an example API key in their documentation
+  # (AIzaSyDOCAbC123...), which the secrets scan mistakes for a real one.
+  # Third-party packages are not our code; the scan still covers the repo
+  # and the built site.
+  SECRETS_SCAN_OMIT_PATHS = "node_modules/**,frontend/node_modules/**"
+
 [[redirects]]
   from = "/api/*"
   to = "https://coaching-assistant-api.onrender.com/:splat"
