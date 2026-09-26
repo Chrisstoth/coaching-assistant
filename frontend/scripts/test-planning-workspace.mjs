@@ -44,3 +44,15 @@ for (const method of [
 }
 
 console.log('Planning workspace checks passed')
+
+// --- export: the plan leaves the app as a spreadsheet to share ---------------
+{
+  const apiSource = await readFile(new URL('../src/api.js', import.meta.url), 'utf8')
+  assert.match(apiSource, /\/season\/export/, 'The export comes from the season export endpoint.')
+  assert.match(apiSource, /content-disposition/, 'The file keeps the name the server gives it.')
+  for (const page of ['PlanningWorkspace', 'SeasonPlan']) {
+    const source = await readFile(new URL(`../src/pages/${page}.jsx`, import.meta.url), 'utf8')
+    assert.match(source, /<ExportPlanButton/, `${page} offers the export.`)
+  }
+  console.log('Plan export checks passed')
+}

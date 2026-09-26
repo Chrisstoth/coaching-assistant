@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import ExportPlanButton from '../components/ExportPlanButton'
 import SeasonTimeline from '../components/SeasonTimeline'
 import PathwayBoard from '../components/PathwayBoard'
 import { describeDraft, draftFromResult, saveDraft, takeStashedDraft } from '../planDrafts'
@@ -403,15 +404,18 @@ export default function PlanningWorkspace() {
             <h1 className="text-lg font-bold">Planning</h1>
             <p className="text-xs text-pool-500 mt-0.5 truncate">Divide the year, then plan each macrocycle</p>
           </div>
+          <div className="flex items-center gap-2 max-w-[60%]">
+          {macros.length > 0 && <ExportPlanButton />}
           {macros.length > 1 && (
             <select
               value={macroId || ''}
               onChange={e => setMacroId(Number(e.target.value) || null)}
-              className="bg-pool-700 border border-pool-600 rounded-lg px-2 py-1 text-xs text-pool-200 focus:outline-none max-w-[45%] shrink-0"
+              className="bg-pool-700 border border-pool-600 rounded-lg px-2 py-1 text-xs text-pool-200 focus:outline-none min-w-0"
             >
               {macros.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           )}
+          </div>
         </div>
 
         {/* Phone: one at a time. Wide: both at once, so this is hidden. */}

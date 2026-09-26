@@ -832,6 +832,25 @@ def get_timeline(
     }
 
 
+@router.get("/export")
+def export_plan(
+    macro_id: Optional[int] = None,
+    squad: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """The plan as a spreadsheet to share: season calendar, macros, mesos and
+    the weekly micro layout (services/plan_export.py)."""
+    from fastapi.responses import Response
+    from backend.services.plan_export import build_workbook
+
+    content, filename = build_workbook(db, macro_id=macro_id, squad=squad)
+    return Response(
+        content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.put("/load-profile")
 def put_load_profile(data: LoadProfileIn, db: Session = Depends(get_db)):
     """Upsert a run of weeks at once — how an agreed AI draft lands."""

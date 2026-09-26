@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import ExportPlanButton from '../components/ExportPlanButton'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 import SeasonTimeline from '../components/SeasonTimeline'
 
@@ -959,6 +960,7 @@ export default function SeasonPlan() {
           </div>
           <div className="flex gap-2 no-print">
             <button onClick={printPlan} className="bg-pool-700 rounded-xl px-3 py-1.5 text-xs font-semibold">Print plan</button>
+            {macros.length > 0 && <ExportPlanButton className="rounded-xl px-3 py-1.5" />}
             <Link to="/ai" className="bg-accent-600 rounded-xl px-3 py-1.5 text-xs font-semibold">Plan in AI</Link>
           </div>
         </div>

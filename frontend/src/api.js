@@ -21,6 +21,28 @@ export function clearToken() {
   localStorage.removeItem(LEGACY_TOKEN_KEY)
 }
 
+// The season plan as a spreadsheet (season calendar, macros, mesos, micro
+// layout), saved straight to the device so it can be shared.
+export async function downloadPlanExport(params = {}) {
+  const qs = new URLSearchParams(
+    Object.entries(params).filter(([, v]) => v !== null && v !== undefined && v !== ''),
+  ).toString()
+  const token = getToken()
+  const res = await fetch(`${BASE}/season/export${qs ? '?' + qs : ''}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) throw new Error(`Export failed (${res.status})`)
+  const match = /filename="([^"]+)"/.exec(res.headers.get('content-disposition') || '')
+  const url = URL.createObjectURL(await res.blob())
+  const link = document.createElement('a')
+  link.href = url
+  link.download = match ? match[1] : 'season-plan.xlsx'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+}
+
 async function request(method, path, body = null, isFormData = false, options = {}) {
   const token = getToken()
   const headers = isFormData ? {} : { 'Content-Type': 'application/json' }
