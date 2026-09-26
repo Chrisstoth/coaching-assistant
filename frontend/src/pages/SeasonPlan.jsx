@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import ExportPlanButton from '../components/ExportPlanButton'
+import { aimLabels } from '../squadGroups'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 import SeasonTimeline from '../components/SeasonTimeline'
 
@@ -40,11 +41,15 @@ function BlockForm({ initial, onSave, onCancel }) {
   const [form, setForm] = useState(initial || {
     name: '', squad: '', phase_type: 'build',
     date_from: today, date_to: today,
-    group_intents: { G1: '', G2: '', G3: '' },
+    group_intents: {},
     notes: '',
   })
   const [saving, setSaving] = useState(false)
   const [showIntents, setShowIntents] = useState(!!(initial?.group_intents))
+  const [groupNames, setGroupNames] = useState([])
+  useEffect(() => {
+    api.getGroups().then(data => setGroupNames((data?.groups || []).map(g => g.name))).catch(() => {})
+  }, [])
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }))
   const setIntent = (g, v) => setForm(p => ({ ...p, group_intents: { ...p.group_intents, [g]: v } }))
 
@@ -75,16 +80,16 @@ function BlockForm({ initial, onSave, onCancel }) {
 
       {/* Group intents */}
       <button onClick={() => setShowIntents(v => !v)} className="w-full flex items-center justify-between text-xs text-pool-400 py-1">
-        <span>Group intents (optional)</span>
+        <span>What each group works on this block (optional)</span>
         <span>{showIntents ? '▲' : '▼'}</span>
       </button>
       {showIntents && (
         <div className="space-y-2">
-          {['G1', 'G2', 'G3'].map(g => (
+          {aimLabels(groupNames, form.group_intents).map(g => (
             <div key={g}>
               <label className="text-xs text-pool-500 block mb-1">{g}</label>
               <textarea value={form.group_intents?.[g] || ''} onChange={e => setIntent(g, e.target.value)}
-                placeholder={`What's the intent for Group ${g.slice(1)} this block?`}
+                placeholder={`What is ${g} working on this block?`}
                 rows={2} className="w-full bg-pool-700 rounded-lg px-3 py-2 text-xs border border-pool-600 focus:border-accent-500 focus:outline-none resize-none" />
             </div>
           ))}

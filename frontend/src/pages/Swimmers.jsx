@@ -1,15 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-
-const COHORT_COLOURS = {
-  teal: 'bg-teal-900/50 text-teal-300 border-teal-700/50',
-  orange: 'bg-orange-900/50 text-orange-300 border-orange-700/50',
-  blue: 'bg-blue-900/50 text-blue-300 border-blue-700/50',
-  purple: 'bg-purple-900/50 text-purple-300 border-purple-700/50',
-  green: 'bg-green-900/50 text-green-300 border-green-700/50',
-  red: 'bg-red-900/50 text-red-300 border-red-700/50',
-}
+import SquadGroups from '../components/SquadGroups'
 
 function profileStatusFor(swimmer) {
   return swimmer.profile_status || {
@@ -22,7 +14,6 @@ function profileStatusFor(swimmer) {
 
 export default function Swimmers() {
   const [swimmers, setSwimmers] = useState([])
-  const [cohorts, setCohorts] = useState([])
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [selecting, setSelecting] = useState(false)
@@ -30,27 +21,17 @@ export default function Swimmers() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [showNoProfile, setShowNoProfile] = useState(true)
-  const [cohortPicker, setCohortPicker] = useState(null) // swimmer id being assigned
   const navigate = useNavigate()
+  const [params, setParams] = useSearchParams()
+  const view = params.get('view') === 'groups' ? 'groups' : 'swimmers'
+  const setView = (next) => setParams(next === 'groups' ? { view: 'groups' } : {}, { replace: true })
 
   useEffect(() => {
-    Promise.all([
-      api.getSwimmers({ active_only: false }),
-      api.getCohorts(),
-    ]).then(([sw, co]) => {
+    api.getSwimmers({ active_only: false }).then(sw => {
       setSwimmers(sw)
-      setCohorts(co)
       setLoading(false)
     })
   }, [])
-
-  const cohortMap = Object.fromEntries(cohorts.map(c => [c.id, c]))
-
-  const assignCohort = async (swimmerId, cohortId) => {
-    await api.assignSwimmerCohort(swimmerId, cohortId)
-    setSwimmers(prev => prev.map(s => s.id === swimmerId ? { ...s, planning_cohort_id: cohortId } : s))
-    setCohortPicker(null)
-  }
 
   const filtered = swimmers.filter((s) =>
     s.name.toLowerCase().includes(search.toLowerCase())
@@ -83,7 +64,7 @@ export default function Swimmers() {
     <div className="p-4 space-y-4">
       <div className="flex justify-between items-center pt-2">
         <h1 className="text-xl font-bold">Squad</h1>
-        {selecting ? (
+        {view === 'groups' ? null : selecting ? (
           <button onClick={clearSelect} className="text-pool-400 text-sm font-medium">
             Cancel
           </button>
@@ -105,6 +86,17 @@ export default function Swimmers() {
         )}
       </div>
 
+      <div className="flex bg-pool-800 rounded-xl p-1 text-sm" role="tablist">
+        {[['swimmers', 'Swimmers'], ['groups', 'Groups']].map(([key, label]) => (
+          <button key={key} role="tab" aria-selected={view === key} onClick={() => { clearSelect(); setView(key) }}
+            className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
+              view === key ? 'bg-pool-600 text-pool-100' : 'text-pool-400'}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === 'groups' ? <SquadGroups /> : (<>
       <input
         type="search"
         value={search}
@@ -263,22 +255,6 @@ export default function Swimmers() {
                         : 'No foundation'}
                     </span>
                   )}
-                  {s.planning_cohort_id && cohortMap[s.planning_cohort_id] && (
-                    <button
-                      onClick={e => { e.preventDefault(); setCohortPicker(s.id) }}
-                      className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${COHORT_COLOURS[cohortMap[s.planning_cohort_id].colour] || COHORT_COLOURS.teal}`}
-                    >
-                      {cohortMap[s.planning_cohort_id].name}
-                    </button>
-                  )}
-                  {s.active && !s.planning_cohort_id && (
-                    <button
-                      onClick={e => { e.preventDefault(); setCohortPicker(s.id) }}
-                      className="text-[10px] text-pool-600 hover:text-pool-400 border border-pool-700 rounded-full px-2 py-0.5 transition-colors"
-                    >
-                      + cohort
-                    </button>
-                  )}
                   <span className="text-pool-600 text-lg">›</span>
                 </div>
               </Link>
@@ -286,6 +262,8 @@ export default function Swimmers() {
           })}
         </div>
       )}
+
+      </>)}
 
       {/* Bulk delete bar — sits above bottom nav */}
       {selecting && selected.size > 0 && (
@@ -319,42 +297,6 @@ export default function Swimmers() {
               </div>
             </div>
           )}
-        </div>
-      )}
-
-      {/* Cohort picker modal */}
-      {cohortPicker !== null && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60" onClick={() => setCohortPicker(null)}>
-          <div className="w-full max-w-lg bg-pool-900 rounded-t-2xl p-4 space-y-3 pb-8" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-pool-100">Assign to cohort</p>
-              <button onClick={() => setCohortPicker(null)} className="text-pool-500 hover:text-pool-300 text-lg">✕</button>
-            </div>
-            {cohorts.length === 0 ? (
-              <p className="text-xs text-pool-400">No cohorts yet — create them in the Plan hub.</p>
-            ) : (
-              <div className="space-y-2">
-                {cohorts.map(c => (
-                  <button
-                    key={c.id}
-                    onClick={() => assignCohort(cohortPicker, c.id)}
-                    className={`w-full text-left px-3 py-2.5 rounded-xl border text-sm font-medium transition-colors ${COHORT_COLOURS[c.colour] || COHORT_COLOURS.teal}`}
-                  >
-                    {c.name}
-                    {c.goals && <span className="block text-xs opacity-60 font-normal mt-0.5 truncate">{c.goals}</span>}
-                  </button>
-                ))}
-                {swimmers.find(s => s.id === cohortPicker)?.planning_cohort_id && (
-                  <button
-                    onClick={() => assignCohort(cohortPicker, null)}
-                    className="w-full text-left px-3 py-2.5 rounded-xl border border-pool-700 text-sm text-pool-400"
-                  >
-                    Remove from cohort
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
         </div>
       )}
     </div>

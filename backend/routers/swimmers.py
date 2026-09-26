@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
+from backend.services import groups as group_svc
 from backend.services import claude_service
 from backend.services.importer import match_or_create_swimmer
 from backend.services.profile_status import FOUNDATION_AREAS, FOUNDATION_KEY_ALIASES, build_profile_status
@@ -449,6 +450,7 @@ def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     db.query(models.SwimmerException).filter(models.SwimmerException.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerPlan).filter(models.SwimmerPlan.swimmer_id == swimmer_id).delete()
     db.query(models.LaneWatchSwimmerLink).filter(models.LaneWatchSwimmerLink.swimmer_id == swimmer_id).delete()
+    db.query(models.GroupMembership).filter(models.GroupMembership.swimmer_id == swimmer_id).delete()
     db.query(models.Schedule).filter(models.Schedule.swimmer_id == swimmer_id).delete()
     db.query(models.PeriodizationPlan).filter(models.PeriodizationPlan.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerObservation).filter(models.SwimmerObservation.swimmer_id == swimmer_id).delete()
@@ -1243,13 +1245,13 @@ def get_block_status(swimmer_id: int, db: DBSession = Depends(get_db)):
             ),
             "total_weeks": max(1, round((current_meso.date_to - current_meso.date_from).days / 7)),
         }
-        # Find swimmer's group from macro group_definitions
+        # The swimmer's training group, with what the plan says about it
         if current_meso.macro_id:
             macro = db.query(models.TrainingMacro).filter(
                 models.TrainingMacro.id == current_meso.macro_id
             ).first()
-            if macro and macro.group_definitions:
-                for g, defn in macro.group_definitions.items():
+            if macro and group_svc.macro_groups(db, macro):
+                for g, defn in group_svc.macro_groups(db, macro).items():
                     ids = defn.get("swimmer_ids") or []
                     if swimmer_id in ids:
                         group_label = g

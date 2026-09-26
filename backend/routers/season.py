@@ -8,6 +8,7 @@ import json, os
 
 from backend.database import get_db
 from backend import models
+from backend.services import groups as group_svc
 from backend.services.cycle_codes import (
     code_for,
     ensure_cycle_sequences,
@@ -181,7 +182,7 @@ def get_macros(db: Session = Depends(get_db)):
             "sequence_index": m.sequence_index, "cycle_prefix": str(m.sequence_index),
             "name": m.name, "squad": m.squad,
             "date_from": m.date_from.isoformat(), "date_to": m.date_to.isoformat(),
-            "narrative": m.narrative, "group_definitions": m.group_definitions,
+            "narrative": m.narrative, "group_definitions": group_svc.macro_groups(db, m),
             "created_at": m.created_at,
             "is_current": m.date_from <= today <= m.date_to,
             "is_past": m.date_to < today,
@@ -232,7 +233,7 @@ def create_macro(data: MacroIn, db: Session = Depends(get_db)):
         "sequence_index": macro.sequence_index, "cycle_prefix": str(macro.sequence_index),
         "name": macro.name, "squad": macro.squad,
         "date_from": macro.date_from.isoformat(), "date_to": macro.date_to.isoformat(),
-        "narrative": macro.narrative, "group_definitions": macro.group_definitions,
+        "narrative": macro.narrative, "group_definitions": group_svc.macro_groups(db, macro),
         "mesos": [_block_out(b, today) for b in mesos],
     }
 

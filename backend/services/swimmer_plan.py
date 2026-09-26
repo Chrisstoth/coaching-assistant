@@ -85,10 +85,11 @@ def default_period(db: DBSession, today: Optional[date] = None) -> tuple:
     return today - timedelta(days=today.weekday()), today + timedelta(days=365)
 
 
-def _group_of(swimmer, macros: list) -> Optional[tuple]:
+def _group_of(db: DBSession, swimmer, macros: list) -> Optional[tuple]:
+    from backend.services import groups as group_svc
     for macro in macros:
-        for name, defn in (macro.group_definitions or {}).items():
-            if isinstance(defn, dict) and swimmer.id in (defn.get("swimmer_ids") or []):
+        for name, defn in group_svc.macro_groups(db, macro).items():
+            if swimmer.id in (defn.get("swimmer_ids") or []):
                 return macro, name, defn.get("description") or ""
     return None
 
@@ -123,7 +124,7 @@ def _athlete_lines(db: DBSession, swimmer) -> list:
 def facts_athlete(db, swimmer, start, end) -> str:
     from backend.services import claude_service as cs
     lines = _athlete_lines(db, swimmer)
-    group = _group_of(swimmer, _season_macros(db, start, end, swimmer.squad))
+    group = _group_of(db, swimmer, _season_macros(db, start, end, swimmer.squad))
     if group:
         lines.append(f"Training group: {group[1]}" + (f" ({group[2]})" if group[2] else ""))
     slots = db.query(models.PoolSlot).join(models.SwimmerSlot).filter(
@@ -242,7 +243,7 @@ def facts_training(db, swimmer, start, end) -> str:
 def facts_how(db, swimmer, start, end) -> str:
     lines = []
     macros = _season_macros(db, start, end, swimmer.squad)
-    group = _group_of(swimmer, macros)
+    group = _group_of(db, swimmer, macros)
     group_name = group[1] if group else None
     if group_name:
         lines.append(f"The swimmer trains in {group_name}.")

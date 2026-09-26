@@ -474,6 +474,14 @@ export const api = {
   decideStaffNote: (id, { choice = null, text = null } = {}) =>
     request('POST', `/staff/notes/${id}/decide`, { choice, text }),
   getSeasonGrid: (macroId) => request('GET', `/season/grid?macro_id=${macroId}`),
+  // Training groups - who trains together, and since when
+  getGroups: () => request('GET', '/groups'),
+  createGroup: (data) => request('POST', '/groups', data),
+  updateGroup: (id, data) => request('PATCH', `/groups/${id}`, data),
+  closeGroup: (id) => request('DELETE', `/groups/${id}`),
+  orderGroups: (ids) => request('POST', '/groups/order', { ids }),
+  moveToGroup: (data) => request('POST', '/groups/move', data),
+  getGroupHistory: (swimmerId) => request('GET', `/groups/history/${swimmerId}`),
   getSwimmerPlans: (swimmerId) => request('GET', `/swimmer-plans?swimmer_id=${swimmerId}`),
   createSwimmerPlan: (data) => request('POST', '/swimmer-plans', data),
   getSwimmerPlan: (id) => request('GET', `/swimmer-plans/${id}`),

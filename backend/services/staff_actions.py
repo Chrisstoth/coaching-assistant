@@ -522,8 +522,10 @@ def _v_move_pathway(p, db):
     if already:
         raise ActionError(f"{swimmer.name} is already on {pathway.name}")
     status = str(p.get("qualification_status") or "unknown").lower()
+    when = _date(p.get("date_from"), "Start date", required=False) or date.today()
     return {"swimmer_id": swimmer.id, "to_pathway_id": pathway.id,
             "qualification_status": status if status in QUAL else "unknown",
+            "date_from": when.isoformat(),
             "reason": _text(p.get("reason"), "Reason", limit=300)}
 
 
@@ -536,22 +538,20 @@ def _d_move_pathway(c, db):
     ).first()
     frm = f" from {current.pathway.name}" if current else ""
     target = f" (aiming at {pathway.primary_meet.name})" if pathway.primary_meet else ""
-    return [f"Move {_name(db, c['swimmer_id'])}{frm} to {pathway.name}{target}", c["reason"]]
+    when = date.fromisoformat(c.get("date_from") or date.today().isoformat())
+    start = f", starting {_fmt(when)}" if when > date.today() else ""
+    return [f"Move {_name(db, c['swimmer_id'])}{frm} to {pathway.name}{target}{start}", c["reason"]]
 
 
 def _a_move_pathway(c, db):
     from backend.services.planning_engine import refresh_macro
     pathway = _pathway(db, c["to_pathway_id"])
-    # One route per swimmer per macrocycle: moving them closes the old one.
-    for member in db.query(models.PathwayMembership).join(models.PlanningPathway).filter(
-        models.PathwayMembership.swimmer_id == c["swimmer_id"],
-        models.PathwayMembership.active.is_(True),
-        models.PlanningPathway.macro_id == pathway.macro_id,
-    ).all():
-        member.active = False
-        member.date_to = date.today()
+    from backend.services.pathways import close_others
+    when = date.fromisoformat(c.get("date_from") or date.today().isoformat())
+    # One route per swimmer at a time: from the start date the old one ends.
+    close_others(db, c["swimmer_id"], pathway, when)
     db.add(models.PathwayMembership(
-        pathway_id=pathway.id, swimmer_id=c["swimmer_id"], date_from=date.today(),
+        pathway_id=pathway.id, swimmer_id=c["swimmer_id"], date_from=when,
         qualification_status=c["qualification_status"], notes=c["reason"], active=True,
     ))
     db.commit()
@@ -678,6 +678,47 @@ def _a_meet_target_times(c, db):
     return f"Target times set for {_name(db, c['swimmer_id'])}."
 
 
+def _v_move_group(p, db):
+    from backend.services import groups as gs
+    swimmer = _swimmer(db, p.get("swimmer_id"))
+    group = None
+    if p.get("group_id") not in (None, "", "null"):
+        gid = _int(p.get("group_id"), "Group")
+        group = db.query(models.TrainingGroup).filter(
+            models.TrainingGroup.id == gid, models.TrainingGroup.active.is_(True)).first()
+        if not group:
+            raise ActionError(f"There is no training group with id {gid}")
+    when = _date(p.get("date_from"), "Start date", required=False) or date.today()
+    current = gs.group_of(db, swimmer.id, when)
+    if group and current and current.id == group.id:
+        raise ActionError(f"{swimmer.name} is already in {group.name} from then")
+    if not group and not current:
+        raise ActionError(f"{swimmer.name} is not in a group then")
+    return {"swimmer_id": swimmer.id, "group_id": group.id if group else None,
+            "group_name": group.name if group else None, "was": current.name if current else None,
+            "date_from": when.isoformat(), "reason": _text(p.get("reason"), "Reason", limit=300)}
+
+
+def _d_move_group(c, db):
+    return [f"{_name(db, c['swimmer_id'])}: {c['was'] or 'no group'} → {c['group_name'] or 'no group'} "
+            f"from {_fmt(date.fromisoformat(c['date_from']))}", c["reason"],
+            "Weeks before then keep their old group."]
+
+
+def _a_move_group(c, db):
+    from backend.services import groups as gs
+    gs.move(db, c["swimmer_id"], c["group_id"], date.fromisoformat(c["date_from"]), c["reason"])
+    db.commit()
+    where = f"moves to {c['group_name']}" if c["group_name"] else "leaves their group"
+    return f"{_name(db, c['swimmer_id'])} {where} from {_fmt(date.fromisoformat(c['date_from']))}."
+
+
+def _h_move_group(c, proposer, db):
+    return ("planner", f"{_name(db, c['swimmer_id'])} moves from {c['was'] or 'no group'} to "
+                       f"{c['group_name'] or 'no group'} from {c['date_from']}: {c['reason']}. "
+                       "Does the timing suit the plan, and how should their load step?")
+
+
 def _no_handoff(c, proposer, db):
     return None
 
@@ -709,7 +750,7 @@ ACTIONS = {spec.type: spec for spec in [
                '"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD", "notes": "..."}',
                _v_add_block, _d_add_block, _a_add_block, _h_add_block),
     ActionSpec("move_pathway", ("planner", "manager"), "Move them",
-               '{"type": "move_pathway", "swimmer_id": 12, "to_pathway_id": 4, "qualification_status": "qualified|close|not_qualified|unknown", "reason": "..."}',
+               '{"type": "move_pathway", "swimmer_id": 12, "to_pathway_id": 4, "qualification_status": "qualified|close|not_qualified|unknown", "date_from": "YYYY-MM-DD or null for today", "reason": "..."}',
                _v_move_pathway, _d_move_pathway, _a_move_pathway, _h_move_pathway),
     ActionSpec("set_qualification", ("analyst",), "Update qualification",
                '{"type": "set_qualification", "swimmer_id": 12, "pathway_id": 4, "status": "qualified|close|not_qualified|unknown", "reason": "..."}',
@@ -728,6 +769,9 @@ ACTIONS = {spec.type: spec for spec in [
                '{"type": "add_availability", "swimmer_id": 12, "reason": "holiday|exams|work|injury|other", '
                '"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD", "notes": "..."}',
                _v_add_availability, _d_add_availability, _a_add_availability, _h_add_availability),
+    ActionSpec("move_group", ("manager",), "Move them",
+               '{"type": "move_group", "swimmer_id": 12, "group_id": 3, "date_from": "YYYY-MM-DD", "reason": "..."}',
+               _v_move_group, _d_move_group, _a_move_group, _h_move_group),
     ActionSpec("add_coaching_note", ("manager",), "Add this note",
                '{"type": "add_coaching_note", "title": "...", "body": "...", "swimmer_ids": [12], '
                '"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}',

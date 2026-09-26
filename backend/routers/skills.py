@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
+from backend.services import groups as group_svc
 from backend.services.claude_service import get_client, MODEL, PLANNING_EFFORT, response_text
 from backend.services.availability import availability_ranges
 from backend.services.planning_engine import compact_context, refresh_macro
@@ -435,7 +436,7 @@ def _build_session_skill_context(db: DBSession, target_date: Optional[date] = No
     for _le in _load_events:
         _load_events_by_swimmer[_le.swimmer_id].append(_le)
 
-    if current_macro and current_macro.group_definitions:
+    if current_macro and group_svc.macro_groups(db, current_macro):
         lines.append("GROUP DEFINITIONS AND INDIVIDUAL CONTEXT:")
         lines.append("(Use group definitions + individual data to decide how many groups to plan and what differentiates them)")
         two_weeks_ago = today - timedelta(weeks=2)
@@ -452,7 +453,7 @@ def _build_session_skill_context(db: DBSession, target_date: Optional[date] = No
             models.Session.status != 'cancelled',
         ).count()
 
-        for g_label, defn in current_macro.group_definitions.items():
+        for g_label, defn in group_svc.macro_groups(db, current_macro).items():
             desc = defn.get("description", "")
             intent = (current_meso.group_intents or {}).get(g_label, "") if current_meso else ""
             swimmer_ids = defn.get("swimmer_ids") or []
@@ -826,8 +827,8 @@ def _build_adaptation_context(swimmer: models.Swimmer, db: DBSession) -> str:
             macro = db.query(models.TrainingMacro).filter(
                 models.TrainingMacro.id == current_meso.macro_id
             ).first()
-            if macro and macro.group_definitions:
-                for g, defn in macro.group_definitions.items():
+            if macro and group_svc.macro_groups(db, macro):
+                for g, defn in group_svc.macro_groups(db, macro).items():
                     if swimmer.id in (defn.get("swimmer_ids") or []):
                         group_label = g
                         desc = defn.get("description", "")
@@ -916,9 +917,9 @@ def _build_adaptation_context(swimmer: models.Swimmer, db: DBSession) -> str:
         macro = db.query(models.TrainingMacro).filter(
             models.TrainingMacro.id == current_meso.macro_id
         ).first()
-        if macro and macro.group_definitions:
+        if macro and group_svc.macro_groups(db, macro):
             peer_ids = [
-                sid for sid in (macro.group_definitions.get(group_label, {}).get("swimmer_ids") or [])
+                sid for sid in (group_svc.macro_groups(db, macro).get(group_label, {}).get("swimmer_ids") or [])
                 if sid != swimmer.id
             ]
             if peer_ids:
@@ -1300,9 +1301,9 @@ def _build_block_review_context(block: models.SeasonBlock, db: DBSession) -> str
 
     # Group membership from macro
     group_swimmer_map: dict = {}  # g_label -> list of (id, name)
-    if macro and macro.group_definitions:
+    if macro and group_svc.macro_groups(db, macro):
         lines.append("GROUP MEMBERSHIP:")
-        for g_label, defn in macro.group_definitions.items():
+        for g_label, defn in group_svc.macro_groups(db, macro).items():
             swimmer_ids = defn.get("swimmer_ids") or []
             names = []
             for sid in swimmer_ids:
@@ -2243,8 +2244,8 @@ def _build_squad_profile(db: DBSession, macro_id: Optional[int] = None) -> str:
 
     # Build current group membership map
     current_group_map: dict = {}  # swimmer_id -> group_label
-    if macro and macro.group_definitions:
-        for g_label, defn in macro.group_definitions.items():
+    if macro and group_svc.macro_groups(db, macro):
+        for g_label, defn in group_svc.macro_groups(db, macro).items():
             for sid in (defn.get("swimmer_ids") or []):
                 current_group_map[sid] = g_label
 
@@ -2262,9 +2263,9 @@ def _build_squad_profile(db: DBSession, macro_id: Optional[int] = None) -> str:
 
     if macro:
         lines.append(f"CURRENT MACRO: {macro.name} | {macro.date_from} to {macro.date_to}")
-        if macro.group_definitions:
+        if group_svc.macro_groups(db, macro):
             lines.append("Existing groups:")
-            for g_label, defn in macro.group_definitions.items():
+            for g_label, defn in group_svc.macro_groups(db, macro).items():
                 sw_ids = defn.get("swimmer_ids") or []
                 names = []
                 for sid in sw_ids:
@@ -2571,7 +2572,7 @@ TYPICAL SEASON DURATIONS:
 - Recovery block: 1-2 weeks
 
 GROUP DEFINITIONS AT MACRO LEVEL:
-Groups defined here are the training groups for the whole season. Use descriptive labels that reflect the actual group character — not generic G1/G2/G3 unless that is what the coach uses. Examples: "Senior", "Junior", "Development", "Sprint Lane", "Distance Group", "Masters". Each group should have a clearly differentiated training profile.
+If the squad already has training groups (listed in the context as SQUAD TRAINING GROUPS), use exactly those labels and describe what each group works on in this macro - who is in each group is kept on the Swimmers page, not in the plan. Only when there are none, suggest groups with descriptive labels that reflect the actual group character — not generic G1/G2/G3 unless that is what the coach uses. Examples: "Senior", "Junior", "Development", "Sprint Lane", "Distance Group", "Masters". Each group should have a clearly differentiated training profile.
 
 OUTPUT FORMAT (JSON only, no markdown):
 {
@@ -2703,9 +2704,16 @@ def _build_macro_plan_context(db: DBSession) -> str:
         models.TrainingMacro.date_to >= today,
     ).order_by(models.TrainingMacro.date_from).first()
 
-    if current_macro and current_macro.group_definitions:
+    squad_now = group_svc.groups_on(db, today)
+    if squad_now:
+        lines.append("SQUAD TRAINING GROUPS (use these labels exactly):")
+        for g_label, defn in squad_now.items():
+            desc = defn.get("description", "")
+            lines.append(f"  {g_label} ({len(defn['swimmer_ids'])} swimmers): {desc[:150]}")
+        lines.append("")
+    elif current_macro and group_svc.macro_groups(db, current_macro):
         lines.append(f"EXISTING GROUP LABELS (from {current_macro.name}):")
-        for g_label, defn in current_macro.group_definitions.items():
+        for g_label, defn in group_svc.macro_groups(db, current_macro).items():
             desc = defn.get("description", "")
             swimmer_ids = defn.get("swimmer_ids") or []
             lines.append(f"  {g_label} ({len(swimmer_ids)} swimmers): {desc[:150]}")
@@ -3063,9 +3071,9 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
         lines.append(f"MACRO: {macro.name} | {macro.date_from} to {macro.date_to} ({total_weeks}w)")
         if macro.narrative:
             lines.append(f"Season narrative: {macro.narrative[:300]}")
-        if macro.group_definitions:
+        if group_svc.macro_groups(db, macro):
             lines.append("Groups:")
-            for g_label, defn in macro.group_definitions.items():
+            for g_label, defn in group_svc.macro_groups(db, macro).items():
                 desc = defn.get("description", "")
                 swimmer_ids = defn.get("swimmer_ids") or []
                 names = []
@@ -3170,8 +3178,8 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
             weeks_out = (tgt.deadline - today).days // 7
             # Find their group
             sw_group = None
-            if macro and macro.group_definitions:
-                for g_label, defn in macro.group_definitions.items():
+            if macro and group_svc.macro_groups(db, macro):
+                for g_label, defn in group_svc.macro_groups(db, macro).items():
                     if tgt.swimmer_id in (defn.get("swimmer_ids") or []):
                         sw_group = g_label
                         break
@@ -3233,7 +3241,7 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
 
     # Individual adaptation signals per group — 4-week zone breakdown + attendance for key swimmers
     four_weeks_ago = today - timedelta(weeks=4)
-    if macro and macro.group_definitions:
+    if macro and group_svc.macro_groups(db, macro):
         swimmer_loads: dict = {}
         all_loads = db.query(models.SwimmerSessionLoad).filter(
             models.SwimmerSessionLoad.session_date >= four_weeks_ago,
@@ -3254,7 +3262,7 @@ def _build_meso_plan_context(db: DBSession, macro_id: Optional[int] = None) -> s
             obs_by_swimmer[o.swimmer_id].append(o.content[:80])
 
         adapt_lines = []
-        for g_label, defn in macro.group_definitions.items():
+        for g_label, defn in group_svc.macro_groups(db, macro).items():
             sw_ids = defn.get("swimmer_ids") or []
             if not sw_ids:
                 continue
@@ -3605,9 +3613,10 @@ def _build_micro_plan_context(db: DBSession, week_start: Optional[date] = None) 
         ).order_by(models.TrainingMacro.date_from).first()
 
     group_swimmer_ids: dict = {}
-    if macro and macro.group_definitions:
+    week_groups = group_svc.macro_groups(db, macro, week_start) if macro else {}
+    if week_groups:
         lines.append("GROUPS:")
-        for g_label, defn in macro.group_definitions.items():
+        for g_label, defn in week_groups.items():
             sw_ids = defn.get("swimmer_ids") or []
             group_swimmer_ids[g_label] = sw_ids
             names = [swimmer_name_by_id[sid] for sid in sw_ids[:8] if sid in swimmer_name_by_id]
@@ -4351,10 +4360,8 @@ def _build_pathway_context(db: DBSession, macro_id: Optional[int] = None) -> str
         lines.append("  (none in range)")
 
     lines += ["", "SQUAD:"]
-    swimmer_q = db.query(models.Swimmer)
-    if macro.squad:
-        swimmer_q = swimmer_q.filter(models.Swimmer.squad == macro.squad)
-    swimmers = swimmer_q.order_by(models.Swimmer.name).all()
+    # One squad, split into groups: every active swimmer can be given a pathway.
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.active.is_(True)).order_by(models.Swimmer.name).all()
     if not swimmers:
         swimmers = db.query(models.Swimmer).order_by(models.Swimmer.name).limit(40).all()
 
@@ -4362,21 +4369,24 @@ def _build_pathway_context(db: DBSession, macro_id: Optional[int] = None) -> str
         models.PlanningPathway.macro_id == macro.id,
         models.PlanningPathway.active.is_(True),
     ).all()
-    placed = {}
-    for pathway in existing:
-        for member in pathway.memberships:
-            placed[member.swimmer_id] = (pathway.name, member.qualification_status)
+    from backend.services.pathways import pathways_on, upcoming
+    group_now = group_svc.groups_on(db, today)
+    group_of = {sid: label for label, defn in group_now.items() for sid in defn["swimmer_ids"]}
+    on_now = pathways_on(db, macro.id, max(today, macro.date_from))
+    later = upcoming(db, macro.id, max(today, macro.date_from))
 
     for swimmer in swimmers[:60]:
         bits = [f"  id {swimmer.id}: {swimmer.name}"]
-        if getattr(swimmer, "squad", None):
-            bits.append(swimmer.squad)
-        if swimmer.id in placed:
-            name, status = placed[swimmer.id]
-            bits.append(f"currently on '{name}' ({status or 'unknown'})")
-        else:
-            bits.append("unassigned")
+        if swimmer.id in group_of:
+            bits.append(f"trains in {group_of[swimmer.id]}")
+        m = on_now.get(swimmer.id)
+        bits.append(f"currently on '{m.pathway.name}' ({m.qualification_status or 'unknown'})" if m else "unassigned")
+        nxt = later.get(swimmer.id)
+        if nxt:
+            bits.append(f"moves to '{nxt.pathway.name}' from {nxt.date_from}")
         lines.append(" — ".join(bits))
+    lines.append("(Swimmers in one training group can be on different pathways - "
+                 "a group is who trains together, a pathway is what each swimmer aims at.)")
 
     if existing:
         lines += ["", "EXISTING PATHWAYS:"]

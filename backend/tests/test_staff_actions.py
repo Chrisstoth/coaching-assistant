@@ -174,12 +174,15 @@ class ActionTests(unittest.TestCase):
     def test_branching_a_swimmer_closes_their_old_route(self):
         _, _, handoff = self._do("planner", {"type": "move_pathway", "swimmer_id": self.ids["ruby"],
                                              "to_pathway_id": self.ids["county"], "reason": "Time not there yet"})
+        from backend.services.pathways import pathways_on
         with SessionLocal() as db:
-            active = db.query(models.PathwayMembership).filter(
-                models.PathwayMembership.swimmer_id == self.ids["ruby"],
-                models.PathwayMembership.active.is_(True)).all()
-        self.assertEqual([m.pathway_id for m in active], [self.ids["county"]],
-                         "A swimmer is on one route per macrocycle.")
+            county = db.get(models.PlanningPathway, self.ids["county"])
+            today = pathways_on(db, county.macro_id, date.today(), [self.ids["ruby"]])
+            yesterday = pathways_on(db, county.macro_id, date.today() - timedelta(days=1), [self.ids["ruby"]])
+            self.assertEqual(today[self.ids["ruby"]].pathway_id, self.ids["county"],
+                             "A swimmer is on one route at a time.")
+            self.assertNotEqual(yesterday[self.ids["ruby"]].pathway_id, self.ids["county"],
+                                "The weeks before the move keep the old route.")
         self.assertEqual(handoff[0], "meets", "The meet manager checks the entries still fit.")
 
     # --- analyst ------------------------------------------------------------

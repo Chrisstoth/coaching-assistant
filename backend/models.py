@@ -1134,6 +1134,40 @@ class StaffNote(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class TrainingGroup(Base):
+    """A training group in the squad - who trains together.
+
+    Groups outlast any one block of the season. The season plan says what each
+    group works on; this says who is in it, and memberships are dated so a
+    swimmer can move up part-way through a macrocycle without rewriting the past.
+    """
+    __tablename__ = "training_groups"
+    id = Column(Integer, primary_key=True, index=True)
+    squad = Column(String, nullable=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    sort_order = Column(Integer, default=0)
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    memberships = relationship("GroupMembership", back_populates="group", cascade="all, delete-orphan")
+
+
+class GroupMembership(Base):
+    """A swimmer in a group from one date until another (open-ended while current)."""
+    __tablename__ = "group_memberships"
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False, index=True)
+    group_id = Column(Integer, ForeignKey("training_groups.id"), nullable=False, index=True)
+    date_from = Column(Date, nullable=False)
+    date_to = Column(Date, nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    group = relationship("TrainingGroup", back_populates="memberships")
+    swimmer = relationship("Swimmer")
+
+
 class PlanningCohort(Base):
     __tablename__ = "planning_cohorts"
     id = Column(Integer, primary_key=True, index=True)

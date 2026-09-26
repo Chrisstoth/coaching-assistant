@@ -279,9 +279,15 @@ def replace_members(pathway_id: int, body: list[MembershipIn], db: Session = Dep
     found = {s.id for s in db.query(models.Swimmer).filter(models.Swimmer.id.in_(swimmer_ids)).all()} if swimmer_ids else set()
     if found != swimmer_ids:
         raise HTTPException(422, "One or more swimmers do not exist")
+    already = {m.swimmer_id for m in pathway.memberships}
     db.query(models.PathwayMembership).filter(models.PathwayMembership.pathway_id == pathway_id).delete()
+    from backend.services.pathways import close_others
     for item in body:
         db.add(models.PathwayMembership(pathway_id=pathway_id, **item.model_dump()))
+        # A swimmer joining from a date leaves their other route in this macro
+        # then. Members being re-saved keep what they had.
+        if item.swimmer_id not in already and item.date_from and item.active:
+            close_others(db, item.swimmer_id, pathway, item.date_from)
     db.commit()
     db.refresh(pathway)
     refresh_macro(pathway.macro_id, db)

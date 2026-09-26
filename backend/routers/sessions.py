@@ -794,33 +794,9 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
         e.swimmer_id: e
         for e in db.query(models.SessionEntry).filter(models.SessionEntry.session_id == session_id).all()
     }
-    # Build planned group from macro group_definitions (primary source)
-    planned_group_map = {}   # swimmer_id -> group_number
-    planned_subgroup_map = {}  # swimmer_id -> sub_group_label
-
-    # Look up current macro covering this session's date
-    current_macro = db.query(models.TrainingMacro).filter(
-        models.TrainingMacro.date_from <= session.date,
-        models.TrainingMacro.date_to >= session.date,
-    ).order_by(models.TrainingMacro.date_from).first()
-    if current_macro and current_macro.group_definitions:
-        for g_label, defn in current_macro.group_definitions.items():
-            # Map "G1" -> 1, "G2" -> 2, etc.
-            try:
-                g_num = int(g_label.replace("G", "").replace("g", ""))
-            except ValueError:
-                continue
-            for sid in (defn.get("swimmer_ids") or []):
-                planned_group_map[sid] = g_num
-
-    # Also pull sub-group pre-assignment from session sub_groups (finer detail)
-    for g in (session.groups or []):
-        for sg in (g.sub_groups or []):
-            for sid in (sg.swimmer_ids or []):
-                if sid not in planned_group_map:
-                    planned_group_map[sid] = g.group_number
-                planned_subgroup_map[sid] = sg.label
-
+    # Lanes are picked at the register each session - a training group is not
+    # a lane, and swimmers in one group can swim different sets depending on
+    # who turns up - so nothing is pre-selected unless it was already saved.
     result = []
     for s in swimmers:
         e = existing_entries.get(s.id)
@@ -837,8 +813,8 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
                 "date_from": availability["date_from"].isoformat(),
                 "date_to": availability["date_to"].isoformat(),
             } if availability else None),
-            "group_planned": (e.group_planned if e and e.group_planned else planned_group_map.get(s.id)),
-            "sub_group_planned": (e.sub_group_planned if e and e.sub_group_planned else planned_subgroup_map.get(s.id)),
+            "group_planned": e.group_planned if e else None,
+            "sub_group_planned": e.sub_group_planned if e else None,
             "group_done": e.group_done if e else None,
             "sub_group_done": e.sub_group_done if e else None,
             "coach_observation": e.coach_observation if e else None,

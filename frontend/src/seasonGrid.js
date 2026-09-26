@@ -16,6 +16,7 @@ export function cellMarks(cell) {
   for (const kind of new Set(cell.events || [])) {
     marks.push({ symbol: '✚', tone: 'ill', label: kind === 'injury' ? 'Injured' : 'Ill' })
   }
+  if ((cell.moves || []).length) marks.push({ symbol: '⇄', tone: 'move', label: cell.moves.join('; ') })
   if ((cell.away || []).length) {
     marks.push({ symbol: '✕', tone: 'away', label: cell.away.map(r => AWAY_LABELS[r] || r).join(', ') })
   }
@@ -57,4 +58,5 @@ export const MARK_TONES = {
   entered: 'text-green-400',
   planned: 'text-accent-300',
   pathway: 'text-pool-500',
+  move: 'text-accent-300',
 }

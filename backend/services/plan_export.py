@@ -28,6 +28,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services import groups as group_svc
 
 # Light fills so a printout stays readable. Matched loosely on the phase name.
 PHASE_FILLS = [
@@ -171,7 +172,7 @@ def _macro_sheet(ws, db: DBSession, macros: list) -> None:
         groups = "; ".join(
             f"{name}: {defn.get('description', '')}".strip(": ") + (
                 f" ({len(defn.get('swimmer_ids') or [])} swimmers)" if defn.get("swimmer_ids") else "")
-            for name, defn in (macro.group_definitions or {}).items() if isinstance(defn, dict))
+            for name, defn in group_svc.macro_groups(db, macro).items())
         pathways = []
         for p in db.query(models.PlanningPathway).filter(
                 models.PlanningPathway.macro_id == macro.id, models.PlanningPathway.active.is_(True)).all():

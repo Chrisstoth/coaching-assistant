@@ -13,6 +13,7 @@ import anthropic
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services import groups as group_svc
 from backend.services.availability import availability_ranges, is_excused
 from backend.services.event_normalizer import canonicalize_event, event_parts
 from backend.services.profile_status import (
@@ -433,20 +434,6 @@ def _prediction_swimmer_brief(swimmer: models.Swimmer, session: models.Session, 
             if swimmer.id in (sub_group.swimmer_ids or []):
                 planned_group = group.group_number
                 planned_sub_group = sub_group.label
-    macro = session.microcycle.macro if session.microcycle else None
-    if not macro and session.microcycle and session.microcycle.block:
-        macro = session.microcycle.block.macro
-    if not planned_group and macro and macro.group_definitions:
-        for label, definition in macro.group_definitions.items():
-            if not isinstance(definition, dict):
-                continue
-            if swimmer.id not in (definition.get("swimmer_ids") or []):
-                continue
-            try:
-                planned_group = int(str(label).lower().replace("group", "").replace("g", "").strip())
-            except ValueError:
-                planned_group = label
-            break
     # The profile is the only part of this brief that remembers further back
     # than the three recent sessions above, so prefer the unified one where it
     # exists and fall back to the legacy training-only profile otherwise.
@@ -946,9 +933,23 @@ def _legacy_write_capable_tools() -> list:
                     "narrative": {"type": "string"},
                     "date_from": {"type": "string", "description": "YYYY-MM-DD"},
                     "date_to": {"type": "string", "description": "YYYY-MM-DD"},
-                    "group_definitions": {"type": "object", "description": "Full updated group definitions — replaces existing"}
+                    "group_definitions": {"type": "object", "description": "What each training group works on in this macro, keyed by the squad's group labels: {label: {description}} - replaces existing. Who is in each group is not kept here; use set_training_group for that."}
                 },
                 "required": ["macro_id"]
+            }
+        },
+        {
+            "name": "set_training_group",
+            "description": "Move swimmers into a training group from a date (the squad's groups, kept on the Swimmers page). Use only when the coach asks to put or move swimmers in a group. Earlier weeks keep their old group. Creates the group if the coach names a new one.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "swimmer_ids": {"type": "array", "items": {"type": "integer"}},
+                    "group_name": {"type": "string", "description": "The group's label, e.g. G1 or Senior. Empty to take them out of groups."},
+                    "date_from": {"type": "string", "description": "YYYY-MM-DD the move takes effect; default today"},
+                    "note": {"type": "string", "description": "Why, in a few words"}
+                },
+                "required": ["swimmer_ids", "group_name"]
             }
         },
         {
@@ -1058,7 +1059,7 @@ def _legacy_write_capable_tools() -> list:
                     "narrative": {"type": "string", "description": "Overall coaching narrative for the macro — what you're trying to achieve across the full period"},
                     "group_definitions": {
                         "type": "object",
-                        "description": "Group assignments — keys are G1/G2/G3, values have description and swimmer_ids (use swimmer IDs from the squad snapshot). Example: {G1: {description: 'Top tier', swimmer_ids: [1,5,8]}}",
+                        "description": "What each training group works on in this macro, keyed by the squad's group labels (see get_season_plan). Example: {G1: {description: 'Aerobic base, 5 sessions a week'}}. Only if the squad has no groups yet, include swimmer_ids to set them up; otherwise move swimmers with set_training_group.",
                     },
                     "mesos": {
                         "type": "array",
@@ -1613,6 +1614,29 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
         db.commit()
         return f"Saved {tool_input.get('obs_type', 'general')} observation for {swimmer.name}: {tool_input.get('content', '')[:100]}"
 
+    elif tool_name == "set_training_group":
+        from backend.services import groups as gs
+        ids = [int(i) for i in tool_input.get("swimmer_ids") or [] if str(i).isdigit()]
+        if not ids:
+            return "No swimmers given."
+        when = as_date(tool_input.get("date_from")) if tool_input.get("date_from") else date_type.today()
+        label = str(tool_input.get("group_name") or "").strip()
+        group = None
+        try:
+            if label:
+                group = next((g for g in gs.squad_groups(db) if g.name.lower() == label.lower()), None)
+                if not group:
+                    group = gs.create_group(db, label)
+            for sid in ids:
+                gs.move(db, sid, group.id if group else None, when, tool_input.get("note"))
+        except gs.GroupError as exc:
+            db.rollback()
+            return f"Could not move them: {exc}"
+        db.commit()
+        names = [s.name for s in db.query(models.Swimmer).filter(models.Swimmer.id.in_(ids)).all()]
+        where = f"into {group.name}" if group else "out of groups"
+        return f"Moved {', '.join(names)} {where} from {when}. Earlier weeks keep their old group."
+
     elif tool_name == "update_season_plan":
         macro_id = tool_input.get("macro_id")
         macro = db.query(models.TrainingMacro).filter(models.TrainingMacro.id == macro_id).first()
@@ -1812,8 +1836,8 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
                 lines.append(f"\nMACRO [id={macro.id}] {macro.name} | {macro.squad or 'no squad'} | {macro.date_from} → {macro.date_to} | {status}")
                 if macro.narrative:
                     lines.append(f"  Narrative: {macro.narrative[:200]}")
-                if macro.group_definitions:
-                    for g, defn in macro.group_definitions.items():
+                if group_svc.macro_groups(db, macro):
+                    for g, defn in group_svc.macro_groups(db, macro).items():
                         desc = defn.get("description", "")
                         names = defn.get("swimmer_names") or [str(i) for i in (defn.get("swimmer_ids") or [])]
                         lines.append(f"  {g}: {desc} — {', '.join(names) if names else 'no swimmers assigned'}")
@@ -1877,6 +1901,9 @@ def execute_tool(tool_name: str, tool_input: dict, db: DBSession) -> str:
                 db.add(meso)
                 meso_names.append(f"{meso_data['name']} ({meso_data['date_from']} → {meso_data['date_to']})")
 
+            from backend.services import groups as gs
+            if not gs.squad_groups(db, macro.squad):
+                gs.copy_plan_groups(db, macro)
             db.commit()
             return (
                 f"Season plan created: '{macro.name}' ({macro.date_from} → {macro.date_to})\n"
@@ -2114,9 +2141,9 @@ def get_season_plan_system_prompt(db: DBSession, macro_id: int = None) -> str:
         macro_lines = [f"CURRENT MACRO: {macro.name} | {macro.date_from} to {macro.date_to}"]
         if macro.narrative:
             macro_lines.append(f"Season narrative: {macro.narrative[:400]}")
-        if macro.group_definitions:
+        if group_svc.macro_groups(db, macro):
             macro_lines.append("Groups:")
-            for g_label, defn in macro.group_definitions.items():
+            for g_label, defn in group_svc.macro_groups(db, macro).items():
                 desc = defn.get("description", "") if isinstance(defn, dict) else str(defn)
                 macro_lines.append(f"  {g_label}: {desc}")
 
@@ -2203,9 +2230,9 @@ def get_athlete_plan_system_prompt(db: DBSession) -> str:
 
     if macro:
         lines = [f"CURRENT MACRO: {macro.name} | {macro.date_from} to {macro.date_to}"]
-        if macro.group_definitions:
+        if group_svc.macro_groups(db, macro):
             lines.append("Groups:")
-            for g_label, defn in macro.group_definitions.items():
+            for g_label, defn in group_svc.macro_groups(db, macro).items():
                 desc = defn.get("description", "") if isinstance(defn, dict) else str(defn)
                 lines.append(f"  {g_label}: {desc}")
         current_meso = db.query(models.SeasonBlock).filter(
@@ -2634,8 +2661,8 @@ def build_block_status_context(swimmer: models.Swimmer, db: DBSession) -> str:
             macro = db.query(models.TrainingMacro).filter(
                 models.TrainingMacro.id == current_meso.macro_id
             ).first()
-            if macro and macro.group_definitions:
-                for g, defn in macro.group_definitions.items():
+            if macro and group_svc.macro_groups(db, macro):
+                for g, defn in group_svc.macro_groups(db, macro).items():
                     if swimmer.id in (defn.get("swimmer_ids") or []):
                         group_label = g
                         desc = defn.get("description", "")
@@ -2963,9 +2990,21 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
             .all()
         )
         lines.append(f"  Usual slot assignments ({len(swimmers)}; planning hint only, not attendance):")
+        # Register groups are the set a swimmer swam, picked per session from
+        # who comes. The training group and pathway say what they work towards.
+        from backend.services.groups import plan_context
+        on = today
+        if slot_hint and slot_hint.get('date'):
+            try:
+                on = date_type.fromisoformat(str(slot_hint['date'])[:10])
+            except ValueError:
+                pass
+        towards, aim_lines = plan_context(db, [s.id for s in swimmers], on)
 
         for s in swimmers:
             parts = [f"    {s.name}"]
+            if towards.get(s.id):
+                parts.append(towards[s.id])
 
             # Target events
             if s.target_events:
@@ -2991,7 +3030,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
                 .first()
             )
             if last_entry:
-                parts.append(f"last group: {last_entry.group_done}")
+                parts.append(f"last set swum: group {last_entry.group_done}")
 
             # Active load events (injury/illness)
             active_load = (
@@ -3007,6 +3046,7 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
                 parts.append(f"⚠ {active_load.event_type}")
 
             lines.append(" | ".join(parts))
+        lines.extend(aim_lines)
 
     # Recent sessions (last 2 weeks — closer look than usual snapshot)
     cutoff = today - timedelta(weeks=2)

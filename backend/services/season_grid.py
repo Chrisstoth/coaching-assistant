@@ -6,8 +6,9 @@ at, how much of the week they actually trained - and is quiet otherwise.
 Groups carry a count of members with something going on, so a problem is
 visible before the group is opened.
 
-Scoped to one macrocycle: a swimmer's group is the one that macro puts them
-in, which is how group membership changes through a season.
+Scoped to one macrocycle. A swimmer sits in the group they are in this week
+(or at the macro's nearest edge); a move part-way through shows in the week
+it happens.
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services import groups as group_svc
+from backend.services import pathways as pathway_svc
 from backend.services.training_load import HIGH_INTENSITY, VOLUME_KEYS
 
 UNGROUPED = "Not in a group"
@@ -74,10 +77,9 @@ def build_grid(db: DBSession, macro_id: int, today: Optional[date] = None) -> Op
     # Who is in the grid: the macro's groups, its pathways, and its squad.
     groups = []
     member_group = {}
-    for name, defn in (macro.group_definitions or {}).items():
-        if not isinstance(defn, dict):
-            continue
-        ids = [int(i) for i in defn.get("swimmer_ids") or [] if str(i).isdigit()]
+    focus = min(max(today, macro.date_from), macro.date_to)
+    for name, defn in group_svc.macro_groups(db, macro, focus).items():
+        ids = list(defn.get("swimmer_ids") or [])
         groups.append({"name": name, "description": defn.get("description") or "",
                        "intents": [{"block_id": b.id, "text": (b.group_intents or {}).get(name)}
                                    for b in blocks if (b.group_intents or {}).get(name)],
@@ -85,20 +87,36 @@ def build_grid(db: DBSession, macro_id: int, today: Optional[date] = None) -> Op
         for sid in ids:
             member_group.setdefault(sid, name)
     pathways = [p for p in macro.pathways if p.active]
-    pathway_of = {}
-    for p in pathways:
-        for m in p.memberships:
-            if m.active:
-                pathway_of[m.swimmer_id] = {"id": p.id, "name": p.name, "colour": p.colour,
-                                            "status": m.qualification_status}
+    # The pathway a swimmer is on this week (swimmers in one group can differ,
+    # and a swimmer can branch onto another pathway part-way through).
+    pathway_of = {sid: {"id": m.pathway.id, "name": m.pathway.name, "colour": m.pathway.colour,
+                        "status": m.qualification_status}
+                  for sid, m in pathway_svc.pathways_on(db, macro.id, focus).items()}
+    pathway_members = [m for p in pathways for m in p.memberships if m.active]
+    # One squad, split into groups: everyone active is in the grid.
     squad_q = db.query(models.Swimmer).filter(models.Swimmer.active.is_(True))
-    if macro.squad:
-        squad_q = squad_q.filter(models.Swimmer.squad == macro.squad)
-    ids = set(member_group) | set(pathway_of) | {s.id for s in squad_q.all()}
+    ids = set(member_group) | {m.swimmer_id for m in pathway_members} | {s.id for s in squad_q.all()}
     swimmers = db.query(models.Swimmer).filter(models.Swimmer.id.in_(ids)).order_by(models.Swimmer.name).all() if ids else []
     ids = [s.id for s in swimmers]
 
-    cells = defaultdict(lambda: defaultdict(lambda: {"away": [], "events": [], "meets": [], "flags": []}))
+    cells = defaultdict(lambda: defaultdict(lambda: {"away": [], "events": [], "meets": [], "flags": [], "moves": []}))
+
+    # A branch onto a pathway part-way through the macro, in its week.
+    for m in pathway_members:
+        if m.swimmer_id in ids and m.date_from and macro.date_from < m.date_from <= end:
+            cells[m.swimmer_id][week_of(m.date_from)]["moves"].append(f"Onto the {m.pathway.name} pathway")
+
+    # Group moves inside the macro, in the week they take effect.
+    names = {g.id: g.name for g in group_svc.squad_groups(db, macro.squad, include_inactive=True)}
+    rows = db.query(models.GroupMembership).filter(
+        models.GroupMembership.swimmer_id.in_(ids)).order_by(models.GroupMembership.date_from).all() if ids else []
+    starts = {(m.swimmer_id, m.date_from) for m in rows}
+    for m in rows:
+        if macro.date_from < m.date_from <= end:
+            cells[m.swimmer_id][week_of(m.date_from)]["moves"].append(f"Moves to {names.get(m.group_id, 'a new group')}")
+        left = m.date_to + timedelta(days=1) if m.date_to else None
+        if left and macro.date_from < left <= end and (m.swimmer_id, left) not in starts:
+            cells[m.swimmer_id][week_of(left)]["moves"].append(f"Leaves {names.get(m.group_id, 'their group')}")
 
     for e in db.query(models.SwimmerException).filter(
             models.SwimmerException.swimmer_id.in_(ids), models.SwimmerException.date_to >= first,
@@ -123,12 +141,13 @@ def build_grid(db: DBSession, macro_id: int, today: Optional[date] = None) -> Op
     for t in db.query(models.MeetTarget).filter(models.MeetTarget.swimmer_id.in_(ids),
                                                 models.MeetTarget.meet_id.in_(list(meet_week))).all():
         planned[(t.swimmer_id, t.meet_id)] = t
+    aims_on = {meet.id: pathway_svc.pathways_on(db, macro.id, meet.date) for meet in meets}
     for sid in ids:
-        pw = pathway_of.get(sid)
-        aim = next((p for p in pathways if pw and p.id == pw["id"]), None)
         for meet in meets:
             i = meet_week[meet.id]
             key = (sid, meet.id)
+            member = aims_on[meet.id].get(sid)
+            aim = member.pathway if member else None
             if entered.get(key):
                 cells[sid][i]["meets"].append({"id": meet.id, "name": meet.name, "state": "entered",
                                                "events": sorted(entered[key])})
@@ -186,7 +205,7 @@ def build_grid(db: DBSession, macro_id: int, today: Optional[date] = None) -> Op
             "id": s.id, "name": s.name, "para_class": s.para_class, "status": s.status,
             "pathway": pathway_of.get(s.id), "cells": row_cells,
             "flag_weeks": sorted(int(i) for i, c in row_cells.items()
-                                 if c.get("flags") or c.get("events") or c.get("away")),
+                                 if c.get("flags") or c.get("events") or c.get("away") or c.get("moves")),
         }
 
     out_swimmers = {s.id: swimmer_out(s) for s in swimmers}

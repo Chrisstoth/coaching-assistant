@@ -6,6 +6,7 @@ import VoiceInput from '../components/VoiceInput'
 import ObservationsTab from '../components/ObservationsTab'
 import AskTheStaff from '../components/AskTheStaff'
 import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
+import { groupLine, todayIso } from '../squadGroups'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 const TABS = ['Overview', 'Plan', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Staff', 'Context']
@@ -367,6 +368,7 @@ export default function SwimmerDetail() {
   const [showTargetForm, setShowTargetForm] = useState(false)
   const [targetForm, setTargetForm] = useState({ label: '', description: '', distance: '', stroke: '', effort: '', target_time_seconds: '', deadline: '' })
   const [savingTarget, setSavingTarget] = useState(false)
+  const [groupHistory, setGroupHistory] = useState(null)
 
   useEffect(() => {
     api.getSwimmer(id).then((s) => {
@@ -380,6 +382,7 @@ export default function SwimmerDetail() {
         considerations: s.considerations || '',
       })
     })
+    api.getGroupHistory(id).then(setGroupHistory).catch(() => setGroupHistory(null))
   }, [id])
 
   useEffect(() => {
@@ -531,6 +534,11 @@ export default function SwimmerDetail() {
               <p className="text-pool-400 text-xs">
                 Age {swimmer.age_group}{swimmer.school_year ? ` (Yr ${swimmer.school_year})` : ' (post school)'} · {swimmer.target_events?.map((e) => typeof e === 'object' ? e.event : e).join(', ')}
               </p>
+              {groupHistory && (
+                <Link to="/swimmers?view=groups" className="block text-xs text-accent-300 mt-0.5">
+                  {groupLine(groupHistory, todayIso())} ›
+                </Link>
+              )}
               {swimmer.status && swimmer.status !== 'active' && (
                 <p className={`text-xs mt-1 font-semibold capitalize ${
                   swimmer.status === 'sabbatical' ? 'text-yellow-400' : 'text-red-400'

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../api'
 import { SERIES_COLOURS, seriesColour, weekLabel } from '../seasonTimeline'
+import { memberEnded, memberLabel, membersPayload, withoutPathway } from '../pathwayMembers'
+import { todayIso } from '../squadGroups'
 
 const QUAL_STYLE = {
   qualified: { dot: 'bg-green-500', text: 'text-green-300', label: 'Qualified' },
@@ -30,9 +32,12 @@ function MeetSelect({ value, meets, onChange, placeholder }) {
   )
 }
 
-function MemberPicker({ pathway, swimmers, onSaved, onCancel }) {
+function MemberPicker({ pathway, swimmers, groups, onSaved, onCancel }) {
   const [chosen, setChosen] = useState(() => new Set(pathway.members.map(m => m.swimmer_id)))
+  const [joinFrom, setJoinFrom] = useState('')
   const [saving, setSaving] = useState(false)
+  const known = new Set(pathway.members.map(m => m.swimmer_id))
+  const adding = [...chosen].some(id => !known.has(id))
 
   const toggle = (id) => {
     setChosen(prev => {
@@ -46,15 +51,7 @@ function MemberPicker({ pathway, swimmers, onSaved, onCancel }) {
   const save = async () => {
     setSaving(true)
     try {
-      const existing = new Map(pathway.members.map(m => [m.swimmer_id, m]))
-      await api.setPlanningPathwayMembers(
-        pathway.id,
-        [...chosen].map(id => ({
-          swimmer_id: id,
-          qualification_status: existing.get(id)?.qualification_status || 'unknown',
-          notes: existing.get(id)?.notes || null,
-        })),
-      )
+      await api.setPlanningPathwayMembers(pathway.id, membersPayload(pathway.members, chosen, joinFrom))
       onSaved()
     } catch (e) {
       alert('Could not save members: ' + e.message)
@@ -68,6 +65,18 @@ function MemberPicker({ pathway, swimmers, onSaved, onCancel }) {
         <p className="text-xs text-pool-400">{chosen.size} selected</p>
         <button onClick={() => setChosen(new Set())} className="text-xs text-pool-500">Clear</button>
       </div>
+      {(groups || []).some(g => g.swimmers.length) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] text-pool-500">Add a group:</span>
+          {groups.filter(g => g.swimmers.length).map(g => (
+            <button key={g.id}
+              onClick={() => setChosen(prev => new Set([...prev, ...g.swimmers.map(s => s.id)]))}
+              className="text-[11px] rounded-full px-2.5 py-0.5 border border-accent-700/60 text-accent-300">
+              + {g.name} ({g.swimmers.length})
+            </button>
+          ))}
+        </div>
+      )}
       <div className="max-h-56 overflow-y-auto flex flex-wrap gap-1.5 pr-1">
         {swimmers.map(s => (
           <button
@@ -83,6 +92,17 @@ function MemberPicker({ pathway, swimmers, onSaved, onCancel }) {
           </button>
         ))}
       </div>
+      {adding && (
+        <label className="block space-y-1">
+          <span className="text-[11px] text-pool-400">New swimmers join from</span>
+          <input type="date" value={joinFrom} onChange={e => setJoinFrom(e.target.value)}
+            className="w-full bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-xs text-pool-200 focus:border-accent-500 focus:outline-none" />
+          <span className="block text-[10px] text-pool-500 leading-relaxed">
+            Leave blank for the whole macrocycle. Pick a date to branch them off from then - they leave
+            their other pathway the day before, and stay in their training group.
+          </span>
+        </label>
+      )}
       <div className="flex gap-2">
         <button onClick={onCancel} className="px-3 py-2 text-xs bg-pool-700 rounded-lg">Cancel</button>
         <button
@@ -97,10 +117,22 @@ function MemberPicker({ pathway, swimmers, onSaved, onCancel }) {
   )
 }
 
-function PathwayCard({ pathway, index, meets, swimmers, onReload }) {
+function PathwayCard({ pathway, index, meets, swimmers, groups, onReload }) {
   const [expanded, setExpanded] = useState(false)
   const [picking, setPicking] = useState(false)
+  const [objective, setObjective] = useState(pathway.objective || '')
   const colour = seriesColour(index)
+  const today = todayIso()
+
+  const saveObjective = async () => {
+    if ((pathway.objective || '') === objective.trim()) return
+    try {
+      await api.updatePlanningPathway(pathway.id, { objective: objective.trim() || null })
+      onReload()
+    } catch (e) {
+      alert('Could not save the goals: ' + e.message)
+    }
+  }
 
   const setMeet = async (field, meetId) => {
     try {
@@ -162,9 +194,12 @@ function PathwayCard({ pathway, index, meets, swimmers, onReload }) {
 
       {expanded && (
         <div className="px-3 pb-3 space-y-3 border-t border-pool-700 pt-2.5">
-          {pathway.objective && (
-            <p className="text-xs text-pool-300 leading-relaxed">{pathway.objective}</p>
-          )}
+          <div className="space-y-1.5">
+            <label className="text-[10px] uppercase tracking-wide text-pool-500 font-semibold">Working towards</label>
+            <textarea value={objective} onChange={e => setObjective(e.target.value)} onBlur={saveObjective} rows={2}
+              placeholder="The goals for swimmers on this pathway, e.g. qualify for Winter Nationals in the 100 and 200 back"
+              className="w-full bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-xs text-pool-200 focus:border-accent-500 focus:outline-none resize-none" />
+          </div>
 
           <div className="space-y-1.5">
             <label className="text-[10px] uppercase tracking-wide text-pool-500 font-semibold">Target meet</label>
@@ -192,6 +227,7 @@ function PathwayCard({ pathway, index, meets, swimmers, onReload }) {
               <MemberPicker
                 pathway={pathway}
                 swimmers={swimmers}
+                groups={groups}
                 onSaved={() => { setPicking(false); onReload() }}
                 onCancel={() => setPicking(false)}
               />
@@ -201,9 +237,10 @@ function PathwayCard({ pathway, index, meets, swimmers, onReload }) {
                   const st = qualStyle(m.qualification_status)
                   return (
                     <span key={m.id}
-                      className="flex items-center gap-1.5 text-[11px] bg-pool-700 text-pool-200 rounded-full px-2.5 py-0.5">
+                      className={`flex items-center gap-1.5 text-[11px] bg-pool-700 rounded-full px-2.5 py-0.5 ${
+                        memberEnded(m, today) ? 'text-pool-500 line-through' : 'text-pool-200'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} title={st.label} />
-                      {m.swimmer}
+                      {memberLabel(m, today)}
                     </span>
                   )
                 })}
@@ -224,6 +261,7 @@ export default function PathwayBoard({ macroId, onChanged }) {
   const [pathways, setPathways] = useState([])
   const [meets, setMeets] = useState([])
   const [swimmers, setSwimmers] = useState([])
+  const [groups, setGroups] = useState([])
   const [loading, setLoading] = useState(true)
   const [creating, setCreating] = useState(false)
   const [name, setName] = useState('')
@@ -245,6 +283,7 @@ export default function PathwayBoard({ macroId, onChanged }) {
   useEffect(() => {
     api.getMeets().then(rows => setMeets(Array.isArray(rows) ? rows : [])).catch(() => {})
     api.getSwimmers().then(rows => setSwimmers(Array.isArray(rows) ? rows : [])).catch(() => {})
+    api.getGroups().then(data => setGroups(data?.groups || [])).catch(() => {})
   }, [])
 
   const create = async () => {
@@ -298,16 +337,30 @@ export default function PathwayBoard({ macroId, onChanged }) {
       ) : pathways.length === 0 ? (
         <div className="bg-pool-800 rounded-xl px-4 py-4">
           <p className="text-xs text-pool-400 leading-relaxed">
-            No pathways yet. A pathway is a route through the season — who is aiming at which meet,
-            and where they go instead if the time does not come.
+            No pathways yet. A pathway is what swimmers are aiming at - the target meet, and where they
+            go instead if the time does not come. Swimmers in one training group can be on different
+            pathways, and a swimmer can branch onto another one from a date.
           </p>
         </div>
       ) : (
         <div className="space-y-2">
           {pathways.map((p, i) => (
             <PathwayCard key={p.id} pathway={p} index={i + 1} meets={meets}
-              swimmers={swimmers} onReload={reload} />
+              swimmers={swimmers} groups={groups} onReload={reload} />
           ))}
+          {(() => {
+            const missing = withoutPathway(swimmers, pathways, todayIso())
+            if (!missing.length) return null
+            return (
+              <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl px-3 py-2">
+                <p className="text-xs text-amber-300 font-medium">Not on a pathway yet ({missing.length})</p>
+                <p className="text-[11px] text-pool-400 mt-0.5">
+                  Everyone aims at a meet each macrocycle. Open a pathway and Choose to add them.
+                </p>
+                <p className="text-[11px] text-pool-300 mt-1">{missing.map(s => s.name).join(', ')}</p>
+              </div>
+            )
+          })()}
           {pathways.length >= SERIES_COLOURS.length && (
             <p className="text-[10px] text-pool-600">
               Beyond {SERIES_COLOURS.length} pathways the timeline stops drawing a separate line for each.

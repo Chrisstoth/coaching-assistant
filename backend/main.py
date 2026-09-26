@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes, session_debriefs
-from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs, staff, lanewatch, swimmer_plans
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs, staff, lanewatch, swimmer_plans, groups
 from backend.services.ai_operations import recover_interrupted_operations, run_operation_worker
 from backend.auth_dep import verify_token
 
@@ -184,6 +184,16 @@ def _backfill_cycle_coordinates():
         db.commit()
 
 
+def _seed_training_groups():
+    """First run: turn the groups saved on macros into the squad's own groups."""
+    from sqlalchemy.orm import Session as OrmSession
+    from backend.database import engine
+    from backend.services.groups import seed_from_macros
+
+    with OrmSession(engine) as db:
+        seed_from_macros(db)
+
+
 def _ensure_register_uniqueness():
     """Merge legacy duplicate register rows, then enforce one row per swimmer/session."""
     from sqlalchemy import func, text
@@ -245,6 +255,7 @@ async def lifespan(app: FastAPI):
     _migrate_threads()
     _migrate_coach_checkins()
     _backfill_cycle_coordinates()
+    _seed_training_groups()
     _ensure_register_uniqueness()
     operation_worker = None
     if os.getenv("AI_OPERATION_WORKER_ENABLED", "true").lower() not in {"0", "false", "no"}:
@@ -301,6 +312,7 @@ app.include_router(session_debriefs.router, prefix="/session-debriefs", tags=["S
 app.include_router(staff.router, prefix="/staff", tags=["Staff"], dependencies=_auth)
 app.include_router(lanewatch.router, prefix="/lanewatch", tags=["LaneWatch"], dependencies=_auth)
 app.include_router(swimmer_plans.router, prefix="/swimmer-plans", tags=["Swimmer plans"], dependencies=_auth)
+app.include_router(groups.router, prefix="/groups", tags=["Training groups"], dependencies=_auth)
 
 
 @app.get("/health")

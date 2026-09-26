@@ -50,8 +50,17 @@ export default function SeasonGrid({ macroId }) {
     <section className="space-y-2">
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-semibold text-pool-300 uppercase tracking-wide">Squad, groups and swimmers</h2>
-        <span className="text-[11px] text-pool-500">{swimmerCount} swimmers</span>
+        <span className="text-[11px] text-pool-500">
+          {swimmerCount} swimmers · <Link to="/swimmers?view=groups" className="text-accent-400">Edit groups ›</Link>
+        </span>
       </div>
+
+      {grid.groups.length === 1 && grid.groups[0].name === 'Not in a group' && (
+        <p className="text-xs text-pool-400 bg-pool-800 rounded-xl px-3 py-2">
+          Nobody is in a training group yet. <Link to="/swimmers?view=groups" className="text-accent-400">Set up
+          your groups</Link> and the squad will split into them here.
+        </p>
+      )}
 
       <div className="overflow-x-auto -mx-4 px-4 pb-1">
         <div className="w-max space-y-px text-[11px]">
@@ -132,8 +141,10 @@ export default function SeasonGrid({ macroId }) {
                   <span className="pl-3 truncate text-pool-300" title={swimmer.name}>
                     {swimmer.name}
                     {swimmer.para_class && <span className="text-pool-500"> {swimmer.para_class.split(/[\s/]/)[0]}</span>}
-                    {swimmer.pathway && (
+                    {swimmer.pathway ? (
                       <span className="block text-[9px] text-teal-400 truncate">{swimmer.pathway.name}</span>
+                    ) : grid.pathways.length > 0 && (
+                      <span className="block text-[9px] text-amber-300">no pathway</span>
                     )}
                   </span>
                 )}>
@@ -185,6 +196,7 @@ export default function SeasonGrid({ macroId }) {
         <span className="text-green-400">●</span> entered · <span className="text-accent-300">◐</span> planned ·{' '}
         ○ on their pathway · <span className="text-amber-300">⚑</span> needs a look ·{' '}
         <span className="text-red-400">✚</span> ill or injured · ✕ away ·{' '}
+        <span className="text-accent-300">⇄</span> changes group ·{' '}
         <span className="inline-block w-2 h-2 rounded-sm bg-teal-500 align-middle" /> trained (darker = more of the week).
         A blank week means on the group plan.
       </p>

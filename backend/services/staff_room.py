@@ -41,6 +41,8 @@ from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services import groups as group_svc
+from backend.services import pathways as pathway_svc
 from backend.services.claude_service import FAST_MODEL, get_client, response_text
 
 STAFF_MODEL = os.getenv("STAFF_MODEL", FAST_MODEL)
@@ -93,13 +95,16 @@ ROSTER = {
         key="planner",
         title="Periodisation Planner",
         remit="Turning swimmers' needs into the plan: macro, meso and weekly structure, "
+              "what each training group works on in each block, "
               "progressive overload week on week and session on session, where lighter "
               "adaptation weeks go, and where the peaks land relative to the meets that matter. "
               "Takes the physiologist's and analyst's findings and says how the plan should change.",
         watch_for="load that does not build week on week in a building phase, too many hard weeks "
                   "without a lighter adaptation week, a peak that misses the priority meet, a "
                   "development need (an aerobic base, speed) the plan leaves no room for, planned "
-                  "load that attendance means will not happen, no recovery after a competition.",
+                  "load that attendance means will not happen, no recovery after a competition, "
+                  "an active swimmer on no pathway (every swimmer has a target meet each macrocycle - "
+                  "suggest one with move_pathway, usually the one their training group is on).",
         aliases=("planner", "periodisation", "periodization", "season planner"),
     ),
     "manager": StaffRole(
@@ -107,10 +112,16 @@ ROSTER = {
         title="Swimmer Manager",
         remit="The swimmer as a person on a pathway: attendance and availability, age and "
               "school stage, physical development, status (injured, sabbatical), whether "
-              "their pathway still fits them.",
+              "their pathway still fits them, and which training group they are in. "
+              "Group moves are yours to suggest and the coach's to make.",
         watch_for="attendance that makes the planned load unrealistic, exam years (Year 11 and "
                   "Year 13) and other life load, a swimmer much younger or less developed than "
-                  "the group being planned for, a status the plan has not accounted for.",
+                  "the group being planned for, a status the plan has not accounted for, "
+                  "a swimmer who no longer fits their training group - outgrown it, "
+                  "struggling in it, or training too few sessions to follow it - or an active "
+                  "swimmer in no group. Suggest a move (move_group) dated to suit the plan, "
+                  "usually the start of a block, and ask the physiologist or analyst when the "
+                  "evidence is theirs.",
         aliases=("swimmer manager", "welfare", "attendance"),
     ),
     "meets": StaffRole(
@@ -263,6 +274,17 @@ def _swimmer_line(swimmer) -> str:
     return line
 
 
+def _group_line(db: DBSession, swimmer_id: int) -> str:
+    today = date.today()
+    current = group_svc.memberships_on(db, today, [swimmer_id]).get(swimmer_id)
+    nxt = group_svc.upcoming_moves(db, today, [swimmer_id]).get(swimmer_id)
+    line = (f"Training group: {current.group.name} since {current.date_from}" if current
+            else "Training group: none")
+    if nxt:
+        line += f"; moving to {nxt.group.name} from {nxt.date_from}"
+    return line + "\n"
+
+
 def _macro_lines(db: DBSession, macro_id: Optional[int]) -> list:
     if not macro_id:
         return []
@@ -305,12 +327,24 @@ def _pathway_lines(db: DBSession, macro_id: int) -> list:
     if not pathways:
         return []
     lines = ["  Pathways:"]
+    today = date.today()
     for p in pathways:
-        members = [m for m in p.memberships if m.active]
+        # Who is on it now, and who joins later - a branch from a date.
+        members = [m for m in p.memberships if m.active and (not m.date_to or m.date_to >= today)]
         target = p.primary_meet.name if p.primary_meet else "no target meet"
         fallback = f", else {p.fallback_meet.name}" if p.fallback_meet else ""
-        who = ", ".join(f"{m.swimmer.name} ({m.qualification_status or 'unknown'})" for m in members[:15])
+        who = ", ".join(f"{m.swimmer.name} ({m.qualification_status or 'unknown'}"
+                        + (f", from {m.date_from}" if m.date_from and m.date_from > today else "")
+                        + (f", until {m.date_to}" if m.date_to else "") + ")" for m in members[:15])
         lines.append(f"    id {p.id}: {p.name} -> {target}{fallback} | {who or 'nobody yet'}")
+    placed = {m.swimmer_id for p in pathways for m in p.memberships
+              if m.active and (not m.date_to or m.date_to >= today)}
+    missing = db.query(models.Swimmer).filter(models.Swimmer.active.is_(True),
+                                              models.Swimmer.status == "active").order_by(models.Swimmer.name).all()
+    missing = [s for s in missing if s.id not in placed]
+    if missing:
+        lines.append("    NOT ON A PATHWAY (every swimmer should have a target meet this macro): "
+                     + ", ".join(f"{s.name} (id {s.id})" for s in missing[:20]))
     return lines
 
 
@@ -507,6 +541,7 @@ def _attendance_lines(db: DBSession, subject: Subject, attendees: list) -> str:
     day = subject.session_date
     lines = [f"EXPECTED AT THE SESSION ON {day}:"]
     excused = availability_ranges(db, [a.id for a in attendees], day, day) if day else {}
+    towards, aim_lines = group_svc.plan_context(db, [a.id for a in attendees[:30]], day or date.today())
     for swimmer in attendees[:30]:
         stats = {}
         try:
@@ -519,7 +554,14 @@ def _attendance_lines(db: DBSession, subject: Subject, attendees: list) -> str:
             note += " | EXCUSED: " + ", ".join(e["label"] for e in excused[swimmer.id])
         if swimmer.status and swimmer.status != "active":
             note += f" | status {swimmer.status}"
+        if towards.get(swimmer.id):
+            note += f" | {towards[swimmer.id]}"
         lines.append(note)
+    if aim_lines:
+        lines += aim_lines
+    lines.append("(At the register, Group 1, Group 2... is the set a swimmer swam in that session - "
+                 "chosen from who comes, and it ties them to that set's workload. A training group is "
+                 "who trains together; a pathway is what each swimmer aims at. They can differ.)")
     return "\n".join(lines)
 
 
@@ -576,6 +618,7 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
         if week:
             sections.append(_clip("\n".join(week), 1800))
         sections.append("SEASON STRUCTURE:\n" + _clip(_safe(cs.build_periodization_context, db), 2500))
+        sections.append(_clip(_safe(lambda: "\n".join(group_svc.roster_lines(db, _subject_squad(db, subject)))), 1200))
         if subject.macro_id:
             from backend.routers.skills import _planning_state_lines
             state = _safe(lambda: "\n".join(_planning_state_lines(db, subject.macro_id)))
@@ -611,12 +654,13 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
         for swimmer in swimmers:
             stats = _safe(cs.build_attendance_stats, swimmer.id, db)
             memberships = [
-                f"{m.pathway.name} ({m.qualification_status or 'unknown'})"
-                for m in swimmer.pathway_memberships if m.active and m.pathway
+                pathway_svc.describe(m) for m in swimmer.pathway_memberships
+                if m.active and m.pathway and (not m.date_to or m.date_to >= date.today())
             ]
             sections.append(
                 f"--- {swimmer.name} ---\n{_swimmer_line(swimmer)}\n"
-                f"Attendance: {_clip(stats, 900)}\n"
+                + _group_line(db, swimmer.id)
+                + f"Attendance: {_clip(stats, 900)}\n"
                 + (f"Pathways: {', '.join(memberships)}\n" if memberships else "Pathways: none\n")
                 + (f"Coach notes: {swimmer.profile_notes[:400]}" if swimmer.profile_notes else "")
             )
@@ -624,11 +668,14 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
             sections.append(_clip(_attendance_lines(db, subject, attendees), 2000))
         elif not swimmers:
             sections.append("SQUAD SNAPSHOT:\n" + _clip(_safe(cs.build_squad_snapshot, db), 2500))
+        sections.append(_clip(_safe(lambda: "\n".join(group_svc.roster_lines(db, _subject_squad(db, subject)))), 2000))
 
     elif role == "sessions":
         week = _week_plan_lines(db, subject)
         if week:
             sections.append(_clip("\n".join(week), 1800))
+        if attendees:
+            sections.append(_clip(_attendance_lines(db, subject, attendees), 2200))
         hint = {"date": subject.session_date.isoformat(), "squad": subject.squad} if subject.session_date else None
         sections.append(_clip(_safe(cs.build_session_writing_context, db, hint), 3000))
 
