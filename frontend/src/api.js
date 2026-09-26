@@ -473,6 +473,17 @@ export const api = {
   declineStaffAction: (id) => request('POST', `/staff/notes/${id}/decline`, {}),
   decideStaffNote: (id, { choice = null, text = null } = {}) =>
     request('POST', `/staff/notes/${id}/decide`, { choice, text }),
+  getSeasonGrid: (macroId) => request('GET', `/season/grid?macro_id=${macroId}`),
+  getSwimmerPlans: (swimmerId) => request('GET', `/swimmer-plans?swimmer_id=${swimmerId}`),
+  createSwimmerPlan: (data) => request('POST', '/swimmer-plans', data),
+  getSwimmerPlan: (id) => request('GET', `/swimmer-plans/${id}`),
+  updateSwimmerPlan: (id, data) => request('PATCH', `/swimmer-plans/${id}`, data),
+  redraftPlanSection: (id, key, instruction = null) =>
+    request('POST', `/swimmer-plans/${id}/sections/${key}/redraft`, { instruction }),
+  redraftSwimmerPlan: (id) => request('POST', `/swimmer-plans/${id}/redraft`, {}),
+  finaliseSwimmerPlan: (id) => request('POST', `/swimmer-plans/${id}/finalise`, {}),
+  copySwimmerPlan: (id) => request('POST', `/swimmer-plans/${id}/copy`, {}),
+  deleteSwimmerPlan: (id) => request('DELETE', `/swimmer-plans/${id}`),
   getLaneWatchStatus: () => request('GET', '/lanewatch/status'),
   connectLaneWatch: (idToken) => request('POST', '/lanewatch/connect', { id_token: idToken }),
   disconnectLaneWatch: () => request('POST', '/lanewatch/disconnect', {}),

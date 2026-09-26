@@ -22,6 +22,7 @@ import Settings from './pages/Settings'
 import SeasonPlan from './pages/SeasonPlan'
 import PlanningWorkspace from './pages/PlanningWorkspace'
 import SessionPrint from './pages/SessionPrint'
+import SwimmerPlanPrint from './pages/SwimmerPlanPrint'
 import Login from './pages/Login'
 import ProfileWizard from './pages/ProfileWizard'
 import AssistantInbox from './pages/AssistantInbox'
@@ -233,6 +234,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/sessions/:id/print" element={<RequireAuth><SessionPrint /></RequireAuth>} />
+        <Route path="/swimmer-plans/:planId/print" element={<RequireAuth><SwimmerPlanPrint /></RequireAuth>} />
         <Route path="*" element={
           <RequireAuth>
             <AppHeader />

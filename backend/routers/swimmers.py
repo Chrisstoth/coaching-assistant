@@ -50,6 +50,9 @@ class SwimmerUpdate(BaseModel):
     weaknesses: Optional[str] = None
     profile_notes: Optional[str] = None
     planning_cohort_id: Optional[int] = None
+    para_class: Optional[str] = None
+    para_class_status: Optional[str] = None
+    considerations: Optional[str] = None
 
 
 class ProfileChatMessage(BaseModel):
@@ -444,6 +447,8 @@ def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     db.query(models.SkillOutput).filter(models.SkillOutput.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerSlot).filter(models.SwimmerSlot.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerException).filter(models.SwimmerException.swimmer_id == swimmer_id).delete()
+    db.query(models.SwimmerPlan).filter(models.SwimmerPlan.swimmer_id == swimmer_id).delete()
+    db.query(models.LaneWatchSwimmerLink).filter(models.LaneWatchSwimmerLink.swimmer_id == swimmer_id).delete()
     db.query(models.Schedule).filter(models.Schedule.swimmer_id == swimmer_id).delete()
     db.query(models.PeriodizationPlan).filter(models.PeriodizationPlan.swimmer_id == swimmer_id).delete()
     db.query(models.SwimmerObservation).filter(models.SwimmerObservation.swimmer_id == swimmer_id).delete()
@@ -1536,6 +1541,9 @@ def _swimmer_detail(s: models.Swimmer, db: DBSession) -> dict:
         "strengths": s.strengths,
         "weaknesses": s.weaknesses,
         "profile_notes": s.profile_notes,
+        "para_class": s.para_class,
+        "para_class_status": s.para_class_status,
+        "considerations": s.considerations,
         "physical_profile": s.physical_profile,
         "psychological_profile": s.psychological_profile,
         "training_histories": [

@@ -832,6 +832,17 @@ def get_timeline(
     }
 
 
+@router.get("/grid")
+def get_grid(macro_id: int, db: Session = Depends(get_db)):
+    """Squad, groups and swimmers across the weeks of one macrocycle."""
+    from backend.services.season_grid import build_grid
+
+    grid = build_grid(db, macro_id)
+    if grid is None:
+        raise HTTPException(404, "Macro not found")
+    return grid
+
+
 @router.get("/export")
 def export_plan(
     macro_id: Optional[int] = None,

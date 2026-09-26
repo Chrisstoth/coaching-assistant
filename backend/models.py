@@ -97,6 +97,14 @@ class Swimmer(Base):
     weaknesses = Column(Text, nullable=True)
     profile_notes = Column(Text, nullable=True)      # raw coach observations
 
+    # Para swimming. The sport classes as written ("S9 / SB8 / SM9"), whether
+    # they are confirmed or under review, and what the coach wants the staff to
+    # keep in mind (fatigue, temperature, starts and turns). Recorded by the
+    # coach, never inferred.
+    para_class = Column(String, nullable=True)
+    para_class_status = Column(String, nullable=True)   # confirmed / review / new
+    considerations = Column(Text, nullable=True)
+
     # AI-synthesised profiles (structured JSON)
     physical_profile = Column(JSON, nullable=True)
     psychological_profile = Column(JSON, nullable=True)
@@ -1294,5 +1302,31 @@ class LaneWatchSwimmerLink(Base):
     lanewatch_swimmer_id = Column(String, nullable=False, index=True)
     lanewatch_name = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    swimmer = relationship("Swimmer")
+
+
+class SwimmerPlan(Base):
+    """An individual athlete plan the coach puts together and shares.
+
+    What we are working towards, what we are working on, and how we plan to
+    do it. Each section is drafted by the member of staff it belongs to from
+    the swimmer's real data, then edited by the coach. A plan marked final is
+    kept as it was, so earlier versions can be compared with later ones.
+    """
+    __tablename__ = "swimmer_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String, nullable=False)
+    audience = Column(String, default="performance")    # performance / swimmer
+    period_from = Column(Date, nullable=True)
+    period_to = Column(Date, nullable=True)
+    # [{key, title, role, content, included, edited, drafted_at}]
+    sections = Column(JSON, default=list)
+    status = Column(String, default="draft")             # draft / final
+    finalised_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     swimmer = relationship("Swimmer")

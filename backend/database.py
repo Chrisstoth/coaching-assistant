@@ -65,6 +65,9 @@ def _apply_migrations():
             add_col("swimmers", "course_bias", "VARCHAR")
             add_col("swimmers", "updated_at", "DATETIME")
             add_col("swimmers", "status", "VARCHAR DEFAULT 'active'")
+            add_col("swimmers", "para_class", "VARCHAR")
+            add_col("swimmers", "para_class_status", "VARCHAR")
+            add_col("swimmers", "considerations", "TEXT")
 
         if "sessions" in insp.get_table_names():
             add_col("sessions", "start_time", "VARCHAR")

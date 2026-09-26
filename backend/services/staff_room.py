@@ -254,7 +254,13 @@ def _swimmer_line(swimmer) -> str:
         bits.append(swimmer.squad)
     if swimmer.status and swimmer.status != "active":
         bits.append(f"STATUS {swimmer.status.upper()}")
-    return " | ".join(bits)
+    if getattr(swimmer, "para_class", None):
+        bits.append(f"para swimmer, class {swimmer.para_class}"
+                    + (f" ({swimmer.para_class_status})" if swimmer.para_class_status else ""))
+    line = " | ".join(bits)
+    if getattr(swimmer, "considerations", None):
+        line += f"\n    Coach's considerations: {swimmer.considerations[:400]}"
+    return line
 
 
 def _macro_lines(db: DBSession, macro_id: Optional[int]) -> list:

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import ExportPlanButton from '../components/ExportPlanButton'
 import SeasonTimeline from '../components/SeasonTimeline'
+import SeasonGrid from '../components/SeasonGrid'
 import PathwayBoard from '../components/PathwayBoard'
 import { describeDraft, draftFromResult, saveDraft, takeStashedDraft } from '../planDrafts'
 import StaffVoices, { StaffThinking } from '../components/StaffVoices'
@@ -336,6 +337,7 @@ export default function PlanningWorkspace() {
   const [staffKey, setStaffKey] = useState(0)
   const [queued, setQueued] = useState(null)   // a request from the plan side, waiting for the chat
   const [chatBusy, setChatBusy] = useState(false)
+  const [view, setView] = useState('timeline')   // 'timeline' | 'squad'
   const wide = useIsWide(rootRef)
 
   // Ask the assistant from the plan side. On a phone, show the conversation so
@@ -394,7 +396,20 @@ export default function PlanningWorkspace() {
         <NextStepCard macros={macros} macro={macro} onAsk={ask} busy={chatBusy || Boolean(queued)} />
       )}
 
-      {macros.length > 0 ? (
+      {macros.length > 0 && (
+        <div className="flex gap-1 bg-pool-800 rounded-xl p-1" role="tablist" aria-label="Plan view">
+          {[['timeline', 'Timeline'], ['squad', 'Squad & swimmers']].map(([key, label]) => (
+            <button key={key} role="tab" aria-selected={view === key} onClick={() => setView(key)}
+              className={`flex-1 py-1.5 text-xs font-semibold rounded-lg ${view === key ? 'bg-pool-700 text-pool-100' : 'text-pool-500'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {macros.length > 0 && view === 'squad' ? (
+        <SeasonGrid key={`grid-${refreshKey}-${macroId}`} macroId={macroId} />
+      ) : macros.length > 0 ? (
         <SeasonTimeline
           key={`tl-${refreshKey}-${staffKey}`}
           macros={macros}

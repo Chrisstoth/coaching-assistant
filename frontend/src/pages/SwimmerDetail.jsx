@@ -5,9 +5,10 @@ import { SWIM_EVENTS } from '../swimEvents'
 import VoiceInput from '../components/VoiceInput'
 import ObservationsTab from '../components/ObservationsTab'
 import AskTheStaff from '../components/AskTheStaff'
+import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
-const TABS = ['Overview', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Staff', 'Context']
+const TABS = ['Overview', 'Plan', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Staff', 'Context']
 
 const VOLUME_COLOURS = {
   aerobic: 'bg-blue-500', threshold: 'bg-yellow-500', vo2: 'bg-orange-500',
@@ -373,7 +374,10 @@ export default function SwimmerDetail() {
       setEditForm({
         name: s.name,
         dob: s.dob || '',
-        status: s.status || 'active'
+        status: s.status || 'active',
+        para_class: s.para_class || '',
+        para_class_status: s.para_class_status || '',
+        considerations: s.considerations || '',
       })
     })
   }, [id])
@@ -2169,6 +2173,10 @@ export default function SwimmerDetail() {
           </div>
         )}
 
+        {tab === 'Plan' && swimmer && (
+          <SwimmerPlanPanel swimmer={swimmer} />
+        )}
+
         {tab === 'Staff' && swimmer && (
           <AskTheStaff
             subject={{ swimmer_ids: [swimmer.id] }}
@@ -2327,6 +2335,40 @@ export default function SwimmerDetail() {
                 <option value="sabbatical">Sabbatical</option>
                 <option value="injury">Long-term Injury</option>
               </select>
+            </div>
+
+            <div className="space-y-3 pt-3 border-t border-pool-700">
+              <p className="text-xs text-pool-400">Para swimming (leave blank if not a para swimmer)</p>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={editForm.para_class}
+                  onChange={(e) => setEditForm({...editForm, para_class: e.target.value})}
+                  placeholder="Sport classes, e.g. S9 / SB8 / SM9"
+                  className="flex-1 min-w-0 bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+                />
+                <select
+                  value={editForm.para_class_status}
+                  onChange={(e) => setEditForm({...editForm, para_class_status: e.target.value})}
+                  className="bg-pool-700 rounded-lg px-2 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+                >
+                  <option value="">Status</option>
+                  <option value="confirmed">Confirmed</option>
+                  <option value="review">Under review</option>
+                  <option value="new">New</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-pool-400 mb-2">Things the staff should keep in mind</label>
+                <textarea
+                  value={editForm.considerations}
+                  onChange={(e) => setEditForm({...editForm, considerations: e.target.value})}
+                  rows={3}
+                  placeholder="e.g. fatigues quickly in warm pools; modified start; shoulder to manage"
+                  className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+                />
+                <p className="text-[11px] text-pool-500 mt-1">The staff read this when advising, and it can go into the athlete plan.</p>
+              </div>
             </div>
 
             <div className="space-y-3 pt-4 border-t border-pool-700">
