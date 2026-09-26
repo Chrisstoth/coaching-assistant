@@ -312,7 +312,8 @@ def run(workshop_id: int) -> None:
         )
     except Exception as exc:
         log.exception("session workshop draft failed")
-        message = f"The draft could not be written: {exc}"
+        message = ("The Session Writer could not finish the draft. Tap Start again to try once more"
+                   f" - your brief is still in the box. ({str(exc)[:120]})")
         _update(workshop_id, lambda r: (setattr(r, "status", "failed"), setattr(r, "error", message)))
         return
     finally:

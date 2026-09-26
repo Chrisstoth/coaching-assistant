@@ -6094,6 +6094,8 @@ Rules:
   progressive main set; do not force classic section headings onto it.
 - Return only the meaningful groups the coach described or that the expected swimmers genuinely need,
   with a maximum of three. Do not manufacture extra groups just to fill the schema.
+- per_swimmer: only swimmers who need something specific in this session (an adjustment, a
+  health flag, a target), at most 8, one short sentence each. Leave everyone else out.
 - If no expected swimmers, return per_swimmer as an empty array.
 - Do not include markdown in set descriptions — plain text only.
 - Keep set descriptions concise but complete (e.g. "6x400 on 5:30, threshold pace").
@@ -6108,23 +6110,43 @@ and return the complete plan again in the exact same JSON structure — never a 
     return _run_session_plan_conversation(conversation, db)
 
 
-def _run_session_plan_conversation(conversation: list, db: DBSession) -> dict:
-    response = get_client().messages.create(
-        model=FAST_MODEL,
-        max_tokens=1800,
-        timeout=35.0,
-        system=get_system_prompt(db),
-        messages=conversation,
-    )
+SESSION_PLAN_MAX_TOKENS = 4000
+_CUT_OFF_RETRY = (
+    "Your reply was cut off before the JSON was complete. Return the complete plan again as valid JSON "
+    "only, shorter: per_swimmer only for swimmers who need something specific (at most 5), and "
+    "plan_alignment and expected_effects one sentence each."
+)
 
-    raw = response_text(response)
+
+def _session_plan_json(raw: str) -> dict:
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
         raw = raw.rstrip("`").strip()
+    return json.loads(raw)
 
-    result = json.loads(raw)
+
+def _run_session_plan_conversation(conversation: list, db: DBSession) -> dict:
+    def ask(messages):
+        response = get_client().messages.create(
+            model=FAST_MODEL,
+            max_tokens=SESSION_PLAN_MAX_TOKENS,
+            timeout=60.0,
+            system=get_system_prompt(db),
+            messages=messages,
+        )
+        return response_text(response).strip()
+
+    raw = ask(conversation)
+    try:
+        result = _session_plan_json(raw)
+    except json.JSONDecodeError:
+        # A long squad can run the reply past its limit. Ask once more, shorter,
+        # rather than failing the coach's session.
+        raw = ask(conversation + [{"role": "assistant", "content": raw or "{"},
+                                  {"role": "user", "content": _CUT_OFF_RETRY}])
+        result = _session_plan_json(raw)
     if not isinstance(result, dict) or not isinstance(result.get("parsed"), dict):
         raise ValueError("The session planner returned an invalid plan.")
 

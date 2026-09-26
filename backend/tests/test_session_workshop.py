@@ -151,6 +151,25 @@ class SessionWorkshopTests(unittest.TestCase):
         self.assertIn("accepted these changes", result["messages"][-2]["content"])
         self.assertEqual(result["expected_swimmers"], [{"id": self.leo, "name": "Leo Park"}])
 
+    def test_a_reply_cut_off_part_way_is_asked_for_again(self):
+        full = json.dumps(DRAFT)
+        replies = iter([full[:200], full])
+        calls = []
+
+        def create(**kwargs):
+            calls.append(kwargs["messages"])
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=next(replies))],
+                                   usage=SimpleNamespace(input_tokens=1, output_tokens=1))
+        client = SimpleNamespace(messages=SimpleNamespace(create=create))
+        with mock.patch.object(claude_service, "get_client", return_value=client), SessionLocal() as db:
+            result = claude_service.plan_and_analyse_session(
+                session_text="Threshold", date_str=DAY.isoformat(), squad=None, expected_swimmers=[],
+                coaching_context="", db=db)
+        self.assertEqual(result["parsed"]["title"], "Threshold Tuesday")
+        self.assertIn("cut off", calls[1][-1]["content"])
+        self.assertEqual([m["role"] for m in result["messages"]], ["user", "assistant"],
+                         "The conversation carries on from the complete reply only.")
+
     def test_the_page_starts_polls_and_decides_over_http(self):
         with TestClient(app) as http:
             token = http.post("/auth/login", json={"password": "test-password"}).json()["token"]
