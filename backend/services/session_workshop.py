@@ -114,6 +114,13 @@ def plan_brief(db: DBSession, day, squad: Optional[str], swimmer_ids: list) -> s
     return "THE PLAN THIS SESSION SITS IN:\n" + "\n".join(lines)
 
 
+def writing_context(db: DBSession, day, squad: Optional[str], swimmer_ids: list) -> str:
+    """Everything the Session Writer reads besides the brief: the coach's rules, then the plan."""
+    from backend.services import coach_guidance
+    parts = [coach_guidance.prompt_block(db, "sessions"), plan_brief(db, day, squad, swimmer_ids)]
+    return "\n\n".join(p for p in parts if p)
+
+
 # ---------------------------------------------------------------------------
 # The draft as lines the staff can point at
 # ---------------------------------------------------------------------------
@@ -304,7 +311,7 @@ def run(workshop_id: int) -> None:
         brief, day, squad = row.brief, row.date, row.squad
         attendee_ids = [s["id"] for s in row.expected or []]
         context = get_current_coaching_context(db)
-        plan = plan_brief(db, day, squad, attendee_ids)
+        plan = writing_context(db, day, squad, attendee_ids)
         result = claude_service.plan_and_analyse_session(
             session_text=brief, date_str=day.isoformat() if day else None, squad=squad,
             expected_swimmers=row.expected or [], coaching_context="\n\n".join(p for p in (context, plan) if p),
@@ -395,6 +402,102 @@ def decide(db: DBSession, row: models.SessionWorkshop, suggestion_id: str, accep
         target["status"] = "rejected"
     row.suggestions = items
     db.commit()
+
+
+_REPLY_SYSTEM = """You are the {title} on a swimming coach's staff. You suggested a change to one line of a
+session and the coach has answered you. Take the answer seriously: the coach knows their swimmers and
+their own way of writing sessions.
+
+Return JSON only:
+{{"response": "one or two short sentences back to the coach",
+  "revised": {{"change": "replace|add_after|remove", "text": "...", "reason": "..."}} or null,
+  "lesson": "a standing rule about how this coach works, or null"}}
+
+- If your point still stands, keep the point but write it the coach's way (their style of sets) as "revised".
+- If the coach's answer means your suggestion should go, set "revised" to null and say so.
+- "lesson": only when the answer says something general about how this coach coaches or writes sessions -
+  not a one-off about today. Write it as an instruction to every member of staff, e.g. "Write main sets as
+  varied, mixed structures that keep swimmers engaged - not plain straight repeats like 8x300." Else null.
+- Every line you write must be something swimmers swim (distance, reps, send-off, pace) - never a note.
+
+{rules}"""
+
+
+def _line_text(draft: dict, line_id: str) -> str:
+    section, i = _find(draft, line_id)
+    return section["lines"][i]["text"] if section is not None else "(line no longer in the session)"
+
+
+def reply(db: DBSession, row: models.SessionWorkshop, suggestion_id: str, text: str) -> dict:
+    """The coach answers a suggestion; its specialist revises it, withdraws it, and may offer a rule."""
+    from backend.services import coach_guidance
+    from backend.services.claude_service import get_client, response_text
+    from backend.services.staff_room import ROSTER, STAFF_MODEL
+
+    text = (text or "").strip()
+    if not text:
+        raise WorkshopError("Say something back first")
+    items = [dict(s) for s in row.suggestions or []]
+    target = next((s for s in items if s["id"] == suggestion_id), None)
+    if not target:
+        raise WorkshopError("No such suggestion")
+    if target["status"] != "pending":
+        raise WorkshopError("That suggestion has already been decided")
+    spec = ROSTER[target["role"]]
+    thread = list(target.get("thread") or [])
+    history = "\n".join(f"{'COACH' if t['who'] == 'coach' else 'YOU'}: {t['text']}" for t in thread)
+    draft = row.draft or {}
+    session_text = draft_text(draft)
+    line_now = _line_text(draft, target["line_id"])
+    message = (f"COACH'S BRIEF:\n{row.brief}\n\nTHE SESSION:\n{session_text}\n\n"
+               f"YOUR SUGGESTION on line {target['line_id']} (currently: {line_now}):\n"
+               f"  {target['change']}: {target.get('text') or ''}\n  because: {target.get('reason') or ''}\n\n"
+               + (f"SO FAR:\n{history}\n\n" if history else "")
+               + f"THE COACH SAYS:\n{text}")
+    response = get_client().messages.create(
+        model=STAFF_MODEL, max_tokens=700,
+        system=_REPLY_SYSTEM.format(title=spec.title, rules=coach_guidance.prompt_block(db, target["role"])),
+        messages=[{"role": "user", "content": message}],
+    )
+    raw = response_text(response).strip()
+    start, end = raw.find("{"), raw.rfind("}")
+    out = json.loads(raw[start:end + 1]) if start >= 0 else {}
+
+    thread.append({"who": "coach", "text": text[:600]})
+    thread.append({"who": target["role"], "text": str(out.get("response") or "Understood.").strip()[:400]})
+    target["thread"] = thread
+    revised = out.get("revised") if isinstance(out.get("revised"), dict) else None
+    change = str((revised or {}).get("change") or "")
+    new_text = str((revised or {}).get("text") or "").strip()
+    if revised and change in CHANGES and (change == "remove" or new_text):
+        target.update(change=change, text=new_text[:400],
+                      reason=str(revised.get("reason") or target.get("reason") or "").strip()[:300])
+    else:
+        target["status"] = "withdrawn"
+    lesson = str(out.get("lesson") or "").strip()
+    if lesson and lesson.lower() != "null":
+        target["lesson"] = lesson[:500]
+        target["lesson_saved"] = False
+    row.suggestions = items
+    db.commit()
+    return target
+
+
+def remember(db: DBSession, row: models.SessionWorkshop, suggestion_id: str, text: Optional[str] = None):
+    """The coach keeps a rule a specialist offered - edited first if they like."""
+    from backend.services import coach_guidance
+    from backend.services.staff_room import ROSTER
+    items = [dict(s) for s in row.suggestions or []]
+    target = next((s for s in items if s["id"] == suggestion_id), None)
+    if not target or not (text or target.get("lesson")):
+        raise WorkshopError("There is nothing to remember here")
+    rule = coach_guidance.add(db, text or target["lesson"],
+                              source=f"Your reply to the {ROSTER[target['role']].title}")
+    target["lesson"] = rule.text
+    target["lesson_saved"] = True
+    row.suggestions = items
+    db.commit()
+    return rule
 
 
 def edit_line(db: DBSession, row: models.SessionWorkshop, line_id: str, text: str) -> None:

@@ -690,7 +690,11 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
     text = "\n\n".join(part for part in sections if part and part.strip())
     # The analyst reads race-by-race detail, so gets more room than the rest.
     limit = CONTEXT_LIMIT + 2500 if role == "analyst" else CONTEXT_LIMIT
-    return _clip(text, limit) if text else "(no data on file for this yet)"
+    data = _clip(text, limit) if text else "(no data on file for this yet)"
+    # The coach's own rules come first and are never trimmed.
+    from backend.services import coach_guidance
+    rules = _safe(coach_guidance.prompt_block, db, role)
+    return f"{rules}\n\n{data}" if rules else data
 
 
 # ---------------------------------------------------------------------------

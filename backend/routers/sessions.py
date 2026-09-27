@@ -1132,8 +1132,8 @@ def plan_session(body: dict = Body(...), db: DBSession = Depends(get_db)):
         coaching_context = get_current_coaching_context(db)
         # The draft is written inside the plan: the week, the block, and what
         # each expected swimmer is working towards.
-        from backend.services.session_workshop import plan_brief
-        plan = plan_brief(db, date_str, squad, [s["id"] for s in expected_swimmers])
+        from backend.services.session_workshop import writing_context
+        plan = writing_context(db, date_str, squad, [s["id"] for s in expected_swimmers])
         if plan:
             coaching_context = f"{coaching_context}\n\n{plan}" if coaching_context else plan
 

@@ -82,3 +82,34 @@ def finish(workshop_id: int, db: DBSession = Depends(get_db)):
     result = svc.finish(db, row)
     result["pool_slot"] = row.pool_slot
     return result
+
+
+class ReplyIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=1500)
+
+
+class RememberIn(BaseModel):
+    text: Optional[str] = Field(default=None, max_length=500)
+
+
+@router.post("/{workshop_id}/suggestions/{suggestion_id}/reply")
+def reply(workshop_id: int, suggestion_id: str, body: ReplyIn, db: DBSession = Depends(get_db)):
+    """Answer a suggestion; its specialist revises or withdraws it, and may offer a rule to remember."""
+    row = _row(db, workshop_id)
+    try:
+        svc.reply(db, row, suggestion_id, body.text)
+    except svc.WorkshopError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"The specialist could not answer just now: {exc}")
+    return svc.out(row)
+
+
+@router.post("/{workshop_id}/suggestions/{suggestion_id}/remember")
+def remember(workshop_id: int, suggestion_id: str, body: RememberIn, db: DBSession = Depends(get_db)):
+    row = _row(db, workshop_id)
+    try:
+        svc.remember(db, row, suggestion_id, body.text)
+    except (svc.WorkshopError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return svc.out(row)

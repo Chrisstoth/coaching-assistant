@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import LaneWatchPanel from '../components/LaneWatchPanel'
+import CoachGuidancePanel from '../components/CoachGuidancePanel'
 
 const SECTIONS = [
   {
@@ -193,6 +194,8 @@ export default function Settings() {
           {checkInError && <p className="text-xs text-red-300 mt-3">Could not update check-ins: {checkInError}</p>}
         </div>
       </section>
+
+      <CoachGuidancePanel />
 
       <LaneWatchPanel />
 

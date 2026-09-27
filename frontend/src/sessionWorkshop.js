@@ -72,4 +72,10 @@ export const DECIDED_LABEL = {
   accepted: 'Accepted',
   rejected: 'Rejected',
   superseded: 'Overtaken by another change',
+  withdrawn: 'Withdrawn after your reply',
+}
+
+// A rule a specialist offered after the coach's reply, until it is kept.
+export function offeredLesson(s) {
+  return s?.lesson && !s.lesson_saved ? s.lesson : ''
 }

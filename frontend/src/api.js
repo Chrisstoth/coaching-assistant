@@ -481,6 +481,15 @@ export const api = {
     request('POST', `/session-workshops/${id}/suggestions/${suggestionId}`, { accept }),
   editWorkshopLine: (id, lineId, text) => request('PATCH', `/session-workshops/${id}/lines/${lineId}`, { text }),
   finishSessionWorkshop: (id) => request('POST', `/session-workshops/${id}/finish`, {}),
+  replyToWorkshopSuggestion: (id, suggestionId, text) =>
+    request('POST', `/session-workshops/${id}/suggestions/${suggestionId}/reply`, { text }),
+  rememberWorkshopRule: (id, suggestionId, text) =>
+    request('POST', `/session-workshops/${id}/suggestions/${suggestionId}/remember`, { text }),
+  // How the coach works - rules every member of staff follows
+  getCoachGuidance: () => request('GET', '/coach-guidance'),
+  addCoachGuidance: (data) => request('POST', '/coach-guidance', data),
+  updateCoachGuidance: (id, data) => request('PATCH', `/coach-guidance/${id}`, data),
+  deleteCoachGuidance: (id) => request('DELETE', `/coach-guidance/${id}`),
   // Training groups - who trains together, and since when
   getGroups: () => request('GET', '/groups'),
   createGroup: (data) => request('POST', '/groups', data),

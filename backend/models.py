@@ -1134,6 +1134,22 @@ class StaffNote(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class CoachGuidance(Base):
+    """A rule about how this coach works, which the staff follow.
+
+    Offered by a specialist when the coach answers one of their suggestions,
+    and remembered only when the coach says so.
+    """
+    __tablename__ = "coach_guidance"
+    id = Column(Integer, primary_key=True, index=True)
+    text = Column(Text, nullable=False)
+    role = Column(String, nullable=True)       # a specialist, or everyone when empty
+    source = Column(String, nullable=True)     # where it came from, e.g. "Reply to the Physiologist"
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class SessionWorkshop(Base):
     """A session being written with the staff, live.
 

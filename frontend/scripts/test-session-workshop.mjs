@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 
 const read = (rel) => readFile(new URL(rel, import.meta.url), 'utf8')
 const {
-  isWorking, statusLine, pendingByLine, pendingCount, changeLabel, changedLineIds,
+  isWorking, statusLine, pendingByLine, pendingCount, changeLabel, changedLineIds, offeredLesson, DECIDED_LABEL,
 } = await import('../src/sessionWorkshop.js')
 
 // --- what the coach is told while it happens ---------------------------------
@@ -44,5 +44,17 @@ const live = await read('../src/components/LiveSessionWorkshop.jsx')
 assert.match(live, /Accept<\/button>/)
 assert.match(live, /Reject/)
 assert.match(live, /finishSessionWorkshop/, 'The finished session goes to the planner to save.')
+
+// --- talking back, and remembering how the coach works -------------------------
+assert.equal(offeredLesson({ lesson: 'Mixed sets', lesson_saved: false }), 'Mixed sets')
+assert.equal(offeredLesson({ lesson: 'Mixed sets', lesson_saved: true }), '', 'Once kept, it is not offered again.')
+assert.equal(offeredLesson({}), '')
+assert.equal(DECIDED_LABEL.withdrawn, 'Withdrawn after your reply')
+assert.match(api, /replyToWorkshopSuggestion/)
+assert.match(api, /getCoachGuidance: \(\) => request\('GET', '\/coach-guidance'\)/)
+assert.match(live, />Reply<\/button>/, 'Every suggestion can be answered.')
+assert.match(live, /Remember this for next time\?/)
+const settings = await read('../src/pages/Settings.jsx')
+assert.match(settings, /<CoachGuidancePanel \/>/, 'The coach can see and change what the staff remember.')
 
 console.log('Session workshop checks passed')
