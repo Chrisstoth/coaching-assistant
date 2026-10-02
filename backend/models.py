@@ -801,6 +801,8 @@ class ProfileWizardDraft(Base):
     swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False, unique=True, index=True)
     messages = Column(JSON, nullable=False, default=list)
     awaiting_reply = Column(Boolean, nullable=False, default=False)
+    # The specialists' questions for this interview (see interview_staff).
+    staff_questions = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

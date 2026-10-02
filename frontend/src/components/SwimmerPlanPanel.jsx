@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { staffStyle } from '../staffRoom'
+import StaffAvatar from './StaffAvatar'
 import { AUDIENCE_LABELS, gapsToFill } from '../swimmerPlan'
 
 // An athlete plan for one swimmer: what we're working towards, what we're
@@ -50,9 +51,8 @@ function SectionEditor({ plan, section, onPlan, locked }) {
   return (
     <div className={`bg-pool-800 border rounded-xl p-3 space-y-2 ${section.included ? 'border-pool-700' : 'border-pool-800 opacity-60'}`}>
       <div className="flex items-center gap-2">
-        <span className="text-[10px] font-bold text-white rounded-full px-1.5 py-0.5 shrink-0"
-          style={{ backgroundColor: style.colour }} title={`Drafted by ${section.drafted_by}`}>
-          {style.initials}
+        <span title={`Drafted by ${section.drafted_by}`} className="shrink-0 inline-flex">
+          <StaffAvatar role={section.role} style={style} size={24} />
         </span>
         <p className="text-sm font-semibold text-pool-100 flex-1 min-w-0">{section.title}</p>
         {section.edited && <span className="text-[10px] text-accent-300">edited</span>}

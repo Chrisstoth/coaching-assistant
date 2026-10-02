@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { api } from '../api'
 import { decisionSummary, staffStyle, threadNotes } from '../staffRoom'
+import StaffAvatar from './StaffAvatar'
+import SpeakButton from './SpeakButton'
 
 // The coaching staff speaking. Each note is a named voice - the physiologist,
 // the analyst - with what they raised, any question for the coach, and a reply
@@ -198,11 +200,14 @@ function VoiceCard({ note, replies, onChanged, onActed, onWorkIn, compact }) {
     <div className={`rounded-2xl border px-3.5 py-2.5 space-y-1.5 bg-pool-800 ${closed ? 'opacity-60' : ''}`}
       style={{ borderColor: `${style.colour}66` }}>
       <div className="flex items-center gap-2">
-        <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-          style={{ backgroundColor: style.colour }} aria-hidden="true">
-          {style.initials}
+        <StaffAvatar role={note.role} size={28} />
+        <span className="text-xs font-semibold text-pool-100">
+          {staffStyle(note.role).name ? `${staffStyle(note.role).name} · ` : ''}{note.title}
         </span>
-        <span className="text-xs font-semibold text-pool-100">{note.title}</span>
+        {note.role !== 'chair' && (
+          <SpeakButton text={note.question ? `${note.message} ${note.question}` : note.message}
+            speaker={note.role} speakKey={`note-${note.id}`} />
+        )}
         {note.addressed_to && note.addressed_to !== 'coach' && (
           <span className="text-[10px] text-pool-500">answering {staffStyle(note.addressed_to).title}</span>
         )}

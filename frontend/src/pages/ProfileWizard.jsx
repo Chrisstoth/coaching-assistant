@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api'
+import { staffLabel, staffStyle } from '../staffRoom'
+import StaffAvatar from '../components/StaffAvatar'
+import SpeakButton, { useSpeaking } from '../components/SpeakButton'
+import useWhisperVoice, { primeMicrophone } from '../hooks/useWhisperVoice'
+import { onFinished, say, stop as stopSpeaking, unlock as unlockSpeech } from '../staffSpeech'
 
 function ThinkingDots() {
   return (
@@ -39,6 +44,68 @@ function MessageContent({ text }) {
         line.trim() === '' ? <br key={i} /> : <p key={i}>{line}</p>
       ))}
     </div>
+  )
+}
+
+function StaffBadge({ role }) {
+  return <StaffAvatar role={role} size={20} />
+}
+
+// Who is speaking a message: a specialist, or the interviewer who leads.
+function speakerOf(message) {
+  return message.speaker || 'interviewer'
+}
+
+function spokenText(message) {
+  return message.content.split(READY_TO_SAVE_MARKER).join('').trim()
+}
+
+// Hands-free: an answer is sent this long after it is written down, unless
+// the coach taps to edit it first.
+const AUTO_SEND_MS = 3000
+
+// "Save it", "save the profile", "yes, save" - said once the interview is done.
+function asksToSave(text) {
+  return /^(yes[,.]?\s*)?(please\s+)?save(\s+(it|that|the profile|profile))?(\s+please)?[.!]?$/i.test(text.trim())
+}
+
+// Who on the staff is sitting in, and how many of their questions are still to come.
+function StaffAtTheTable({ questions }) {
+  if (!questions.length) return null
+  const byRole = {}
+  for (const q of questions) {
+    byRole[q.role] = byRole[q.role] || { waiting: 0, answered: 0 }
+    if (q.status === 'answered') byRole[q.role].answered += 1
+    else byRole[q.role].waiting += 1
+  }
+  return (
+    <div className="bg-pool-900/60 border border-pool-700 rounded-xl px-3 py-2">
+      <p className="text-[10px] text-pool-500">The staff's questions for this interview</p>
+      <div className="flex flex-wrap gap-x-3 gap-y-1.5 mt-1.5">
+        {Object.entries(byRole).map(([role, count]) => (
+          <span key={role} className="flex items-center gap-1.5 text-[11px] text-pool-300">
+            <StaffBadge role={role} />
+            {staffLabel(role)}
+            <span className="text-pool-500">
+              {count.waiting ? `${count.waiting} to ask` : 'all answered'}
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// The staff's messages arrive with the interviewer's reply, after the coach's
+// answer. A stored draft that is longer than what was sent, and starts with it,
+// holds a reply that finished while the browser was away.
+function completedOnServer(stored, submitted) {
+  return (
+    stored.length > submitted.length
+    && submitted.every((message, index) => (
+      message.role === stored[index]?.role && message.content === stored[index]?.content
+    ))
+    && stored.slice(submitted.length).every(message => message.role === 'assistant')
   )
 }
 
@@ -168,7 +235,8 @@ export default function ProfileWizard() {
   const navigate = useNavigate()
 
   const [swimmer, setSwimmer] = useState(null)
-  const [messages, setMessages] = useState([]) // [{role:'user'|'assistant', content:'...'}]
+  const [messages, setMessages] = useState([]) // [{role:'user'|'assistant', content, speaker?, asks_for?}]
+  const [staffQuestions, setStaffQuestions] = useState([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(true)  // initial AI opener
   const [sending, setSending] = useState(false)
@@ -184,20 +252,39 @@ export default function ProfileWizard() {
   const bottomRef = useRef(null)
   const textareaRef = useRef(null)
 
+  // Voice: each new message is read aloud in its speaker's voice, and the
+  // coach can answer by talking. Off until the coach turns it on, because a
+  // phone only plays sound a tap has started.
+  const [voiceOn, setVoiceOn] = useState(false)
+  const spokenUpTo = useRef(null)
+  const playing = useSpeaking()
+
+  // Hands-free: once the staff finish speaking the mic opens by itself, a
+  // pause ends the answer, and it is sent after a short countdown.
+  const [handsFree, setHandsFree] = useState(false)
+  const handsFreeRef = useRef(false)
+  handsFreeRef.current = handsFree
+  const [autoSendAt, setAutoSendAt] = useState(null)
+  const [now, setNow] = useState(Date.now())
+  const [handsFreeNote, setHandsFreeNote] = useState(null)
+
+  const {
+    recording, transcribing, supported: micSupported,
+    start: startMic, stop: stopMic, cancel: cancelMic, error: micError, clearError: clearMicError,
+  } = useWhisperVoice(useCallback((text) => {
+    setInput(previous => (previous ? `${previous} ${text}` : text))
+    if (handsFreeRef.current) setAutoSendAt(Date.now() + AUTO_SEND_MS)
+  }, []), {
+    onNoSpeech: () => setHandsFreeNote("I didn't hear anything, so I've stopped listening. Tap the mic when you're ready."),
+  })
+
   const recoverAfterRequestError = useCallback(async (submittedMessages, requestError) => {
     try {
       const interviewDraft = await api.getProfileWizardDraft(id)
       const stored = interviewDraft.messages || []
-      const completedReply = (
-        stored.length === submittedMessages.length + 1
-        && stored.slice(0, -1).every((message, index) => (
-          message.role === submittedMessages[index]?.role
-          && message.content === submittedMessages[index]?.content
-        ))
-        && stored.at(-1)?.role === 'assistant'
-      )
-      if (completedReply) {
+      if (completedOnServer(stored, submittedMessages)) {
         setMessages(stored)
+        setStaffQuestions(interviewDraft.staff_questions || [])
         setPendingReply(false)
         return
       }
@@ -213,11 +300,19 @@ export default function ProfileWizard() {
       : requestError.message)
   }, [id])
 
+  // The server returns the whole transcript, including anything the staff said.
+  const applyReply = useCallback((data) => {
+    if (data.messages) setMessages(data.messages)
+    else setMessages(previous => [...previous, { role: 'assistant', content: data.reply }])
+    if (data.staff_questions) setStaffQuestions(data.staff_questions)
+  }, [])
+
   const startInterview = useCallback(async () => {
     setMode('chat')
     setLoading(true)
     setError(null)
     setMessages([])
+    setStaffQuestions([])
     setPendingReply(false)
     try {
       await api.discardProfileWizardDraft(id)
@@ -225,13 +320,13 @@ export default function ProfileWizard() {
       if (data.pending) {
         setPendingReply(true)
       } else {
-        setMessages([{ role: 'assistant', content: data.reply }])
+        applyReply(data)
       }
     } catch (e) {
       await recoverAfterRequestError([], e)
     }
     setLoading(false)
-  }, [id, recoverAfterRequestError])
+  }, [id, applyReply, recoverAfterRequestError])
 
   // Restore a server-side interview draft before showing the start choices.
   useEffect(() => {
@@ -241,6 +336,7 @@ export default function ProfileWizard() {
         setSwimmer(swimmerData)
         if (interviewDraft.messages?.length || interviewDraft.awaiting_reply) {
           setMessages(interviewDraft.messages || [])
+          setStaffQuestions(interviewDraft.staff_questions || [])
           setPendingReply(Boolean(interviewDraft.awaiting_reply))
           setMode('chat')
         } else {
@@ -265,6 +361,7 @@ export default function ProfileWizard() {
         if (cancelled) return
         if (!interviewDraft.awaiting_reply) {
           setMessages(interviewDraft.messages || [])
+          setStaffQuestions(interviewDraft.staff_questions || [])
           setPendingReply(false)
           if (interviewDraft.messages?.at(-1)?.role !== 'assistant') {
             setError('The reply did not finish, but your answer is saved. Try the reply again.')
@@ -281,6 +378,91 @@ export default function ProfileWizard() {
       window.clearInterval(timer)
     }
   }, [id, pendingReply])
+
+  // Read out whatever arrived since the last reading.
+  useEffect(() => {
+    if (!voiceOn) return
+    if (spokenUpTo.current === null) {
+      spokenUpTo.current = messages.length
+      return
+    }
+    const fresh = messages
+      .map((message, index) => ({ message, index }))
+      .slice(spokenUpTo.current)
+      .filter(({ message }) => message.role === 'assistant')
+    spokenUpTo.current = messages.length
+    if (fresh.length) {
+      say(fresh.map(({ message, index }) => ({ text: spokenText(message), speaker: speakerOf(message), key: index })))
+    }
+  }, [messages, voiceOn])
+
+  useEffect(() => () => stopSpeaking(), [])
+
+  // Start from where the interview is: the last thing said to the coach.
+  // Returns false when there was nothing to read.
+  const readLatest = () => {
+    const lastIndex = messages.map(m => m.role).lastIndexOf('assistant')
+    if (lastIndex < 0) return false
+    say({ text: spokenText(messages[lastIndex]), speaker: speakerOf(messages[lastIndex]), key: lastIndex })
+    return true
+  }
+
+  const stopHandsFree = () => {
+    setHandsFree(false)
+    setAutoSendAt(null)
+    cancelMic()
+  }
+
+  const toggleVoice = () => {
+    if (voiceOn) {
+      stopSpeaking()
+      stopHandsFree()
+      setVoiceOn(false)
+      return
+    }
+    unlockSpeech()
+    setVoiceOn(true)
+    spokenUpTo.current = messages.length
+    readLatest()
+  }
+
+  const toggleHandsFree = () => {
+    if (handsFree) {
+      stopHandsFree()
+      return
+    }
+    // Both started from this tap, as phones require.
+    unlockSpeech()
+    primeMicrophone()
+    setHandsFreeNote(null)
+    setVoiceOn(true)
+    setHandsFree(true)
+    handsFreeRef.current = true
+    spokenUpTo.current = messages.length
+    if (!readLatest()) startMic({ autoStop: true })
+  }
+
+  const toggleMic = () => {
+    if (recording) {
+      stopMic()
+      return
+    }
+    stopSpeaking()
+    setAutoSendAt(null)
+    setHandsFreeNote(null)
+    startMic({ autoStop: handsFree })
+  }
+
+  // The mic opens when the staff have finished talking - unless a reply is on
+  // its way, the coach is already speaking, or the interview is over.
+  const listenRef = useRef(null)
+  listenRef.current = () => {
+    if (!handsFreeRef.current || mode !== 'chat' || saved || sending || pendingReply
+      || recording || transcribing || autoSendAt) return
+    setHandsFreeNote(null)
+    startMic({ autoStop: true })
+  }
+  useEffect(() => onFinished(() => listenRef.current()), [])
 
   // Scroll to bottom on new message
   useEffect(() => {
@@ -303,13 +485,35 @@ export default function ProfileWizard() {
       if (data.pending) {
         setPendingReply(true)
       } else {
-        setMessages(prev => [...prev, { role: 'assistant', content: data.reply }])
+        applyReply(data)
       }
     } catch (e) {
       await recoverAfterRequestError(next, e)
     }
     setSending(false)
-  }, [id, input, messages, recoverAfterRequestError, sending])
+  }, [id, input, messages, applyReply, recoverAfterRequestError, sending])
+
+  const readySignalled = messages.some(m => m.role === 'assistant' && messageSignalsReadyToSave(m.content))
+
+  // Hands-free countdown to sending what the coach said.
+  const autoSendRef = useRef(null)
+  autoSendRef.current = () => {
+    setAutoSendAt(null)
+    if (readySignalled && asksToSave(input)) {
+      setInput('')
+      saveProfile()
+      return
+    }
+    send()
+  }
+  useEffect(() => {
+    if (!autoSendAt) return undefined
+    const timer = window.setInterval(() => {
+      setNow(Date.now())
+      if (Date.now() >= autoSendAt) autoSendRef.current()
+    }, 200)
+    return () => window.clearInterval(timer)
+  }, [autoSendAt])
 
   const retryLastReply = async () => {
     if (sending || messages.at(-1)?.role !== 'user') return
@@ -321,7 +525,7 @@ export default function ProfileWizard() {
       if (data.pending) {
         setPendingReply(true)
       } else {
-        setMessages(previous => [...previous, { role: 'assistant', content: data.reply }])
+        applyReply(data)
       }
     } catch (e) {
       await recoverAfterRequestError(messages, e)
@@ -335,6 +539,7 @@ export default function ProfileWizard() {
     try {
       await api.discardProfileWizardDraft(id)
       setMessages([])
+      setStaffQuestions([])
       setPendingReply(false)
       setMode('choice')
     } catch (e) {
@@ -390,7 +595,6 @@ export default function ProfileWizard() {
     }
   }
 
-  const readySignalled = messages.some(m => m.role === 'assistant' && messageSignalsReadyToSave(m.content))
   const canSave = (readySignalled || (messages.length >= 6 && messages.at(-1)?.role === 'assistant')) && !saved
 
   return (
@@ -446,6 +650,7 @@ export default function ProfileWizard() {
               </p>
               <p className="text-xs text-pool-400 mt-1 leading-relaxed">
                 The interview reads {swimmer?.name}'s live times, observations, completed foundation areas and living profiles before choosing each question.
+                The physiologist, performance analyst and swimmer manager sit in: they bring their own questions and react to your answers. Name one of them in a reply to ask them directly.
               </p>
             </div>
             <div className="grid grid-cols-2 gap-2 text-center">
@@ -509,6 +714,8 @@ export default function ProfileWizard() {
           </div>
         )}
 
+        {mode === 'chat' && !saved && <StaffAtTheTable questions={staffQuestions} />}
+
         {loading && (
           <div className="flex justify-start">
             <div className="bg-pool-700 rounded-2xl rounded-bl-sm px-4 py-3">
@@ -522,16 +729,51 @@ export default function ProfileWizard() {
         )}
 
         {mode === 'chat' && messages.map((m, i) => {
+          if (m.speaker) {
+            const style = staffStyle(m.speaker)
+            const speaking = playing?.key === i
+            return (
+              <div key={i} className="flex items-end gap-2">
+                <StaffAvatar role={m.speaker} size={32} className={speaking ? 'ring-2 ring-accent-400' : ''} />
+                <div
+                  className="max-w-[80%] rounded-2xl rounded-bl-sm px-4 py-3 text-sm leading-relaxed bg-pool-800 text-pool-200 border-l-4"
+                  style={{ borderLeftColor: style.colour }}
+                >
+                  <p className="flex items-center gap-2 text-[11px] font-semibold text-pool-300 mb-1">
+                    {staffLabel(m.speaker)}
+                    <SpeakButton text={spokenText(m)} speaker={m.speaker} speakKey={i} className="ml-auto" />
+                  </p>
+                  <MessageContent text={m.content} />
+                </div>
+              </div>
+            )
+          }
           const ready = m.role === 'assistant' && messageSignalsReadyToSave(m.content)
           const displayText = ready ? m.content.split(READY_TO_SAVE_MARKER).join('').trim() : m.content
+          const askingFor = m.asks_for && staffQuestions.find(q => q.id === m.asks_for)
+          const speaking = playing?.key === i
           return (
             <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+              <div className={`flex items-end gap-2 ${m.role === 'user' ? 'justify-end' : ''}`}>
+              {m.role === 'assistant' && (
+                <StaffAvatar role="interviewer" size={32} className={speaking ? 'ring-2 ring-accent-400' : ''} />
+              )}
+              <div className={`max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
                 m.role === 'user'
                   ? 'bg-accent-700 text-white rounded-br-sm'
                   : 'bg-pool-700 text-pool-200 rounded-bl-sm'
               }`}>
+                {askingFor && (
+                  <p className="flex items-center gap-1.5 text-[10px] text-pool-400 mb-1.5">
+                    <StaffBadge role={askingFor.role} />
+                    Asking for {staffLabel(askingFor.role)}
+                  </p>
+                )}
                 <MessageContent text={displayText} />
+                {m.role === 'assistant' && (
+                  <SpeakButton text={displayText} speaker="interviewer" speakKey={i} className="mt-1.5" />
+                )}
+              </div>
               </div>
               {ready && !saved && (
                 <button
@@ -599,14 +841,75 @@ export default function ProfileWizard() {
       {/* Input */}
       {!saved && mode === 'chat' && (
         <div className="px-4 pb-6 pt-2 border-t border-pool-700/60 shrink-0">
-          <div className="flex items-end gap-2 bg-pool-800 border border-pool-600 rounded-2xl px-3 py-2.5 focus-within:border-accent-500 transition-colors">
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <button
+              type="button"
+              onClick={toggleVoice}
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                voiceOn ? 'bg-accent-600 border-accent-500 text-white' : 'border-pool-600 text-pool-400'
+              }`}
+              aria-pressed={voiceOn}
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
+              </svg>
+              {voiceOn ? 'Voices on' : 'Hear the staff'}
+            </button>
+            {micSupported && (
+              <button
+                type="button"
+                onClick={toggleHandsFree}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                  handsFree ? 'bg-green-700 border-green-600 text-white' : 'border-pool-600 text-pool-400'
+                }`}
+                aria-pressed={handsFree}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                </svg>
+                {handsFree ? 'Hands-free on' : 'Hands-free'}
+              </button>
+            )}
+            {playing && (
+              <span className="flex items-center gap-1.5 text-[11px] text-pool-400 ml-auto">
+                <StaffAvatar role={playing.speaker} size={18} />
+                {staffStyle(playing.speaker).name || staffStyle(playing.speaker).title} speaking
+              </span>
+            )}
+          </div>
+          {handsFree && recording && (
+            <p className="text-[11px] text-green-300 mb-2">Listening. Just talk; I'll send it when you pause.</p>
+          )}
+          {autoSendAt && (
+            <div className="flex items-center gap-2 bg-green-900/30 border border-green-800/60 rounded-xl px-3 py-2 mb-2">
+              <p className="text-xs text-green-200 flex-1">
+                {readySignalled && asksToSave(input) ? 'Saving the profile' : 'Sending'} in {Math.max(1, Math.ceil((autoSendAt - now) / 1000))}…
+              </p>
+              <button type="button" onClick={() => { setAutoSendAt(null); textareaRef.current?.focus() }}
+                className="text-xs text-pool-300 underline">Edit</button>
+              <button type="button" onClick={() => autoSendRef.current()}
+                className="text-xs font-semibold text-green-300 underline">Now</button>
+            </div>
+          )}
+          {handsFreeNote && !recording && (
+            <p className="text-[11px] text-pool-400 mb-2">{handsFreeNote}</p>
+          )}
+          {micError && (
+            <button type="button" onClick={clearMicError} className="block text-xs text-amber-400 text-left mb-2">
+              {micError} (tap to dismiss)
+            </button>
+          )}
+          <div className={`flex items-end gap-2 bg-pool-800 border rounded-2xl px-3 py-2.5 focus-within:border-accent-500 transition-colors ${
+            recording ? 'border-red-500' : transcribing ? 'border-yellow-500' : 'border-pool-600'
+          }`}>
             <textarea
               ref={textareaRef}
               value={input}
-              onChange={e => setInput(e.target.value)}
+              onChange={e => { setAutoSendAt(null); setInput(e.target.value) }}
+              onFocus={() => setAutoSendAt(null)}
               onKeyDown={handleKey}
               disabled={pendingReply}
-              placeholder="Reply…"
+              placeholder={recording ? 'Listening… tap the mic to finish' : transcribing ? 'Writing down what you said…' : 'Reply, or tap the mic…'}
               rows={1}
               className="flex-1 bg-transparent text-sm text-pool-100 placeholder-pool-500 resize-none focus:outline-none leading-relaxed"
               style={{ maxHeight: '120px', overflowY: 'auto' }}
@@ -615,6 +918,21 @@ export default function ProfileWizard() {
                 e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px'
               }}
             />
+            {micSupported && (
+              <button
+                type="button"
+                onClick={toggleMic}
+                disabled={transcribing || pendingReply}
+                className={`shrink-0 w-8 h-8 flex items-center justify-center rounded-full transition-colors disabled:opacity-40 ${
+                  recording ? 'bg-red-500 text-white animate-pulse' : transcribing ? 'text-yellow-400 animate-pulse' : 'bg-pool-700 text-pool-300'
+                }`}
+                aria-label={recording ? 'Finish speaking' : 'Answer by speaking'}
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={send}
               disabled={!input.trim() || sending || pendingReply}

@@ -5,19 +5,14 @@ import {
   DECIDED_LABEL, POLL_MS, changeLabel, changedLineIds, isWorking, offeredLesson, pendingByLine, statusLine,
 } from '../sessionWorkshop'
 import { Link } from 'react-router-dom'
+import StaffAvatar from './StaffAvatar'
 
 // A session written with the staff, live. The draft arrives first, then each
 // specialist's suggestions land on the lines they are about. Nothing changes
 // until the coach accepts; "Use this session" hands it to the planner to save.
 
 function Badge({ role }) {
-  const style = staffStyle(role)
-  return (
-    <span className="inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-bold text-white shrink-0"
-      style={{ backgroundColor: style.colour }} title={style.title}>
-      {style.initials}
-    </span>
-  )
+  return <StaffAvatar role={role} size={24} />
 }
 
 function Voices({ voices }) {

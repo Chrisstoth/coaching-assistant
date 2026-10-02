@@ -58,6 +58,14 @@ class StaffRole:
     remit: str
     watch_for: str
     aliases: tuple
+    # A first name, so the coach comes to know each of them. Chosen to be
+    # ordinary and distinct from each other, and to suit their voice
+    # (see staff_voice).
+    name: str = ""
+
+    @property
+    def label(self) -> str:
+        return f"{self.name}, the {self.title}" if self.name else f"the {self.title}"
 
 
 ROSTER = {
@@ -76,6 +84,7 @@ ROSTER = {
                   "what a swimmer can absorb. When the analyst reports a racing pattern, explain "
                   "the likely physical cause from the training figures.",
         aliases=("physiologist", "physio", "physiology", "sports scientist"),
+        name="Fiona",
     ),
     "analyst": StaffRole(
         key="analyst",
@@ -90,6 +99,7 @@ ROSTER = {
                   "the evidence does not support, events where the evidence is thin. Say what "
                   "happens in the race; ask the physiologist why when the cause may be physical.",
         aliases=("analyst", "performance analyst", "analysis", "stats"),
+        name="Tom",
     ),
     "planner": StaffRole(
         key="planner",
@@ -106,6 +116,7 @@ ROSTER = {
                   "an active swimmer on no pathway (every swimmer has a target meet each macrocycle - "
                   "suggest one with move_pathway, usually the one their training group is on).",
         aliases=("planner", "periodisation", "periodization", "season planner"),
+        name="Graham",
     ),
     "manager": StaffRole(
         key="manager",
@@ -123,6 +134,7 @@ ROSTER = {
                   "usually the start of a block, and ask the physiologist or analyst when the "
                   "evidence is theirs.",
         aliases=("swimmer manager", "welfare", "attendance"),
+        name="Erin",
     ),
     "meets": StaffRole(
         key="meets",
@@ -135,6 +147,7 @@ ROSTER = {
                   "finished with no results recorded, a swimmer entered in two races too close "
                   "together, entries that do not match a swimmer's pathway or target events.",
         aliases=("meet manager", "meets manager", "competition manager", "entries manager"),
+        name="Rhys",
     ),
     "sessions": StaffRole(
         key="sessions",
@@ -146,6 +159,7 @@ ROSTER = {
                   "the swimmers likely to be there, the same group given hard sessions back to back, "
                   "race-pace work with no target times, a session too long for the pool time.",
         aliases=("session writer", "session planner", "sessions writer"),
+        name="Jess",
     ),
 }
 
@@ -224,12 +238,27 @@ def find_mentioned_swimmers(text: str, db: DBSession) -> list:
     return found
 
 
-def addressed_roles(text: str) -> list:
-    """Staff the coach named directly - "what does the physio think?"."""
+def addressed_roles(text: str, db: Optional[DBSession] = None) -> list:
+    """Staff the coach named directly - "what does the physio think?", "Fiona?".
+
+    A first name only counts when no active swimmer shares it: with a swimmer
+    called Tom in the squad, "Tom" means the swimmer, not the analyst.
+    """
     lowered = (text or "").lower()
+    taken = set()
+    if db is not None:
+        taken = {
+            s.name.lower().split()[0]
+            for s in db.query(models.Swimmer).filter(models.Swimmer.active.is_(True)).all()
+            if s.name and s.name.split()
+        }
     named = []
     for key in ROLE_ORDER:
-        if any(re.search(rf"\b{re.escape(alias)}\b", lowered) for alias in ROSTER[key].aliases):
+        role = ROSTER[key]
+        aliases = list(role.aliases)
+        if role.name and role.name.lower() not in taken:
+            aliases.append(role.name.lower())
+        if any(re.search(rf"\b{re.escape(alias)}\b", lowered) for alias in aliases):
             named.append(key)
     return named
 
@@ -775,7 +804,7 @@ def choose_speakers(topic: str, trigger: str, brief: str, recent: list) -> list:
     return chosen[:MAX_SPEAKERS]
 
 
-_SPECIALIST_SYSTEM = """You are the {title} on a swimming coaching staff.
+_SPECIALIST_SYSTEM = """You are {name}, the {title} on a swimming coaching staff.
 
 Your remit: {remit}
 You watch for: {watch_for}
@@ -813,10 +842,10 @@ If you have nothing worth saying, return {{"speak": false}}."""
 def _specialist_system(role: str) -> str:
     r = ROSTER[role]
     from backend.services.staff_actions import prompt_block
-    colleagues = ", ".join(f"{k} ({ROSTER[k].title})" for k in ROLE_ORDER if k != role)
-    usual = " and ".join(ROSTER[k].title for k in USUAL_COLLEAGUES.get(role, ()))
+    colleagues = ", ".join(f"{k} ({ROSTER[k].name}, {ROSTER[k].title})" for k in ROLE_ORDER if k != role)
+    usual = " and ".join(ROSTER[k].label for k in USUAL_COLLEAGUES.get(role, ()))
     actions = prompt_block(role) or "You advise only; you have no actions to propose."
-    return _SPECIALIST_SYSTEM.format(title=r.title, remit=r.remit, watch_for=r.watch_for,
+    return _SPECIALIST_SYSTEM.format(name=r.name, title=r.title, remit=r.remit, watch_for=r.watch_for,
                                      colleagues=colleagues, usual=usual or "the whole staff",
                                      actions=actions)
 
@@ -984,7 +1013,7 @@ def convene(
     # role must not pull that role into the meeting.
     if coach_text is None:
         coach_text = topic if trigger in COACH_TRIGGERS else ""
-    forced = [r for r in (roles or []) if r in ROSTER] + addressed_roles(coach_text)
+    forced = [r for r in (roles or []) if r in ROSTER] + addressed_roles(coach_text, db)
     forced = list(dict.fromkeys(forced))
     if forced:
         speakers = [(role, "The coach asked you directly.") for role in forced[:MAX_SPEAKERS + 1]]

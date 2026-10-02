@@ -3,13 +3,15 @@
 
 // Colours come from the validated series palette. Identity never rests on colour
 // alone: every voice also carries its title and initials.
+// Each has a first name too, matching the server's roster (staff_room.py), so
+// the coach comes to know them - by name, face and voice.
 export const STAFF_STYLES = {
-  physiologist: { title: 'Physiologist', initials: 'Ph', colour: '#0d9488' },
-  analyst: { title: 'Performance Analyst', initials: 'PA', colour: '#3b82f6' },
-  planner: { title: 'Periodisation Planner', initials: 'PP', colour: '#ea580c' },
-  manager: { title: 'Swimmer Manager', initials: 'SM', colour: '#db2777' },
-  meets: { title: 'Meet Manager', initials: 'MM', colour: '#65a30d' },
-  sessions: { title: 'Session Writer', initials: 'SW', colour: '#9333ea' },
+  physiologist: { name: 'Fiona', title: 'Physiologist', initials: 'Ph', colour: '#0d9488' },
+  analyst: { name: 'Tom', title: 'Performance Analyst', initials: 'PA', colour: '#3b82f6' },
+  planner: { name: 'Graham', title: 'Periodisation Planner', initials: 'PP', colour: '#ea580c' },
+  manager: { name: 'Erin', title: 'Swimmer Manager', initials: 'SM', colour: '#db2777' },
+  meets: { name: 'Rhys', title: 'Meet Manager', initials: 'MM', colour: '#65a30d' },
+  sessions: { name: 'Jess', title: 'Session Writer', initials: 'SW', colour: '#9333ea' },
 }
 
 export const STAFF_ORDER = ['physiologist', 'analyst', 'planner', 'manager', 'meets', 'sessions']
@@ -18,9 +20,20 @@ export const STAFF_ORDER = ['physiologist', 'analyst', 'planner', 'manager', 'me
 // STAFF_ORDER: nobody can be asked to "speak" as the chair.
 export const DECISION_STYLE = { title: 'Your call', initials: '?', colour: '#eab308' }
 
+// Who leads a conversation with the coach, such as the profile interview. Not a
+// specialist, so never in STAFF_ORDER, but heard and shown like one.
+export const INTERVIEWER_STYLE = { name: 'Sam', title: 'Interviewer', initials: 'In', colour: '#64748b' }
+
 export function staffStyle(role) {
   if (role === 'chair') return DECISION_STYLE
+  if (role === 'interviewer') return INTERVIEWER_STYLE
   return STAFF_STYLES[role] || { title: role || 'Staff', initials: '?', colour: '#7f858c' }
+}
+
+// "Fiona · Physiologist", or just the title for anyone without a name.
+export function staffLabel(role) {
+  const style = staffStyle(role)
+  return style.name ? `${style.name} · ${style.title}` : style.title
 }
 
 // How a decision card reads once the coach has made the call.

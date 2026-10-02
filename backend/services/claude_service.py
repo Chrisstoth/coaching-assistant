@@ -82,6 +82,7 @@ _MODEL_PRICES_PER_MTOK = {
     "claude-haiku-4-5": (1.0, 5.0),
     "claude-haiku-4-5-20251001": (1.0, 5.0),
     "gpt-4o-mini-transcribe": (1.25, 5.0),
+    "gpt-4o-mini-tts": (0.6, 12.0),
 }
 
 
@@ -6179,7 +6180,7 @@ def _run_session_plan_conversation(conversation: list, db: DBSession) -> dict:
 # Profile Wizard — structured biological interview
 # ---------------------------------------------------------------------------
 
-WIZARD_SYSTEM = """You are running a structured biological profiling interview for a swimming coach.
+WIZARD_SYSTEM = """You are Sam, who leads the coaching staff's interviews. You are running a structured biological profiling interview for a swimming coach.
 
 Your job is to build a deep, evidence-based biological profile of a swimmer by asking targeted questions and interpreting the coach's responses alongside the swimmer's times data.
 
@@ -6376,11 +6377,15 @@ def wizard_chat(
     swimmer: models.Swimmer,
     messages: list[dict],
     db: DBSession,
+    staff_questions: Optional[list] = None,
 ) -> str:
     """
     Stateless wizard chat. Takes full message history, returns next AI message.
-    If messages is empty, generates the opening question.
+    If messages is empty, generates the opening question. ``staff_questions``
+    are the specialists' questions for the interviewer to work in.
     """
+    from backend.services import interview_staff
+
     context = build_foundation_interview_context(swimmer, db)
     foundation_status = context["foundation"]["coverage"]
     completed_areas = ", ".join(
@@ -6418,12 +6423,15 @@ INTERVIEW CONTROL:
 - If all nine areas are covered, stop interviewing, summarise the remaining uncertainty, tell the coach to tap "Save Profile" at the top of the screen, and end the message on its own new line with the exact text [[READY_TO_SAVE]].
 - You cannot save the profile yourself. If the coach agrees to save in the chat, never claim it is saved — remind them to tap "Save Profile" and end that message with [[READY_TO_SAVE]] too."""
 
+    staff_block = interview_staff.prompt_block(staff_questions or [])
+    if staff_block:
+        swimmer_intro = f"{swimmer_intro}\n\n{staff_block}"
     system = f"{WIZARD_SYSTEM}\n\n---\n{swimmer_intro}"
 
     if not messages:
         api_messages = [{"role": "user", "content": "(Start the profiling interview.)"}]
     else:
-        api_messages = messages
+        api_messages = interview_staff.for_model(messages)
 
     response = get_client().messages.create(
         model=MODEL,
@@ -6646,8 +6654,9 @@ def save_wizard_profile(
     and save a SwimmerProfileVersion with type "wizard".
     """
     context = build_foundation_interview_context(swimmer, db)
+    from backend.services.interview_staff import speaker_title
     conversation_text = "\n".join(
-        f"{'Coach' if m['role'] == 'user' else 'AI'}: {m['content']}"
+        f"{'Coach' if m['role'] == 'user' else (speaker_title(m['speaker']) if m.get('speaker') else 'AI')}: {m['content']}"
         for m in messages
     )
     prompt = f"""Synthesize the coach-confirmed foundation evidence from this swimmer interview.

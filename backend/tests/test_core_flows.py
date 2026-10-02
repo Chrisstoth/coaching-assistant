@@ -440,6 +440,144 @@ class CoreFlowTests(unittest.TestCase):
                 models.ProfileWizardDraft.swimmer_id == swimmer_id,
             ).count(), 0)
 
+    def test_profile_interview_brings_in_the_staff(self):
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Staff Interview Swimmer", squad="Test")
+            db.add(swimmer)
+            db.commit()
+            swimmer_id = swimmer.id
+
+        def staff(system, user, max_tokens, operation):
+            if operation == "interview_agenda_physiologist":
+                return {"questions": [{"area": "fatigue and recovery",
+                                       "question": "How does she look by Friday in a heavy week?",
+                                       "why": "load rose 20% in the last fortnight"}]}
+            if operation == "interview_hear_physiologist":
+                return {"note": "That fits the load jump in her last fortnight.",
+                        "follow_up": "Does she sleep badly in those weeks?"}
+            if operation == "interview_hear_analyst":
+                return {"note": "Her 200 back half has slowed at the last two meets.", "follow_up": None}
+            return None
+
+        opening = SimpleNamespace(content=[SimpleNamespace(
+            text="The physiologist wants to know: how does she look by Friday in a heavy week?\n[[ASKING_FOR s1]]",
+        )])
+        with patch("backend.services.interview_staff._ask", side_effect=staff), \
+                patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = opening
+            started = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers, json={"messages": []},
+            )
+        self.assertEqual(started.status_code, 200, started.text)
+        body = started.json()
+        self.assertNotIn("[[ASKING_FOR", body["reply"])
+        self.assertEqual(body["messages"][-1]["asks_for"], "s1")
+        self.assertEqual(body["staff_questions"][0]["role"], "physiologist")
+        self.assertEqual(body["staff_questions"][0]["status"], "asked")
+        system_prompt = client.return_value.messages.create.call_args.kwargs["system"]
+        self.assertIn("How does she look by Friday in a heavy week?", system_prompt)
+        self.assertIn("[[ASKING_FOR <id>]]", system_prompt)
+
+        # The coach answers the physiologist and asks the analyst directly.
+        history = [*body["messages"], {"role": "user", "content": "Flat by Friday. What does the analyst think?"}]
+        follow = SimpleNamespace(content=[SimpleNamespace(text="Next question?")])
+        with patch("backend.services.interview_staff._ask", side_effect=staff), \
+                patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = follow
+            answered = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers, json={"messages": history},
+            )
+        self.assertEqual(answered.status_code, 200, answered.text)
+        body = answered.json()
+        speakers = [m.get("speaker") for m in body["messages"] if m.get("speaker")]
+        self.assertEqual(speakers, ["physiologist", "analyst"])
+        statuses = {q["id"]: q["status"] for q in body["staff_questions"]}
+        self.assertEqual(statuses, {"s1": "answered", "s2": "open"})
+        # Colleagues' messages reach the interviewer as one assistant turn, labelled.
+        sent = client.return_value.messages.create.call_args.kwargs["messages"]
+        self.assertEqual([m["role"] for m in sent], ["assistant", "user"])
+        system_prompt = client.return_value.messages.create.call_args.kwargs["system"]
+        self.assertIn("Does she sleep badly in those weeks?", system_prompt)
+
+        # Replaying the same history recovers the staff's messages too.
+        with patch("backend.services.claude_service.get_client") as client:
+            recovered = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/chat",
+                headers=self.headers, json={"messages": history},
+            )
+            client.assert_not_called()
+        self.assertEqual(recovered.json()["messages"], body["messages"])
+
+        saved_json = {"physical": {"fatigue_profile": "Flat by Friday in heavy weeks."}, "psychological": {}}
+        with patch("backend.services.claude_service.get_client") as client:
+            client.return_value.messages.create.return_value = SimpleNamespace(
+                content=[SimpleNamespace(text=json.dumps(saved_json))])
+            saved = self.client.post(
+                f"/swimmers/{swimmer_id}/profile-wizard/save",
+                headers=self.headers, json={"messages": body["messages"]},
+            )
+        self.assertEqual(saved.status_code, 200, saved.text)
+        with SessionLocal() as db:
+            notes = db.query(models.StaffNote).filter(
+                models.StaffNote.trigger == "profile_interview",
+            ).all()
+            kept = [n for n in notes if swimmer_id in (n.swimmer_ids or [])]
+            self.assertEqual(sorted(n.role for n in kept), ["analyst", "physiologist"])
+
+    def test_staff_answer_to_their_first_names_unless_a_swimmer_has_it(self):
+        from backend.services.staff_room import ROSTER, addressed_roles
+        names = [role.name for role in ROSTER.values()]
+        self.assertEqual(len(set(names)), len(names), "every member of staff has their own name")
+        self.assertTrue(all(names))
+        with SessionLocal() as db:
+            self.assertEqual(addressed_roles("Fiona, what do you make of that?", db), ["physiologist"])
+            swimmer = models.Swimmer(name="Fiona Clash", squad="Test")
+            db.add(swimmer)
+            db.commit()
+            try:
+                self.assertEqual(addressed_roles("Fiona was flat today", db), [])
+                self.assertEqual(addressed_roles("What does the physio think about Fiona?", db), ["physiologist"])
+            finally:
+                db.delete(swimmer)
+                db.commit()
+
+    def test_each_member_of_staff_speaks_in_their_own_voice(self):
+        from backend.services import staff_voice
+        staff_voice._cache.clear()
+        audio = SimpleNamespace(read=lambda: b"mp3-bytes")
+        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), \
+                patch("openai.OpenAI") as openai_client:
+            openai_client.return_value.audio.speech.create.return_value = audio
+            first = self.client.post("/staff/speak", headers=self.headers,
+                                     json={"text": "Her load jumped **20%**. [[ASKING_FOR s1]]",
+                                           "speaker": "physiologist"})
+            again = self.client.post("/staff/speak", headers=self.headers,
+                                     json={"text": "Her load jumped **20%**. [[ASKING_FOR s1]]",
+                                           "speaker": "physiologist"})
+            analyst = self.client.post("/staff/speak", headers=self.headers,
+                                       json={"text": "Her back half slowed.", "speaker": "analyst"})
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(first.headers["content-type"], "audio/mpeg")
+        self.assertEqual(first.content, b"mp3-bytes")
+        self.assertEqual(again.content, b"mp3-bytes")
+        calls = openai_client.return_value.audio.speech.create.call_args_list
+        self.assertEqual(len(calls), 2, "a line already spoken is served from the cache")
+        self.assertEqual(calls[0].kwargs["voice"], staff_voice.VOICES["physiologist"].base)
+        self.assertEqual(calls[0].kwargs["input"], "Her load jumped 20% .")
+        self.assertIn("Scottish", calls[0].kwargs["extra_body"]["instructions"])
+        self.assertNotEqual(calls[1].kwargs["voice"], calls[0].kwargs["voice"])
+        self.assertEqual(analyst.status_code, 200)
+
+        voices = {voice.base for voice in staff_voice.VOICES.values()}
+        self.assertEqual(len(voices), len(staff_voice.VOICES), "no two of the staff share a voice")
+
+        with patch.dict(os.environ, {"OPENAI_API_KEY": ""}):
+            unavailable = self.client.post("/staff/speak", headers=self.headers,
+                                           json={"text": "Something new.", "speaker": "planner"})
+        self.assertEqual(unavailable.status_code, 503)
+
     def test_chat_register_resolves_exact_recurring_slot_without_ai_guessing(self):
         target_date = date.today()
         day_name = target_date.strftime("%A")

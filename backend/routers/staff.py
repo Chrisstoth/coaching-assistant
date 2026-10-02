@@ -8,12 +8,13 @@ or swimmer they are about and answered later.
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend import models
 from backend.database import get_db
+from backend.services import staff_voice
 from backend.services.staff_actions import actions_for
 from backend.services.staff_room import (
     ROLE_ORDER, ROSTER, Subject, apply_action, convene, decide, decline_action, note_out,
@@ -51,6 +52,25 @@ class NoteUpdate(BaseModel):
 class DecideIn(BaseModel):
     choice: Optional[str] = None          # the role whose position the coach backs
     text: Optional[str] = Field(default=None, max_length=2000)
+
+
+class SpeakIn(BaseModel):
+    text: str = Field(..., min_length=1, max_length=6000)
+    speaker: str = Field(default=staff_voice.DEFAULT_SPEAKER, max_length=40)
+
+
+@router.post("/speak")
+def speak(body: SpeakIn):
+    """A member of staff saying something aloud, in their own voice (MP3)."""
+    try:
+        audio = staff_voice.speak(body.text, body.speaker)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Nothing to say")
+    except staff_voice.SpeechUnavailable as exc:
+        # The page falls back to the phone's own voice.
+        raise HTTPException(status_code=503, detail=f"Speech unavailable: {exc}")
+    return Response(content=audio, media_type="audio/mpeg",
+                    headers={"Cache-Control": "private, max-age=86400"})
 
 
 @router.get("/roster")

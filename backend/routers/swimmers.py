@@ -11,6 +11,7 @@ from backend.database import get_db
 from backend import models
 from backend.services import groups as group_svc
 from backend.services import claude_service
+from backend.services import interview_staff
 from backend.services.importer import match_or_create_swimmer
 from backend.services.profile_status import FOUNDATION_AREAS, FOUNDATION_KEY_ALIASES, build_profile_status
 
@@ -837,6 +838,8 @@ def get_performance_analyses(swimmer_id: int, db: DBSession = Depends(get_db)):
 class WizardMessage(BaseModel):
     role: str   # "user" | "assistant"
     content: str
+    speaker: Optional[str] = None    # a specialist's role, when one of the staff is speaking
+    asks_for: Optional[str] = None   # the staff question the interviewer is putting to the coach
 
 class WizardChatRequest(BaseModel):
     messages: list[WizardMessage] = Field(default_factory=list)
@@ -926,9 +929,13 @@ def wizard_save_draft(
 
 @router.post("/{swimmer_id}/profile-wizard/chat")
 def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depends(get_db)):
-    """Generate the next turn while keeping an unconfirmed recoverable draft."""
+    """Generate the next turn while keeping an unconfirmed recoverable draft.
+
+    The staff sit in: they hand the interviewer their questions before the
+    first one, and hear the coach's answers to them (see interview_staff).
+    """
     swimmer = _get_or_404(swimmer_id, db)
-    messages = [m.model_dump() for m in body.messages]
+    messages = [m.model_dump(exclude_none=True) for m in body.messages]
     draft = db.query(models.ProfileWizardDraft).filter(
         models.ProfileWizardDraft.swimmer_id == swimmer.id,
     ).first()
@@ -936,12 +943,18 @@ def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depend
 
     # A request can finish on the server after the browser connection has gone.
     # Replaying the submitted history recovers that reply without another AI call.
+    added = stored_messages[len(messages):]
     if (
-        len(stored_messages) == len(messages) + 1
-        and stored_messages[:-1] == messages
-        and stored_messages[-1].get("role") == "assistant"
+        added
+        and stored_messages[:len(messages)] == messages
+        and all(m.get("role") == "assistant" for m in added)
     ):
-        return {"reply": stored_messages[-1].get("content", ""), "recovered": True}
+        return {
+            "reply": added[-1].get("content", ""),
+            "messages": stored_messages,
+            "staff_questions": interview_staff.public(draft.staff_questions),
+            "recovered": True,
+        }
 
     if draft and draft.awaiting_reply and stored_messages == messages and not body.retry:
         return {"pending": True}
@@ -953,8 +966,17 @@ def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depend
     draft.awaiting_reply = True
     db.commit()
 
+    # Worked on as copies: nothing the staff did is kept unless the reply completes.
+    questions = [dict(q) for q in (draft.staff_questions or [])]
     try:
-        reply = claude_service.wizard_chat(swimmer, messages, db)
+        if not messages:
+            context = claude_service.build_foundation_interview_context(swimmer, db)
+            questions = interview_staff.open_agenda(db, swimmer, context["foundation"]["coverage"])
+            staff_said = []
+        else:
+            staff_said = interview_staff.hear_answer(db, swimmer, messages, questions)
+        history = [*messages, *staff_said]
+        reply = claude_service.wizard_chat(swimmer, history, db, staff_questions=questions)
     except Exception as exc:
         draft.awaiting_reply = False
         db.commit()
@@ -963,10 +985,19 @@ def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depend
             detail="The interview reply did not complete. Your answer is saved; retry when ready.",
         ) from exc
 
-    draft.messages = [*messages, {"role": "assistant", "content": reply}]
+    reply, asks_for = interview_staff.take_marker(reply, questions)
+    turn = {"role": "assistant", "content": reply}
+    if asks_for:
+        turn["asks_for"] = asks_for
+    draft.messages = [*history, turn]
+    draft.staff_questions = questions
     draft.awaiting_reply = False
     db.commit()
-    return {"reply": reply}
+    return {
+        "reply": reply,
+        "messages": draft.messages,
+        "staff_questions": interview_staff.public(questions),
+    }
 
 
 @router.get("/{swimmer_id}/profile-wizard/draft")
@@ -977,11 +1008,12 @@ def wizard_get_draft(swimmer_id: int, db: DBSession = Depends(get_db)):
         models.ProfileWizardDraft.swimmer_id == swimmer_id,
     ).first()
     if not draft:
-        return {"messages": [], "awaiting_reply": False, "updated_at": None}
+        return {"messages": [], "awaiting_reply": False, "updated_at": None, "staff_questions": []}
     return {
         "messages": list(draft.messages or []),
         "awaiting_reply": bool(draft.awaiting_reply),
         "updated_at": draft.updated_at,
+        "staff_questions": interview_staff.public(draft.staff_questions),
     }
 
 
@@ -1001,7 +1033,7 @@ def wizard_save(swimmer_id: int, body: WizardSaveRequest, db: DBSession = Depend
     swimmer = _get_or_404(swimmer_id, db)
     if not body.messages:
         raise HTTPException(status_code=422, detail="No conversation to save.")
-    messages = [m.model_dump() for m in body.messages]
+    messages = [m.model_dump(exclude_none=True) for m in body.messages]
     # Reassessments add to the foundation rather than replacing areas which
     # were not discussed in this conversation.
     preserve_existing = bool(swimmer.physical_profile or swimmer.psychological_profile)
@@ -1011,6 +1043,8 @@ def wizard_save(swimmer_id: int, body: WizardSaveRequest, db: DBSession = Depend
         db,
         preserve_existing=preserve_existing,
     )
+    # What the specialists learnt in the interview stays with them.
+    interview_staff.keep_notes(db, swimmer, messages)
     db.query(models.ProfileWizardDraft).filter(
         models.ProfileWizardDraft.swimmer_id == swimmer_id,
     ).delete()
