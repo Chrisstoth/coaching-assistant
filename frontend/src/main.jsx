@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { getToken, setToken } from './api'
 import { LaneWatchLockup } from './components/LaneWatchBrand'
+import UpdateBanner from './components/UpdateBanner'
 import './index.css'
 
 function LoginScreen({ onLogin }) {
@@ -84,6 +85,7 @@ function Root() {
 
   return (
     <BrowserRouter>
+      <UpdateBanner />
       <App />
     </BrowserRouter>
   )

@@ -31,6 +31,30 @@ export function primeMicrophone() {
   }
 }
 
+// A short rising tone: "your turn". Useful with earbuds, where the coach is not
+// looking at the screen. Returns how long it lasts, in milliseconds.
+const BEEP_MS = 180
+function beep() {
+  if (!sharedContext) return 0
+  try {
+    const start = sharedContext.currentTime
+    const tone = sharedContext.createOscillator()
+    const volume = sharedContext.createGain()
+    tone.type = 'sine'
+    tone.frequency.setValueAtTime(660, start)
+    tone.frequency.linearRampToValueAtTime(990, start + BEEP_MS / 1000)
+    volume.gain.setValueAtTime(0.0001, start)
+    volume.gain.exponentialRampToValueAtTime(0.25, start + 0.02)
+    volume.gain.exponentialRampToValueAtTime(0.0001, start + BEEP_MS / 1000)
+    tone.connect(volume).connect(sharedContext.destination)
+    tone.start(start)
+    tone.stop(start + BEEP_MS / 1000 + 0.02)
+    return BEEP_MS
+  } catch {
+    return 0
+  }
+}
+
 // Listen for the speaker pausing. The level of the room is measured for the
 // first moments, so a noisy pool hall does not count as talking.
 function watchForPause(stream, { onPause, onNothing }) {
@@ -122,13 +146,23 @@ export default function useWhisperVoice(onResult, { onNoSpeech } = {}) {
       recorderRef.current = recorder
       setRecording(true)
       if (autoStop) {
-        unwatchRef.current = watchForPause(stream, {
-          onPause: () => finish(false),
-          onNothing: () => {
-            finish(true)
-            noSpeechRef.current?.()
-          },
-        })
+        // Beep once the mic is really open - with Bluetooth earbuds that
+        // takes a moment - then start measuring the room after the beep, so
+        // the tone itself is not mistaken for talking.
+        let unwatch = () => {}
+        const wait = window.setTimeout(() => {
+          unwatch = watchForPause(stream, {
+            onPause: () => finish(false),
+            onNothing: () => {
+              finish(true)
+              noSpeechRef.current?.()
+            },
+          })
+        }, beep() + 120)
+        unwatchRef.current = () => {
+          window.clearTimeout(wait)
+          unwatch()
+        }
       }
     } catch (e) {
       setError(e.name === 'NotAllowedError'

@@ -442,6 +442,21 @@ export default function ProfileWizard() {
     if (!readLatest()) startMic({ autoStop: true })
   }
 
+  // Starting by voice: everything is switched on from this one tap, which is
+  // what lets a phone play the staff's voices and open the mic later.
+  const startByVoice = () => {
+    unlockSpeech()
+    primeMicrophone()
+    setHandsFreeNote(null)
+    setVoiceOn(true)
+    if (micSupported) {
+      setHandsFree(true)
+      handsFreeRef.current = true
+    }
+    spokenUpTo.current = 0
+    startInterview()
+  }
+
   const toggleMic = () => {
     if (recording) {
       stopMic()
@@ -673,14 +688,29 @@ export default function ProfileWizard() {
                 {drafting ? 'Preparing carry-over…' : 'Carry over existing profile evidence'}
               </button>
             )}
-            <button
-              type="button"
-              onClick={startInterview}
-              disabled={drafting}
-              className={`w-full rounded-xl py-2.5 text-sm font-semibold disabled:opacity-50 ${swimmer?.profile_status?.has_profile ? 'border border-pool-600 text-pool-300' : 'bg-accent-600 text-white'}`}
-            >
-              Start tailored in-app interview
-            </button>
+            <p className="text-xs text-pool-400 pt-1">Start the interview with Sam and the staff:</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={startByVoice}
+                disabled={drafting}
+                className={`rounded-xl py-3 px-2 text-sm font-semibold disabled:opacity-50 ${swimmer?.profile_status?.has_profile ? 'border border-pool-600 text-pool-200' : 'bg-accent-600 text-white'}`}
+              >
+                Talk it through
+                <span className="block text-[10px] font-normal opacity-80 mt-0.5">
+                  {micSupported ? 'They speak, you answer out loud' : 'They speak, you type'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => startInterview()}
+                disabled={drafting}
+                className="rounded-xl py-3 px-2 text-sm font-semibold border border-pool-600 text-pool-200 disabled:opacity-50"
+              >
+                Type it
+                <span className="block text-[10px] font-normal opacity-80 mt-0.5">Read and type; voice can be turned on later</span>
+              </button>
+            </div>
 
             <p className="text-[10px] text-pool-600 text-center">The API interview saves a draft as you go; the swimmer profile changes only when you choose Save Profile.</p>
           </div>
@@ -867,7 +897,7 @@ export default function ProfileWizard() {
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
                 </svg>
-                {handsFree ? 'Hands-free on' : 'Hands-free'}
+                {handsFree ? 'Talking it through' : 'Talk it through'}
               </button>
             )}
             {playing && (
