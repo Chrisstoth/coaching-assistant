@@ -42,7 +42,7 @@ let playing = null          // { key, speaker } of the line being heard
 let generation = 0          // bumped by stop(), so a late fetch does not play
 const listeners = new Set()
 const finishedListeners = new Set()
-const cache = new Map()     // key -> object URL of audio already fetched
+const cache = new Map()     // speaker|text -> promise of an object URL for its audio
 
 function element() {
   if (!audio && typeof Audio !== 'undefined') audio = new Audio()
@@ -90,26 +90,65 @@ export function stop() {
   notify()
 }
 
+// A little quicker than the voices' natural pace: conversation, not narration.
+const PLAYBACK_RATE = 1.08
+
+// Lines are spoken a sentence or two at a time. Every piece is requested at
+// once, so the first sentence plays while the rest are still being made, and
+// the next speaker's audio is ready the moment the last one stops.
+const FIRST_PIECE = 140
+const PIECE = 260
+
+export function pieces(text) {
+  // A sentence ends at . ! or ? followed by a space - never inside 2:15.4.
+  const sentences = text.replace(/([.!?]+["')\]]*)\s+/g, '$1\u0000').split('\u0000').map(part => `${part} `)
+  const out = []
+  let current = ''
+  for (const sentence of sentences) {
+    const limit = out.length ? PIECE : FIRST_PIECE
+    if (current && (current + sentence).length > limit) {
+      out.push(current.trim())
+      current = sentence
+    } else {
+      current += sentence
+    }
+  }
+  if (current.trim()) out.push(current.trim())
+  return out.filter(Boolean)
+}
+
 // Read one line now, or several in order. Each item: { text, speaker, key? }.
 export function say(items) {
   stop()
-  queue = (Array.isArray(items) ? items : [items]).filter(item => item?.text?.trim())
+  queue = []
+  for (const item of Array.isArray(items) ? items : [items]) {
+    if (!item?.text?.trim()) continue
+    const speaker = item.speaker || 'interviewer'
+    for (const text of pieces(item.text)) {
+      queue.push({ text, speaker, key: item.key ?? null, audio: fetchAudio(text, speaker).catch(() => null) })
+    }
+  }
   next(generation)
 }
 
-async function fetchAudio(text, speaker) {
+function fetchAudio(text, speaker) {
   const cacheKey = `${speaker}|${text}`
-  if (cache.has(cacheKey)) return cache.get(cacheKey)
-  const token = getToken()
-  const res = await fetch('/api/staff/speak', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ text, speaker }),
-  })
-  if (!res.ok) throw new Error(`Speech unavailable (${res.status})`)
-  const url = URL.createObjectURL(await res.blob())
-  cache.set(cacheKey, url)
-  return url
+  if (!cache.has(cacheKey)) {
+    const request = (async () => {
+      const token = getToken()
+      const res = await fetch('/api/staff/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ text, speaker }),
+      })
+      if (!res.ok) throw new Error(`Speech unavailable (${res.status})`)
+      return URL.createObjectURL(await res.blob())
+    })()
+    // A failed request is forgotten, so the next attempt asks again.
+    request.catch(() => cache.delete(cacheKey))
+    cache.set(cacheKey, request)
+  }
+  return cache.get(cacheKey)
 }
 
 function phoneVoice(text, speaker, done) {
@@ -119,7 +158,7 @@ function phoneVoice(text, speaker, done) {
   const tone = FALLBACK[speaker] || FALLBACK.interviewer
   utterance.lang = 'en-GB'
   utterance.pitch = tone.pitch
-  utterance.rate = tone.rate
+  utterance.rate = tone.rate * PLAYBACK_RATE
   utterance.onend = done
   utterance.onerror = done
   synth.speak(utterance)
@@ -134,19 +173,26 @@ async function next(run) {
     for (const listener of finishedListeners) listener()
     return
   }
-  const speaker = item.speaker || 'interviewer'
-  playing = { key: item.key ?? null, speaker }
-  notify()
+  if (!playing || playing.key !== item.key || playing.speaker !== item.speaker) {
+    playing = { key: item.key, speaker: item.speaker }
+    notify()
+  }
   const done = () => { if (run === generation) next(run) }
+  const url = await item.audio
+  if (run !== generation) return
+  if (!url) {
+    phoneVoice(item.text, item.speaker, done)
+    return
+  }
   try {
-    const url = await fetchAudio(item.text, speaker)
-    if (run !== generation) return
     const el = element()
     el.onended = done
     el.src = url
+    el.defaultPlaybackRate = PLAYBACK_RATE
+    el.playbackRate = PLAYBACK_RATE
     await el.play()
   } catch {
     if (run !== generation) return
-    phoneVoice(item.text, speaker, done)
+    phoneVoice(item.text, item.speaker, done)
   }
 }

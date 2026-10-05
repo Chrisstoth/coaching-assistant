@@ -5,9 +5,15 @@ much as to the coach: the physiologist owns aerobic base, fatigue and training
 response; the analyst owns speed, race patterns and how the swimmer races under
 pressure; the swimmer manager owns the swimmer as a person. So:
 
-1. Before the first question, each of them reads their own slice of the
-   swimmer's data and hands the interviewer the questions only the coach can
-   answer - at most two each, often none.
+1. Before the first question, each of them reads what is already known of the
+   swimmer and hands the interviewer the background questions they most want
+   answered - at most two each, often none.
+
+The foundation is background: who the swimmer is, from what the coach knows of
+them over time. It is not a review of the season - attendance, sessions,
+yardage and load are tracked by the app, and the staff work with them through
+the season alongside the swimmer manager. So in the interview the staff read
+the same background the interviewer does, not their current-season data.
 2. The interviewer works those questions in where they fit and says who is
    asking. It tags the message with [[ASKING_FOR <id>]], which is stripped
    before the coach sees it.
@@ -16,7 +22,7 @@ pressure; the swimmer manager owns the swimmer as a person. So:
    follow-up. A specialist the coach names directly ("what does the physio
    think?") answers too.
 4. When the coach saves the profile, the specialists' notes are kept as staff
-   notes on the swimmer, so the next staff meeting starts from what was learnt.
+   notes on the swimmer, so the season's work starts from what was learnt.
 
 Messages from a specialist are stored in the interview transcript as assistant
 messages with a ``speaker``. The interviewer reads them as colleagues' remarks
@@ -37,7 +43,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend import models
 from backend.services import claude_service
 from backend.services import staff_room
-from backend.services.staff_room import ROSTER, Subject
+from backend.services.staff_room import ROSTER
 
 # Who sits in on a foundation interview, and the areas each of them owns.
 INTERVIEW_STAFF = {
@@ -79,15 +85,22 @@ def _gender_rule() -> str:
 
 
 def _role_data(db: DBSession, swimmer: models.Swimmer, roles) -> dict:
-    """Each specialist's data, read before any threads start: the session is
-    not shared across threads."""
-    subject = Subject(swimmer_ids=[swimmer.id])
+    """What each specialist reads: the swimmer's background, as the
+    interviewer sees it, with the coach's own rules for that role first.
+    Read before any threads start: the session is not shared across threads."""
+    try:
+        context = claude_service.build_foundation_interview_context(swimmer, db)
+        background = json.dumps(claude_service.foundation_background(context), ensure_ascii=False)
+    except Exception:
+        background = "(nothing on file for this swimmer yet)"
+    from backend.services import coach_guidance
     data = {}
     for role in roles:
         try:
-            data[role] = staff_room.role_context(role, db, subject)
+            rules = coach_guidance.prompt_block(db, role)
         except Exception:
-            data[role] = "(no data on file for this yet)"
+            rules = ""
+        data[role] = f"{rules}\n\n{background}" if rules else background
     return data
 
 
@@ -107,21 +120,31 @@ _AGENDA_SYSTEM = """You are {staff_name}, the {title} on a swimming coaching sta
 
 Your remit: {remit}
 
-The head coach is about to be interviewed to build {name}'s foundation profile.
+The head coach is about to be interviewed to build {name}'s foundation profile:
+a background picture of who they are as an athlete and as a person, from what
+the coach knows of them over time. It is the starting point. Through the
+season you and the rest of the staff, working with {manager}, will build on it
+and adapt it from the training data.
+
 It covers nine areas: aerobic base, sprint and power, race patterns, fatigue and
 recovery, training response, motivation, competition mindset, hard-training
 mindset and coachability. The areas that are yours: {areas}.
 
-Read your data and decide what you need the coach to tell you - things only the
-coach can see from the poolside, which your data raises or cannot settle.
-- Ground each question in your data: name the date, time, set or figure behind it.
-- Ask about {name} specifically. Never invent data.
-- {gender}
+What would you most want to know about {name}'s background before you start
+working with them? Ask about history and tendencies: how they typically
+respond, what the coach has seen over time, anything in their past - growth,
+injuries, illness, setbacks, a change of club or coach - that shapes how to
+work with them.
+- Never ask about this season's attendance, how many sessions they have done,
+  yardage or distance, training load, or particular recent sessions. The app
+  records those, and you will follow them yourself through the season.
+- Do not ask for anything already in what is known below. Never invent facts.
+- Ask about {name} specifically. {gender}
 - At most {max_questions} questions; fewer is better. None if your areas are
-  already well covered or your data gives you nothing to go on.
+  already well covered.
 
 Return JSON only:
-{{"questions": [{{"area": "one of your areas", "question": "what you want to ask the coach", "why": "what in your data makes you ask, in twenty words or fewer"}}]}}"""
+{{"questions": [{{"area": "one of your areas", "question": "what you want to ask the coach", "why": "why it matters for working with them, in twenty words or fewer"}}]}}"""
 
 
 def open_agenda(db: DBSession, swimmer: models.Swimmer, coverage: Optional[dict] = None) -> list:
@@ -136,11 +159,11 @@ def open_agenda(db: DBSession, swimmer: models.Swimmer, coverage: Optional[dict]
         r = ROSTER[role]
         system = _AGENDA_SYSTEM.format(
             staff_name=r.name, title=r.title, remit=r.remit, name=swimmer.name,
-            areas=", ".join(INTERVIEW_STAFF[role]), gender=_gender_rule(),
+            manager=ROSTER["manager"].label, areas=", ".join(INTERVIEW_STAFF[role]), gender=_gender_rule(),
             max_questions=MAX_QUESTIONS_EACH,
         )
         user = (f"FOUNDATION AREAS ALREADY CONFIRMED: {covered}\n"
-                f"STILL MISSING: {missing}\n\nYOUR DATA:\n{data[role]}")
+                f"STILL MISSING: {missing}\n\nWHAT IS ALREADY KNOWN:\n{data[role]}")
         return role, _ask(system, user, 700, f"interview_agenda_{role}")
 
     questions = []
@@ -233,13 +256,14 @@ Return JSON only:
 {{"note": "...", "follow_up": "..."}}
 - note: {note_rule}
 - follow_up: {follow_up_rule}
-Rules: be specific - use the names, dates and numbers in your data. Never invent
-data. {gender} Plain coaching language, no thanks, no preamble, no restating
+This is a background interview: never ask about this season's attendance,
+sessions, yardage or load. Be specific to the swimmer. Never invent facts.
+{gender} Plain coaching language, no thanks, no preamble, no restating
 what the coach said."""
 
-_NOTE_WHEN_ASKED = ("one or two sentences to the coach, only if the answer connects to your data - "
-                    "it agrees with it, contradicts it, or explains it - or changes what you would "
-                    "recommend. Otherwise null.")
+_NOTE_WHEN_ASKED = ("one or two sentences to the coach, only if the answer changes how you will work "
+                    "with the swimmer this season, or there is something you will now keep an eye on. "
+                    "Otherwise null.")
 _NOTE_WHEN_ADDRESSED = "your answer to the coach in two or three sentences, from your data. Never null."
 _FOLLOW_UP_ALLOWED = ("one short question, only if the answer left something you genuinely need "
                       "unclear. Otherwise null.")
@@ -309,7 +333,7 @@ def hear_answer(db: DBSession, swimmer: models.Swimmer, messages: list, question
         system = _HEAR_SYSTEM.format(staff_name=r.name, title=r.title, remit=r.remit, name=swimmer.name,
                                      situation=situation, note_rule=note_rule,
                                      follow_up_rule=follow_up_rule, gender=_gender_rule())
-        user = f"THE INTERVIEW SO FAR:\n{tail}\n\nYOUR DATA:\n{data[role]}"
+        user = f"THE INTERVIEW SO FAR:\n{tail}\n\nWHAT IS ALREADY KNOWN:\n{data[role]}"
         return role, question, _ask(system, user, 500, f"interview_hear_{role}")
 
     said = []

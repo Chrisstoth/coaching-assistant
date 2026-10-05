@@ -33,21 +33,26 @@ class Voice:
     manner: str        # how this person speaks
 
 
+# Every voice talks at a natural conversational pace: this is a quick chat on
+# the poolside, not a narration. Earlier descriptions ("unhurried", "measured",
+# "deliberate") were taken literally and made everyone slow.
+_PACE = " Speak at a brisk, natural conversational pace, with no long pauses."
+
 VOICES = {
-    "interviewer": Voice("sage", "A calm, warm British coaching colleague with a neutral southern English accent. "
-                                 "Conversational and unhurried; asks questions with genuine curiosity."),
-    "physiologist": Voice("coral", "A thoughtful sports scientist with a soft Scottish accent. Calm, careful and "
-                                   "measured, with a slight pause before an important point."),
-    "analyst": Voice("ash", "A sharp performance analyst with a London accent. Brisk and precise, a little quicker "
-                            "than average, leaning on the numbers."),
-    "planner": Voice("onyx", "A steady, experienced periodisation planner with a Yorkshire accent. Deep, deliberate "
-                             "and unflappable; speaks like someone who has seen many seasons."),
-    "manager": Voice("nova", "A warm, caring swimmer manager with a gentle Irish accent. Friendly and encouraging, "
-                             "always thinking about the swimmer as a person."),
+    "interviewer": Voice("sage", "A warm, friendly British coaching colleague with a neutral southern English "
+                                 "accent. Conversational and curious." + _PACE),
+    "physiologist": Voice("coral", "A thoughtful sports scientist with a soft Scottish accent. Calm and clear, "
+                                   "explaining things simply." + _PACE),
+    "analyst": Voice("ash", "A sharp performance analyst with a London accent. Quick and precise, leaning on "
+                            "the numbers." + _PACE),
+    "planner": Voice("onyx", "An experienced periodisation planner with a Yorkshire accent. Deep, steady and "
+                             "confident; has seen many seasons." + _PACE),
+    "manager": Voice("nova", "A warm, caring swimmer manager with a gentle Irish accent. Friendly and "
+                             "encouraging, thinking about the swimmer as a person." + _PACE),
     "meets": Voice("echo", "An upbeat, organised meet manager with a Welsh accent. Energetic and practical, "
-                           "like someone with a clipboard and a timetable."),
-    "sessions": Voice("shimmer", "An enthusiastic poolside session writer with an Australian accent. Lively and "
-                                 "practical, sounds like she is standing on deck."),
+                           "like someone with a clipboard and a timetable." + _PACE),
+    "sessions": Voice("shimmer", "An enthusiastic poolside session writer with an Australian accent. Lively "
+                                 "and practical, sounds like she is standing on deck." + _PACE),
 }
 DEFAULT_SPEAKER = "interviewer"
 

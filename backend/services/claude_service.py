@@ -6182,7 +6182,7 @@ def _run_session_plan_conversation(conversation: list, db: DBSession) -> dict:
 
 WIZARD_SYSTEM = """You are Sam, who leads the coaching staff's interviews. You are running a structured biological profiling interview for a swimming coach.
 
-Your job is to build a deep, evidence-based biological profile of a swimmer by asking targeted questions and interpreting the coach's responses alongside the swimmer's times data.
+Your job is to build the swimmer's foundation: a background profile of who they are as an athlete and as a person, drawn from what the coach knows of them over time. It is the starting point. Through the season the staff, working with the swimmer manager, build on it and adapt it from the training data.
 
 The profile you build must be useful for:
 - Session and season planning (what training will work for this swimmer)
@@ -6201,8 +6201,9 @@ Foundation areas to cover across the conversation:
 9. COACHABILITY — how they receive, understand, retain, and act on feedback
 
 Rules:
+- This is background, not a review of this season. Never ask about attendance, how many sessions they have done, yardage or distance swum, training load, or particular recent sessions — the app records those and the staff follow them through the season. Ask about history and tendencies: what the coach has seen over time, how the swimmer typically responds, what they are like.
 - Ask one focused area at a time. Don't fire a list of questions.
-- Reference the times data when you have it — e.g. "I can see their 200 times have plateaued while their 100 has improved — what do you notice about their endurance in training?"
+- Their events and best times are light context only (e.g. "they swim mostly 100s and 200s — how do they handle longer aerobic work?"). The coach's knowledge is the evidence; don't quiz the coach on times or numbers.
 - Build on what the coach says — ask follow-up questions to get specifics, not generic answers.
 - When you have enough on an area, move to the next one naturally.
 - Be professional and direct — coaching partner tone, not chatbot.
@@ -6373,6 +6374,15 @@ def _repeats_prior_question(reply: str, prior_questions: list[str]) -> bool:
     return False
 
 
+def foundation_background(context: dict) -> dict:
+    """The interview context without this season's session detail.
+
+    The foundation is background; session-by-session notes would pull the
+    interview towards reviewing the season, which the staff do over time.
+    """
+    return {key: value for key, value in context.items() if key != "recent_session_observations"}
+
+
 def wizard_chat(
     swimmer: models.Swimmer,
     messages: list[dict],
@@ -6402,8 +6412,8 @@ def wizard_chat(
             if cleaned:
                 prior_questions.append(cleaned[-320:])
 
-    swimmer_intro = f"""SWIMMER-SPECIFIC EVIDENCE:
-{json.dumps(context, ensure_ascii=False)}
+    swimmer_intro = f"""WHAT IS ALREADY KNOWN ABOUT THIS SWIMMER (background only):
+{json.dumps(foundation_background(context), ensure_ascii=False)}
 
 STORED FOUNDATION PROGRESS BEFORE THIS INTERVIEW:
 Already covered: {completed_areas}
@@ -6417,7 +6427,7 @@ INTERVIEW CONTROL:
 - Before replying, privately build a nine-area coverage ledger from stored evidence plus the conversation.
 - Do not ask a question that is semantically equivalent to anything in QUESTIONS ALREADY ASKED.
 - Select the next missing or ambiguous area; if the coach just gave a broad answer, ask one concrete follow-up before moving on.
-- Make the question recognisably about {swimmer.name}: anchor it to one supplied target event, time trend, coach observation, profile fact or prior answer when relevant evidence exists.
+- Make the question recognisably about {swimmer.name}: anchor it to their events, an existing profile fact, a coach note or a prior answer when relevant. Never anchor it to this season's sessions, attendance, yardage or load.
 - Never use another swimmer's pattern as a template and never infer psychological traits from times.
 - Ask one question at a time. State briefly why this particular missing detail matters for coaching {swimmer.name}.
 - If all nine areas are covered, stop interviewing, summarise the remaining uncertainty, tell the coach to tap "Save Profile" at the top of the screen, and end the message on its own new line with the exact text [[READY_TO_SAVE]].

@@ -13,8 +13,10 @@ import { api } from '../api'
  */
 
 // How long a pause ends an answer, and how long to wait for one to start.
-// Coaches think mid-answer, so the pause is generous.
-const SILENCE_MS = 2200
+// Coaches think mid-answer, so a longer answer is allowed a longer pause.
+const SILENCE_MS = 2000
+const LONG_ANSWER_SILENCE_MS = 2600
+const LONG_ANSWER_MS = 8000
 const NO_SPEECH_MS = 9000
 const MAX_MS = 180000
 
@@ -55,43 +57,67 @@ function beep() {
   }
 }
 
-// Listen for the speaker pausing. The level of the room is measured for the
-// first moments, so a noisy pool hall does not count as talking.
+// Listen for the speaker pausing.
+//
+// What counts as talking is judged against the background, and the background
+// is learnt all the time rather than measured once: the quietest moments of
+// the last few seconds (the gaps between words) are the room. Measuring it
+// once at the start went wrong when the coach began talking straight after the
+// beep - their own voice became "the room", and anything quieter than their
+// loudest words looked like a pause.
+const TICK_MS = 50
+const ROOM_WINDOW = 120            // readings: six seconds
+const ROOM_PERCENTILE = 0.1
+const QUIETEST_TALKING = 0.006     // earbuds' noise suppression makes voices quiet
+
+export function talkingThreshold(levels) {
+  if (!levels.length) return QUIETEST_TALKING
+  const sorted = [...levels].sort((a, b) => a - b)
+  const room = sorted[Math.floor((sorted.length - 1) * ROOM_PERCENTILE)]
+  return Math.max(QUIETEST_TALKING, room * 2.2, room + 0.004)
+}
+
 function watchForPause(stream, { onPause, onNothing }) {
   if (!sharedContext) return () => {}
   const source = sharedContext.createMediaStreamSource(stream)
   const analyser = sharedContext.createAnalyser()
-  analyser.fftSize = 1024
+  analyser.fftSize = 2048
   source.connect(analyser)
-  const samples = new Uint8Array(analyser.fftSize)
+  const samples = new Float32Array(analyser.fftSize)
   const started = Date.now()
-  let room = 0
-  let roomReadings = 0
-  let heard = false
+  const levels = []
+  let loudTicks = 0
+  let firstVoice = 0
   let lastVoice = 0
 
   const timer = window.setInterval(() => {
-    analyser.getByteTimeDomainData(samples)
+    analyser.getFloatTimeDomainData(samples)
     let sum = 0
-    for (const sample of samples) {
-      const centred = (sample - 128) / 128
-      sum += centred * centred
-    }
+    for (const sample of samples) sum += sample * sample
     const level = Math.sqrt(sum / samples.length)
     const now = Date.now()
-    if (now - started < 400) {
-      room = (room * roomReadings + level) / (roomReadings + 1)
-      roomReadings += 1
-      return
+
+    const threshold = talkingThreshold(levels)
+    levels.push(level)
+    if (levels.length > ROOM_WINDOW) levels.shift()
+
+    if (level > threshold) {
+      loudTicks += 1
+      // A couple of loud readings in a row, not one click or knock.
+      if (loudTicks >= 2) {
+        if (!firstVoice) firstVoice = now
+        lastVoice = now
+      }
+    } else {
+      loudTicks = 0
     }
-    if (level > Math.max(0.025, room * 2.5)) {
-      heard = true
-      lastVoice = now
-    }
-    if (heard && now - lastVoice > SILENCE_MS) onPause()
+
+    const heard = Boolean(firstVoice)
+    const pause = lastVoice - firstVoice > LONG_ANSWER_MS ? LONG_ANSWER_SILENCE_MS : SILENCE_MS
+    if (heard && now - lastVoice > pause) onPause()
     else if (!heard && now - started > NO_SPEECH_MS) onNothing()
     else if (now - started > MAX_MS) onPause()
-  }, 100)
+  }, TICK_MS)
 
   return () => {
     window.clearInterval(timer)

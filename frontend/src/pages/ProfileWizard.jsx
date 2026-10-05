@@ -62,7 +62,7 @@ function spokenText(message) {
 
 // Hands-free: an answer is sent this long after it is written down, unless
 // the coach taps to edit it first.
-const AUTO_SEND_MS = 3000
+const AUTO_SEND_MS = 2000
 
 // "Save it", "save the profile", "yes, save" - said once the interview is done.
 function asksToSave(text) {

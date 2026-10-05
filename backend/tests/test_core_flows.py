@@ -447,7 +447,11 @@ class CoreFlowTests(unittest.TestCase):
             db.commit()
             swimmer_id = swimmer.id
 
+        agenda_prompts = []
+
         def staff(system, user, max_tokens, operation):
+            if operation.startswith("interview_agenda_"):
+                agenda_prompts.append(system)
             if operation == "interview_agenda_physiologist":
                 return {"questions": [{"area": "fatigue and recovery",
                                        "question": "How does she look by Friday in a heavy week?",
@@ -478,6 +482,13 @@ class CoreFlowTests(unittest.TestCase):
         system_prompt = client.return_value.messages.create.call_args.kwargs["system"]
         self.assertIn("How does she look by Friday in a heavy week?", system_prompt)
         self.assertIn("[[ASKING_FOR <id>]]", system_prompt)
+        # The foundation is background, not a review of the season.
+        self.assertIn("Never ask about attendance, how many sessions they have done, yardage", system_prompt)
+        self.assertNotIn("recent_session_observations", system_prompt)
+        self.assertEqual(len(agenda_prompts), 3)
+        for prompt in agenda_prompts:
+            self.assertIn("Never ask about this season's attendance", prompt)
+            self.assertNotIn("Ground each question in your data", prompt)
 
         # The coach answers the physiologist and asks the analyst directly.
         history = [*body["messages"], {"role": "user", "content": "Flat by Friday. What does the analyst think?"}]
