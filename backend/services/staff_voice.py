@@ -36,11 +36,12 @@ class Voice:
 # Every voice talks at a natural conversational pace: this is a quick chat on
 # the poolside, not a narration. Earlier descriptions ("unhurried", "measured",
 # "deliberate") were taken literally and made everyone slow.
-_PACE = " Speak at a brisk, natural conversational pace, with no long pauses."
+_PACE = (" Speak at a brisk, natural conversational pace, with no long pauses. Speak clearly, at a steady"
+         " volume, and project as if talking across a busy pool deck.")
 
 VOICES = {
-    "interviewer": Voice("sage", "A warm, friendly British coaching colleague with a neutral southern English "
-                                 "accent. Conversational and curious." + _PACE),
+    "interviewer": Voice("sage", "A friendly, confident British coaching colleague with a neutral southern "
+                                 "English accent. Conversational and curious, with a clear, full voice." + _PACE),
     "physiologist": Voice("coral", "A thoughtful sports scientist with a soft Scottish accent. Calm and clear, "
                                    "explaining things simply." + _PACE),
     "analyst": Voice("ash", "A sharp performance analyst with a London accent. Quick and precise, leaning on "

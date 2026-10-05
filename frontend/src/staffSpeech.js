@@ -47,6 +47,60 @@ const listeners = new Set()
 const finishedListeners = new Set()
 const cache = new Map()     // speaker|text -> promise of an object URL for its audio
 
+// The leveller: every voice is evened out and brought up to one strong,
+// steady loudness before it reaches the coach's ears - like radio. Each
+// sentence is made separately, and the speech service does not make them
+// equally loud; some voices (Sam's especially) are softer than others. Poolside
+// is noisy, so quiet is worse than loud.
+//
+// Sound only passes through it while its audio context is running. If the
+// phone has suspended it, lines play through the plain element instead, so
+// the staff are never silenced - just not levelled.
+const SPEAKER_TRIM = { interviewer: 1.3 }
+const LEVEL_GAIN = 1.6
+let leveller = null
+
+function levelled() {
+  if (leveller !== null) return leveller || null
+  try {
+    const Context = window.AudioContext || window.webkitAudioContext
+    if (!Context || typeof Audio === 'undefined') throw new Error('no audio context')
+    const context = new Context()
+    const el = new Audio()
+    const source = context.createMediaElementSource(el)
+    const evener = context.createDynamicsCompressor()
+    evener.threshold.value = -30
+    evener.knee.value = 12
+    evener.ratio.value = 4
+    evener.attack.value = 0.005
+    evener.release.value = 0.25
+    const gain = context.createGain()
+    gain.gain.value = LEVEL_GAIN
+    // A hard ceiling after the boost, so it is loud but never distorts.
+    const ceiling = context.createDynamicsCompressor()
+    ceiling.threshold.value = -2
+    ceiling.knee.value = 0
+    ceiling.ratio.value = 20
+    ceiling.attack.value = 0.001
+    ceiling.release.value = 0.1
+    source.connect(evener).connect(gain).connect(ceiling).connect(context.destination)
+    leveller = { context, element: el, gain }
+  } catch {
+    leveller = false
+  }
+  return leveller || null
+}
+
+// The element to play the next line through, set to its speaker's level.
+function playerFor(speaker) {
+  const level = levelled()
+  if (level && level.context.state === 'running') {
+    level.gain.gain.value = LEVEL_GAIN * (SPEAKER_TRIM[speaker] || 1)
+    return level.element
+  }
+  return element()
+}
+
 function element() {
   if (!audio && typeof Audio !== 'undefined') audio = new Audio()
   return audio
@@ -80,6 +134,12 @@ export function isBusy() {
 // Call from a tap before any automatic speaking.
 export function unlock() {
   forSpeaking()
+  const level = levelled()
+  if (level) {
+    level.context.resume?.().catch(() => {})
+    level.element.src = silence()
+    level.element.play().catch(() => {})
+  }
   const el = element()
   if (!el) return
   el.src = silence()
@@ -93,9 +153,10 @@ export function stop() {
   running = false
   holding = false
   playing = null
-  if (audio) {
-    audio.pause()
-    audio.onended = null
+  for (const el of [audio, leveller ? leveller.element : null]) {
+    if (!el) continue
+    el.pause()
+    el.onended = null
   }
   try { window.speechSynthesis?.cancel() } catch { /* not available */ }
   notify()
@@ -143,6 +204,9 @@ function queued(items) {
 // Read one line now, or several in order. Each item: { text, speaker, key? }.
 export function say(items) {
   stop()
+  // Usually called from a tap, which is when a phone lets the leveller start.
+  const level = levelled()
+  if (level && level.context.state !== 'running') level.context.resume?.()?.catch?.(() => {})
   queue = queued(items)
   running = true
   next(generation)
@@ -231,15 +295,38 @@ async function next(run) {
     phoneVoice(item.text, item.speaker, done)
     return
   }
-  try {
-    const el = element()
+  const playOn = async (el) => {
     el.onended = done
     el.src = url
     el.defaultPlaybackRate = PLAYBACK_RATE
     el.playbackRate = PLAYBACK_RATE
-    await el.play()
+    try {
+      await el.play()
+    } catch (e) {
+      el.onended = null
+      throw e
+    }
+  }
+  const level = leveller || null
+  if (level && level.context.state !== 'running') {
+    await Promise.race([level.context.resume?.(), new Promise(resolve => setTimeout(resolve, 300))]).catch(() => {})
+    if (run !== generation) return
+  }
+  const player = playerFor(item.speaker)
+  try {
+    await playOn(player)
+    return
   } catch {
     if (run !== generation) return
-    phoneVoice(item.text, item.speaker, done)
   }
+  // The levelled player was refused: the plain one, then the phone's voice.
+  if (player !== element()) {
+    try {
+      await playOn(element())
+      return
+    } catch {
+      if (run !== generation) return
+    }
+  }
+  phoneVoice(item.text, item.speaker, done)
 }
