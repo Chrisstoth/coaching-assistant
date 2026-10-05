@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api } from '../api'
+import { forListening, forSpeaking } from '../audioRoute'
 
 /**
  * Push-to-talk dictation via the server's Whisper endpoint.
@@ -188,7 +189,15 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
     if (recording || transcribing) return
     setError(null)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      forListening()
+      // Echo cancellation is what makes Android Chrome treat the page as a
+      // phone call: the call volume takes over and the staff's voices leave
+      // the coach's earbuds for the phone's speaker. Nothing is ever played
+      // while the mic is open, so there is no echo to cancel. Noise
+      // suppression and automatic gain stay on.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
+      })
       const mimeType = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/mp4'
       const recorder = new MediaRecorder(stream, { mimeType })
       chunksRef.current = []
@@ -196,6 +205,8 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop())
+        // Out of "phone call" mode, so the staff are heard in the earbuds again.
+        forSpeaking()
         if (discardRef.current) return
         const blob = new Blob(chunksRef.current, { type: mimeType })
         setTranscribing(true)
@@ -232,6 +243,7 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
         }
       }
     } catch (e) {
+      forSpeaking()
       setError(e.name === 'NotAllowedError'
         ? 'Microphone blocked — tap the lock icon in your address bar to allow it.'
         : `Microphone unavailable: ${e.message}`)

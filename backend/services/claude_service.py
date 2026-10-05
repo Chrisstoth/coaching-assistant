@@ -6409,7 +6409,7 @@ def foundation_background(context: dict) -> dict:
 
 
 WIZARD_SPOKEN = """SPOKEN CONVERSATION:
-The coach is talking with you out loud and hears your reply as speech. The moment they finish, they already hear you say a short acknowledgement ("Mm, okay."), so never open with thanks, "great" or "that's helpful" - go straight to your point.
+The coach is talking with you out loud and hears your reply as speech. Don't open with thanks, "great" or "that's helpful" - go straight to your point.
 Talk like a person, not a document: no lists, headings or bullet points. Keep it short - a sentence or two on what you took from their answer, then your one question."""
 
 

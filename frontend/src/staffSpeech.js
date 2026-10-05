@@ -1,4 +1,5 @@
 import { liveFetch } from './api'
+import { forSpeaking } from './audioRoute'
 
 // The staff speaking aloud, each in their own voice (see staff_voice.py on the
 // server). One player for the whole app: starting a new line stops the last,
@@ -78,6 +79,7 @@ export function isBusy() {
 
 // Call from a tap before any automatic speaking.
 export function unlock() {
+  forSpeaking()
   const el = element()
   if (!el) return
   el.src = silence()
@@ -174,23 +176,6 @@ export function release(token = generation) {
   }
 }
 
-// What the interviewer says the moment the coach finishes, while the real
-// reply is being written: the "mm, okay" of a real conversation. Made once
-// and kept, so it plays at once.
-const ACKNOWLEDGEMENTS = ['Mm, okay.', 'Right.', 'Okay.', 'Mm-hm.', 'Got it.', 'Right, okay.']
-let lastAcknowledgement = -1
-
-export function prepareAcknowledgements() {
-  for (const text of ACKNOWLEDGEMENTS) fetchAudio(text, 'interviewer').catch(() => {})
-}
-
-export function acknowledge(token = generation) {
-  let index = Math.floor(Math.random() * ACKNOWLEDGEMENTS.length)
-  if (index === lastAcknowledgement) index = (index + 1) % ACKNOWLEDGEMENTS.length
-  lastAcknowledgement = index
-  enqueue({ text: ACKNOWLEDGEMENTS[index], speaker: 'interviewer', key: 'acknowledgement' }, token)
-}
-
 function fetchAudio(text, speaker) {
   const cacheKey = `${speaker}|${text}`
   if (!cache.has(cacheKey)) {
@@ -239,6 +224,7 @@ async function next(run) {
     notify()
   }
   const done = () => { if (run === generation) next(run) }
+  forSpeaking()
   const url = await item.audio
   if (run !== generation) return
   if (!url) {

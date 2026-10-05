@@ -7,7 +7,7 @@ import SpeakButton, { useSpeaking } from '../components/SpeakButton'
 import useWhisperVoice, { primeMicrophone } from '../hooks/useWhisperVoice'
 import useWakeLock from '../hooks/useWakeLock'
 import {
-  acknowledge, enqueue, hold, isBusy, onFinished, prepareAcknowledgements, release,
+  enqueue, hold, isBusy, onFinished, release,
   say, stop as stopSpeaking, unlock as unlockSpeech,
 } from '../staffSpeech'
 
@@ -335,16 +335,12 @@ export default function ProfileWizard() {
 
   // One turn of the conversation, live: the staff's notes and the reply are
   // shown - and, with voice on, spoken - as they arrive, rather than all at
-  // once at the end. With voice on, the interviewer says "mm, okay" the moment
-  // the coach finishes, so there is no dead air while the reply is written.
+  // once at the end.
   const runTurn = useCallback(async (history, { retry = false } = {}) => {
     const speaking = voiceOnRef.current
     let heard = false
     let turn
-    if (speaking) {
-      turn = hold()
-      if (history.length) acknowledge(turn)
-    }
+    if (speaking) turn = hold()
     setLive({ staff: [], text: '' })
     let text = ''
     try {
@@ -493,7 +489,6 @@ export default function ProfileWizard() {
       return
     }
     unlockSpeech()
-    prepareAcknowledgements()
     setVoiceOn(true)
     spokenUpTo.current = messages.length
     readLatest()
@@ -507,7 +502,6 @@ export default function ProfileWizard() {
     // Both started from this tap, as phones require.
     unlockSpeech()
     primeMicrophone()
-    prepareAcknowledgements()
     setHandsFreeNote(null)
     setVoiceOn(true)
     voiceOnRef.current = true
@@ -522,7 +516,6 @@ export default function ProfileWizard() {
   const startByVoice = () => {
     unlockSpeech()
     primeMicrophone()
-    prepareAcknowledgements()
     setHandsFreeNote(null)
     setVoiceOn(true)
     voiceOnRef.current = true
