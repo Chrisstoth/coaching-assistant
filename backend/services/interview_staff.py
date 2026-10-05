@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from typing import Optional
 
 from sqlalchemy.orm import Session as DBSession
@@ -295,8 +296,30 @@ def hear_answer(db: DBSession, swimmer: models.Swimmer, messages: list, question
     question. Updates ``questions`` in place: the answered question is marked,
     and a follow-up joins the list.
     """
-    if not messages or messages[-1].get("role") != "user" or not staff_room.staff_room_enabled():
+    hearing = plan_hearing(db, swimmer, messages, questions)
+    if not hearing:
         return []
+    return apply_hearing(hearing, run_hearing(hearing), questions)
+
+
+@dataclass
+class Hearing:
+    """Who on the staff reacts to the coach's answer, with everything they need
+    to do it - so the reactions can run alongside the interviewer's reply,
+    away from the database session."""
+    coach_text: str
+    calls: list = field(default_factory=list)    # [(role, question id or None, system, user)]
+
+
+def plan_hearing(db: DBSession, swimmer: models.Swimmer, messages: list, questions: list) -> Optional[Hearing]:
+    """Decide who hears the coach's answer, and mark the question it answers.
+
+    The question is marked answered straight away, so the interviewer's reply -
+    which may be written at the same time as the reactions - does not ask it
+    again.
+    """
+    if not messages or messages[-1].get("role") != "user" or not staff_room.staff_room_enabled():
+        return None
     coach_text = messages[-1].get("content", "")
     asking = None
     for m in reversed(messages[:-1]):
@@ -313,13 +336,12 @@ def hear_answer(db: DBSession, swimmer: models.Swimmer, messages: list, question
         if role not in [r for r, _ in speakers]:
             speakers.append((role, None))
     if not speakers:
-        return []
+        return None
 
     data = _role_data(db, swimmer, [r for r, _ in speakers])
     tail = _transcript_tail(messages)
-
-    def run(entry):
-        role, question = entry
+    hearing = Hearing(coach_text=coach_text)
+    for role, question in speakers:
         r = ROSTER[role]
         if question:
             situation = (f"You asked the coach: \"{question['question']}\"\n"
@@ -334,18 +356,33 @@ def hear_answer(db: DBSession, swimmer: models.Swimmer, messages: list, question
                                      situation=situation, note_rule=note_rule,
                                      follow_up_rule=follow_up_rule, gender=_gender_rule())
         user = f"THE INTERVIEW SO FAR:\n{tail}\n\nWHAT IS ALREADY KNOWN:\n{data[role]}"
-        return role, question, _ask(system, user, 500, f"interview_hear_{role}")
-
-    said = []
-    for role, question, raw in _in_parallel(run, speakers):
-        raw = raw or {}
-        note = _text(raw.get("note"), 700)
         if question:
             question["status"] = "answered"
             question["answer"] = coach_text[:1500]
+        hearing.calls.append((role, question["id"] if question else None, system, user))
+    return hearing
+
+
+def run_hearing(hearing: Hearing) -> list:
+    """Each reacting specialist's reply, in parallel. No database needed."""
+    def run(call):
+        role, qid, system, user = call
+        return role, qid, _ask(system, user, 500, f"interview_hear_{role}")
+    return _in_parallel(run, hearing.calls)
+
+
+def apply_hearing(hearing: Hearing, results: list, questions: list) -> list:
+    """Keep what the staff said: notes for the coach, and any follow-up
+    question, which joins the list for the interviewer to ask."""
+    said = []
+    for role, qid, raw in results:
+        raw = raw or {}
+        note = _text(raw.get("note"), 700)
+        question = next((q for q in questions if q["id"] == qid), None) if qid else None
+        if question:
             question["note"] = note
             follow_up = _text(raw.get("follow_up"), 500)
-            if follow_up:
+            if follow_up and _depth(question, questions) < MAX_FOLLOW_UP_DEPTH:
                 questions.append(_question(questions, role, follow_up,
                                            area=question.get("area", ""), parent=question["id"]))
         if note:

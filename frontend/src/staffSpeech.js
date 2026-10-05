@@ -1,4 +1,4 @@
-import { getToken } from './api'
+import { liveFetch } from './api'
 
 // The staff speaking aloud, each in their own voice (see staff_voice.py on the
 // server). One player for the whole app: starting a new line stops the last,
@@ -40,6 +40,8 @@ let audio = null
 let queue = []
 let playing = null          // { key, speaker } of the line being heard
 let generation = 0          // bumped by stop(), so a late fetch does not play
+let running = false         // working through the queue
+let holding = false         // more lines are still on their way (a reply being written)
 const listeners = new Set()
 const finishedListeners = new Set()
 const cache = new Map()     // speaker|text -> promise of an object URL for its audio
@@ -69,6 +71,11 @@ export function speakingNow() {
   return playing
 }
 
+// Anything being said, or still to come.
+export function isBusy() {
+  return running || holding
+}
+
 // Call from a tap before any automatic speaking.
 export function unlock() {
   const el = element()
@@ -81,6 +88,8 @@ export function unlock() {
 export function stop() {
   generation += 1
   queue = []
+  running = false
+  holding = false
   playing = null
   if (audio) {
     audio.pause()
@@ -117,28 +126,77 @@ export function pieces(text) {
   return out.filter(Boolean)
 }
 
-// Read one line now, or several in order. Each item: { text, speaker, key? }.
-export function say(items) {
-  stop()
-  queue = []
+function queued(items) {
+  const out = []
   for (const item of Array.isArray(items) ? items : [items]) {
     if (!item?.text?.trim()) continue
     const speaker = item.speaker || 'interviewer'
     for (const text of pieces(item.text)) {
-      queue.push({ text, speaker, key: item.key ?? null, audio: fetchAudio(text, speaker).catch(() => null) })
+      out.push({ text, speaker, key: item.key ?? null, audio: fetchAudio(text, speaker).catch(() => null) })
     }
   }
+  return out
+}
+
+// Read one line now, or several in order. Each item: { text, speaker, key? }.
+export function say(items) {
+  stop()
+  queue = queued(items)
+  running = true
   next(generation)
+}
+
+// While a reply is still being written, running out of lines is a pause, not
+// the end: hands-free must not open the mic between two sentences.
+// Returns a token for the reply's lines: once anything stops the speaking
+// (the coach tapping "My turn"), the rest of that reply stays quiet.
+export function hold() {
+  holding = true
+  return generation
+}
+
+// Add lines after whatever is already being said - for a reply that arrives
+// a sentence at a time.
+export function enqueue(items, token = generation) {
+  if (token !== generation) return
+  queue.push(...queued(items))
+  if (!running) {
+    running = true
+    next(generation)
+  }
+}
+
+export function release(token = generation) {
+  if (token !== generation) return
+  holding = false
+  if (!running) {
+    for (const listener of finishedListeners) listener()
+  }
+}
+
+// What the interviewer says the moment the coach finishes, while the real
+// reply is being written: the "mm, okay" of a real conversation. Made once
+// and kept, so it plays at once.
+const ACKNOWLEDGEMENTS = ['Mm, okay.', 'Right.', 'Okay.', 'Mm-hm.', 'Got it.', 'Right, okay.']
+let lastAcknowledgement = -1
+
+export function prepareAcknowledgements() {
+  for (const text of ACKNOWLEDGEMENTS) fetchAudio(text, 'interviewer').catch(() => {})
+}
+
+export function acknowledge(token = generation) {
+  let index = Math.floor(Math.random() * ACKNOWLEDGEMENTS.length)
+  if (index === lastAcknowledgement) index = (index + 1) % ACKNOWLEDGEMENTS.length
+  lastAcknowledgement = index
+  enqueue({ text: ACKNOWLEDGEMENTS[index], speaker: 'interviewer', key: 'acknowledgement' }, token)
 }
 
 function fetchAudio(text, speaker) {
   const cacheKey = `${speaker}|${text}`
   if (!cache.has(cacheKey)) {
     const request = (async () => {
-      const token = getToken()
-      const res = await fetch('/api/staff/speak', {
+      const res = await liveFetch('/staff/speak', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: JSON.stringify({ text, speaker }),
       })
       if (!res.ok) throw new Error(`Speech unavailable (${res.status})`)
@@ -168,9 +226,12 @@ async function next(run) {
   if (run !== generation) return
   const item = queue.shift()
   if (!item) {
+    running = false
     playing = null
     notify()
-    for (const listener of finishedListeners) listener()
+    if (!holding) {
+      for (const listener of finishedListeners) listener()
+    }
     return
   }
   if (!playing || playing.key !== item.key || playing.speaker !== item.speaker) {

@@ -69,6 +69,68 @@ async function request(method, path, body = null, isFormData = false, options = 
   return res.json()
 }
 
+// Live conversation (replies streamed as they are written, and the staff's
+// voices) goes straight to the API server when its address is set at build
+// time: a proxy in between can hold a streamed reply back until it is
+// complete, which would undo the point of streaming it. Anything that fails
+// that way is retried through the usual /api route.
+export const LIVE_BASE = import.meta.env.VITE_LIVE_API || BASE
+
+export async function liveFetch(path, init) {
+  const token = getToken()
+  const headers = { 'Content-Type': 'application/json', ...(init.headers || {}) }
+  if (token) headers.Authorization = `Bearer ${token}`
+  const options = { ...init, headers }
+  if (LIVE_BASE !== BASE) {
+    try {
+      return await fetch(`${LIVE_BASE}${path}`, options)
+    } catch {
+      // Unreachable directly; fall through to the proxy.
+    }
+  }
+  return fetch(`${BASE}${path}`, options)
+}
+
+// One interview turn, as it happens. `onEvent` hears each event (a staff note,
+// each sentence of the reply); the promise resolves with the final one.
+async function profileWizardChatLive(swimmerId, messages, { retry = false, spoken = false } = {}, onEvent = () => {}) {
+  const res = await liveFetch(`/swimmers/${swimmerId}/profile-wizard/chat-live`, {
+    method: 'POST',
+    body: JSON.stringify({ messages, retry, spoken }),
+  })
+  if (res.status === 401) {
+    clearToken()
+    window.location.href = '/login'
+    throw Object.assign(new Error('Session expired. Sign in again.'), { status: 401 })
+  }
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw Object.assign(new Error(typeof err.detail === 'string' ? err.detail : `HTTP ${res.status}`),
+      { status: res.status })
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let last = null
+  for (;;) {
+    const { value, done } = await reader.read()
+    if (value) buffer += decoder.decode(value, { stream: true })
+    let newline
+    while ((newline = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, newline).trim()
+      buffer = buffer.slice(newline + 1)
+      if (!line) continue
+      const event = JSON.parse(line)
+      if (event.type === 'error') throw Object.assign(new Error(event.detail), { status: 502 })
+      if (event.type === 'done' || event.type === 'pending') last = event
+      else onEvent(event)
+    }
+    if (done) break
+  }
+  if (!last) throw new Error('The reply was cut off. Your answer is saved; try the reply again.')
+  return last.type === 'pending' ? { pending: true } : last
+}
+
 function isRetryableRegisterFailure(error) {
   return (typeof navigator !== 'undefined' && !navigator.onLine)
     || error instanceof TypeError
@@ -575,6 +637,7 @@ export const api = {
       ? { signal: AbortSignal.timeout(60000) }
       : {},
   ),
+  profileWizardChatLive,
   profileWizardSave: (swimmerId, messages) => request('POST', `/swimmers/${swimmerId}/profile-wizard/save`, { messages }),
   getProfileWizardDraft: (swimmerId) => request('GET', `/swimmers/${swimmerId}/profile-wizard/draft`),
   discardProfileWizardDraft: (swimmerId) => request('DELETE', `/swimmers/${swimmerId}/profile-wizard/draft`),

@@ -844,6 +844,7 @@ class WizardMessage(BaseModel):
 class WizardChatRequest(BaseModel):
     messages: list[WizardMessage] = Field(default_factory=list)
     retry: bool = False
+    spoken: bool = False   # the coach is talking by voice (live turns only)
 
 class WizardSaveRequest(BaseModel):
     messages: list[WizardMessage]
@@ -998,6 +999,60 @@ def wizard_chat(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depend
         "messages": draft.messages,
         "staff_questions": interview_staff.public(questions),
     }
+
+
+@router.post("/{swimmer_id}/profile-wizard/chat-live")
+def wizard_chat_live(swimmer_id: int, body: WizardChatRequest, db: DBSession = Depends(get_db)):
+    """The next turn, sent as it is written (see interview_live): the staff's
+    notes and the interviewer's reply a sentence at a time, then the saved
+    transcript. One JSON object per line."""
+    import json
+    import queue
+    import threading
+    from fastapi.responses import StreamingResponse
+    from backend.services import interview_live
+
+    swimmer = _get_or_404(swimmer_id, db)
+    messages = [m.model_dump(exclude_none=True) for m in body.messages]
+    draft = db.query(models.ProfileWizardDraft).filter(
+        models.ProfileWizardDraft.swimmer_id == swimmer.id,
+    ).first()
+    stored_messages = list(draft.messages or []) if draft else []
+
+    def single(event: dict):
+        return StreamingResponse(iter([json.dumps(event, default=str) + "\n"]),
+                                 media_type="application/x-ndjson")
+
+    added = stored_messages[len(messages):]
+    if added and stored_messages[:len(messages)] == messages and all(m.get("role") == "assistant" for m in added):
+        return single({"type": "done", "reply": added[-1].get("content", ""), "messages": stored_messages,
+                       "staff_questions": interview_staff.public(draft.staff_questions), "recovered": True})
+    if draft and draft.awaiting_reply and stored_messages == messages and not body.retry:
+        return single({"type": "pending"})
+
+    if not draft:
+        draft = models.ProfileWizardDraft(swimmer_id=swimmer.id, messages=[])
+        db.add(draft)
+    draft.messages = messages
+    draft.awaiting_reply = True
+    db.commit()
+
+    events: "queue.Queue[dict]" = queue.Queue()
+    threading.Thread(
+        target=interview_live.run_turn,
+        args=(swimmer.id, messages, body.spoken, events.put),
+        daemon=True,
+    ).start()
+
+    def stream():
+        while True:
+            event = events.get()
+            yield json.dumps(event, default=str) + "\n"
+            if event["type"] in ("done", "error"):
+                return
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @router.get("/{swimmer_id}/profile-wizard/draft")

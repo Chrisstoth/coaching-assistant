@@ -167,6 +167,31 @@ def create_message(*, model: Optional[str] = None, operation: Optional[str] = No
     return response
 
 
+def stream_message_text(*, model: Optional[str] = None, operation: str,
+                        effort: Optional[str] = None, **kwargs):
+    """Like ``create_message``, but yields the reply's text as it is written.
+
+    Usage is recorded once the reply is complete, as for any other call.
+    """
+    selected_model = model or MODEL
+    if selected_model == MODEL and selected_model.startswith("claude-sonnet-5"):
+        kwargs.setdefault("output_config", {"effort": effort or PRIMARY_EFFORT})
+    with _get_raw_client().messages.stream(model=selected_model, **kwargs) as stream:
+        for text in stream.text_stream:
+            yield text
+        final = stream.get_final_message()
+    usage = getattr(final, "usage", None)
+    record_ai_usage(
+        "anthropic",
+        selected_model,
+        operation,
+        input_tokens=_usage_value(usage, "input_tokens"),
+        output_tokens=_usage_value(usage, "output_tokens"),
+        cache_read_tokens=_usage_value(usage, "cache_read_input_tokens"),
+        cache_write_tokens=_usage_value(usage, "cache_creation_input_tokens"),
+    )
+
+
 def _finish_tracked_ai_operation(operation_id: Optional[int], status: str, *, result=None, error=None):
     if not operation_id:
         return
@@ -6383,17 +6408,20 @@ def foundation_background(context: dict) -> dict:
     return {key: value for key, value in context.items() if key != "recent_session_observations"}
 
 
-def wizard_chat(
+WIZARD_SPOKEN = """SPOKEN CONVERSATION:
+The coach is talking with you out loud and hears your reply as speech. The moment they finish, they already hear you say a short acknowledgement ("Mm, okay."), so never open with thanks, "great" or "that's helpful" - go straight to your point.
+Talk like a person, not a document: no lists, headings or bullet points. Keep it short - a sentence or two on what you took from their answer, then your one question."""
+
+
+def wizard_prompt(
     swimmer: models.Swimmer,
     messages: list[dict],
     db: DBSession,
     staff_questions: Optional[list] = None,
-) -> str:
-    """
-    Stateless wizard chat. Takes full message history, returns next AI message.
-    If messages is empty, generates the opening question. ``staff_questions``
-    are the specialists' questions for the interviewer to work in.
-    """
+    spoken: bool = False,
+) -> tuple:
+    """The interviewer's system prompt and conversation, and the questions
+    already asked. ``spoken`` when the coach is talking by voice."""
     from backend.services import interview_staff
 
     context = build_foundation_interview_context(swimmer, db)
@@ -6436,13 +6464,29 @@ INTERVIEW CONTROL:
     staff_block = interview_staff.prompt_block(staff_questions or [])
     if staff_block:
         swimmer_intro = f"{swimmer_intro}\n\n{staff_block}"
+    if spoken:
+        swimmer_intro = f"{swimmer_intro}\n\n{WIZARD_SPOKEN}"
     system = f"{WIZARD_SYSTEM}\n\n---\n{swimmer_intro}"
 
     if not messages:
         api_messages = [{"role": "user", "content": "(Start the profiling interview.)"}]
     else:
         api_messages = interview_staff.for_model(messages)
+    return system, api_messages, prior_questions
 
+
+def wizard_chat(
+    swimmer: models.Swimmer,
+    messages: list[dict],
+    db: DBSession,
+    staff_questions: Optional[list] = None,
+) -> str:
+    """
+    Stateless wizard chat. Takes full message history, returns next AI message.
+    If messages is empty, generates the opening question. ``staff_questions``
+    are the specialists' questions for the interviewer to work in.
+    """
+    system, api_messages, prior_questions = wizard_prompt(swimmer, messages, db, staff_questions)
     response = get_client().messages.create(
         model=MODEL,
         max_tokens=800,
@@ -6466,6 +6510,26 @@ INTERVIEW CONTROL:
         )
         reply = response_text(correction)
     return reply
+
+
+def wizard_chat_stream(
+    swimmer: models.Swimmer,
+    messages: list[dict],
+    db: DBSession,
+    staff_questions: Optional[list] = None,
+    spoken: bool = False,
+):
+    """The interviewer's next turn, yielded as it is written, so it can be
+    shown and spoken before it is finished. Unlike ``wizard_chat`` there is no
+    second attempt at a repeated question: by then it has been heard. The
+    prompt's own rule against repeats has to hold."""
+    system, api_messages, _ = wizard_prompt(swimmer, messages, db, staff_questions, spoken=spoken)
+    yield from stream_message_text(
+        operation="wizard_chat",
+        max_tokens=800,
+        system=system,
+        messages=api_messages,
+    )
 
 
 FOUNDATION_DRAFT_FIELDS = {

@@ -13,9 +13,10 @@ import { api } from '../api'
  */
 
 // How long a pause ends an answer, and how long to wait for one to start.
-// Coaches think mid-answer, so a longer answer is allowed a longer pause.
-const SILENCE_MS = 2000
-const LONG_ANSWER_SILENCE_MS = 2600
+// Short enough to feel like conversation ("Done, send it" is quicker still);
+// a longer answer, where the coach is thinking, is allowed a longer pause.
+const SILENCE_MS = 1400
+const LONG_ANSWER_SILENCE_MS = 2000
 const LONG_ANSWER_MS = 8000
 const NO_SPEECH_MS = 9000
 const MAX_MS = 180000
@@ -30,6 +31,18 @@ export function primeMicrophone() {
     sharedContext.resume?.()
   } catch {
     // No pause detection; the coach taps to finish instead.
+  }
+}
+
+// Phones can suspend the audio context when they switch between playing the
+// staff's voices and recording - most often with Bluetooth. Wake it before
+// each answer; a suspended context hears nothing at all.
+async function wakeContext() {
+  if (!sharedContext || sharedContext.state === 'running') return
+  try {
+    await Promise.race([sharedContext.resume(), new Promise(resolve => setTimeout(resolve, 600))])
+  } catch {
+    // Still asleep; the listener notices and stops relying on it.
   }
 }
 
@@ -77,8 +90,16 @@ export function talkingThreshold(levels) {
   return Math.max(QUIETEST_TALKING, room * 2.2, room + 0.004)
 }
 
-function watchForPause(stream, { onPause, onNothing }) {
-  if (!sharedContext) return () => {}
+// A real microphone is never perfectly silent. Readings this small for this
+// long mean the listener itself is not getting sound, not that the room is quiet.
+const DEAF_LEVEL = 0.00002
+const DEAF_AFTER_MS = 1500
+
+function watchForPause(stream, { onPause, onNothing, onDeaf }) {
+  if (!sharedContext || sharedContext.state !== 'running') {
+    onDeaf()
+    return () => {}
+  }
   const source = sharedContext.createMediaStreamSource(stream)
   const analyser = sharedContext.createAnalyser()
   analyser.fftSize = 2048
@@ -89,6 +110,7 @@ function watchForPause(stream, { onPause, onNothing }) {
   let loudTicks = 0
   let firstVoice = 0
   let lastVoice = 0
+  let alive = false
 
   const timer = window.setInterval(() => {
     analyser.getFloatTimeDomainData(samples)
@@ -96,6 +118,12 @@ function watchForPause(stream, { onPause, onNothing }) {
     for (const sample of samples) sum += sample * sample
     const level = Math.sqrt(sum / samples.length)
     const now = Date.now()
+    if (level > DEAF_LEVEL) alive = true
+    if (!alive && now - started > DEAF_AFTER_MS) {
+      window.clearInterval(timer)
+      onDeaf()
+      return
+    }
 
     const threshold = talkingThreshold(levels)
     levels.push(level)
@@ -125,7 +153,14 @@ function watchForPause(stream, { onPause, onNothing }) {
   }
 }
 
-export default function useWhisperVoice(onResult, { onNoSpeech } = {}) {
+/**
+ * `onResult(text, { unsure })` - `unsure` when listening ended because it
+ * thought nobody spoke; the words are still given, to be checked, not sent.
+ * `onNoSpeech` - the recording really was empty.
+ * `onCannotTell` - this phone is not letting the pause detection hear, so the
+ * coach finishes with a tap instead; recording carries on.
+ */
+export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } = {}) {
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [error, setError] = useState(null)
@@ -135,12 +170,16 @@ export default function useWhisperVoice(onResult, { onNoSpeech } = {}) {
   const unwatchRef = useRef(() => {})
   const noSpeechRef = useRef(onNoSpeech)
   noSpeechRef.current = onNoSpeech
+  const cannotTellRef = useRef(onCannotTell)
+  cannotTellRef.current = onCannotTell
+  const unsureRef = useRef(false)
   const supported = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
 
-  const finish = useCallback((discard = false) => {
+  const finish = useCallback((discard = false, unsure = false) => {
     unwatchRef.current()
     unwatchRef.current = () => {}
     discardRef.current = discard
+    unsureRef.current = unsure
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
     setRecording(false)
   }, [])
@@ -160,9 +199,11 @@ export default function useWhisperVoice(onResult, { onNoSpeech } = {}) {
         if (discardRef.current) return
         const blob = new Blob(chunksRef.current, { type: mimeType })
         setTranscribing(true)
+        const unsure = unsureRef.current
         try {
           const result = await api.transcribeAudio(blob)
-          if (result?.text) onResult(result.text)
+          if (result?.text?.trim()) onResult(result.text, { unsure })
+          else if (unsure) noSpeechRef.current?.()
         } catch (e) {
           setError(`Transcription failed: ${e.message}`)
         }
@@ -171,6 +212,7 @@ export default function useWhisperVoice(onResult, { onNoSpeech } = {}) {
       recorder.start()
       recorderRef.current = recorder
       setRecording(true)
+      if (autoStop) await wakeContext()
       if (autoStop) {
         // Beep once the mic is really open - with Bluetooth earbuds that
         // takes a moment - then start measuring the room after the beep, so
@@ -179,10 +221,9 @@ export default function useWhisperVoice(onResult, { onNoSpeech } = {}) {
         const wait = window.setTimeout(() => {
           unwatch = watchForPause(stream, {
             onPause: () => finish(false),
-            onNothing: () => {
-              finish(true)
-              noSpeechRef.current?.()
-            },
+            // Never thrown away: what was recorded is written down to check.
+            onNothing: () => finish(false, true),
+            onDeaf: () => cannotTellRef.current?.(),
           })
         }, beep() + 120)
         unwatchRef.current = () => {

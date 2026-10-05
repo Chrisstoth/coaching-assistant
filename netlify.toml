@@ -9,6 +9,9 @@
   # Third-party packages are not our code; the scan still covers the repo
   # and the built site.
   SECRETS_SCAN_OMIT_PATHS = "node_modules/**,frontend/node_modules/**"
+  # Live conversation goes straight to the API: Netlify's proxy below can hold
+  # a streamed reply back until it is complete. Must match the /api/* target.
+  VITE_LIVE_API = "https://coaching-assistant-api.onrender.com"
 
 [[redirects]]
   from = "/api/*"

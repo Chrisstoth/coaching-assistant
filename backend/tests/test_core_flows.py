@@ -537,6 +537,90 @@ class CoreFlowTests(unittest.TestCase):
             kept = [n for n in notes if swimmer_id in (n.swimmer_ids or [])]
             self.assertEqual(sorted(n.role for n in kept), ["analyst", "physiologist"])
 
+    def test_live_interview_turn_streams_staff_then_sentences_and_saves(self):
+        from unittest.mock import MagicMock
+        from backend.services.interview_live import Sentences
+
+        with SessionLocal() as db:
+            swimmer = models.Swimmer(name="Live Interview Swimmer", squad="Test")
+            db.add(swimmer)
+            db.commit()
+            swimmer_id = swimmer.id
+
+        def staff(system, user, max_tokens, operation):
+            if operation == "interview_agenda_physiologist":
+                return {"questions": [{"area": "fatigue and recovery",
+                                       "question": "How does she cope with a hard week?", "why": "recovery"}]}
+            if operation == "interview_hear_physiologist":
+                return {"note": "I'll watch her recovery after hard days.", "follow_up": None}
+            return None
+
+        class FakeStream:
+            def __init__(self, chunks):
+                self.chunks = chunks
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            @property
+            def text_stream(self):
+                return iter(self.chunks)
+
+            def get_final_message(self):
+                return SimpleNamespace(usage=None)
+
+        def live(history, chunks, spoken=True):
+            raw = MagicMock()
+            raw.messages.stream.side_effect = lambda **kwargs: FakeStream(chunks)
+            with patch("backend.services.interview_staff._ask", side_effect=staff), \
+                    patch("backend.services.claude_service._get_raw_client", return_value=raw):
+                response = self.client.post(
+                    f"/swimmers/{swimmer_id}/profile-wizard/chat-live",
+                    headers=self.headers, json={"messages": history, "spoken": spoken},
+                )
+            self.assertEqual(response.status_code, 200, response.text)
+            events = [json.loads(line) for line in response.text.splitlines() if line.strip()]
+            return events, raw.messages.stream.call_args.kwargs
+
+        events, call = live([], ["Hi, I'm Sam. Fiona, our physiologist, ",
+                                 "wants to know: how does she cope with a hard week?\n[[ASKING_FOR s1]]"])
+        self.assertEqual([e["type"] for e in events], ["sentence", "sentence", "done"])
+        self.assertEqual(events[0]["text"], "Hi, I'm Sam.")
+        self.assertEqual(events[1]["text"],
+                         "Fiona, our physiologist, wants to know: how does she cope with a hard week?")
+        done = events[-1]
+        self.assertEqual(done["messages"][-1]["asks_for"], "s1")
+        self.assertNotIn("[[", done["reply"])
+        self.assertIn("SPOKEN CONVERSATION", call["system"])
+
+        history = [*done["messages"], {"role": "user", "content": "She's flat by Friday."}]
+        events, call = live(history, ["Mm. ", "So by Friday she's flat. ", "How does she race at the weekend?"])
+        types = [e["type"] for e in events]
+        # The physiologist's note was ready in time, so it is heard first.
+        self.assertEqual(types[0], "staff")
+        self.assertFalse(events[0]["late"])
+        self.assertEqual(events[0]["message"]["speaker"], "physiologist")
+        self.assertEqual(types[-1], "done")
+        self.assertEqual([e["text"] for e in events if e["type"] == "sentence"],
+                         ["Mm.", "So by Friday she's flat.", "How does she race at the weekend?"])
+        saved = events[-1]["messages"]
+        self.assertEqual([m.get("speaker") for m in saved[-2:]], ["physiologist", None])
+        self.assertEqual({q["id"]: q["status"] for q in events[-1]["staff_questions"]}, {"s1": "answered"})
+
+        restored = self.client.get(f"/swimmers/{swimmer_id}/profile-wizard/draft", headers=self.headers).json()
+        self.assertFalse(restored["awaiting_reply"])
+        self.assertEqual(restored["messages"], saved)
+
+        # A time is never split at its decimal point; a marker is held until it closes.
+        cut = Sentences()
+        self.assertEqual(cut.feed("Her best is 2:15.4 at county. Next"), ["Her best is 2:15.4 at county."])
+        self.assertEqual(cut.feed(" question? Then [[READY_TO"), ["Next question?"])
+        self.assertEqual(cut.feed("_SAVE]] done. Last"), ["Then done."])
+        self.assertEqual(cut.flush(), ["Last"])
+
     def test_staff_answer_to_their_first_names_unless_a_swimmer_has_it(self):
         from backend.services.staff_room import ROSTER, addressed_roles
         names = [role.name for role in ROSTER.values()]
