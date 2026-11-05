@@ -384,22 +384,39 @@ def write_page(db: DBSession, role: str, path: str, content: str, *, author: str
 
 
 def write_section(db: DBSession, role: str, path: str, heading: str, text: str, *, author: str, reason: Optional[str] = None,
-                  trigger: Optional[str] = None, base_version: Optional[int] = None) -> models.WorkbookPage:
-    """Replace (or add) one section of a page. A worker's main tool."""
+                  trigger: Optional[str] = None, base_version: Optional[int] = None, header: Optional[dict] = None) -> models.WorkbookPage:
+    """Replace (or add) one section of a page. A worker's main tool.
+
+    `header` updates the page's header fields at the same time (e.g. its confidence)."""
     path = _clean_path(path)
     _check_author(role, author)
     if path == "job.md" and author != COACH:
         raise WorkbookError("Only the coach writes the job direction.")
     p = get_page(db, role, path)
     if not p:
-        return create_page(db, role, path, replace_section("", heading, text), author=author, reason=reason, trigger=trigger)
+        meta = {k: v for k, v in (header or {}).items() if v not in (None, "", [])}
+        content = replace_section("", heading, text)
+        return create_page(db, role, path, render(meta, content) if meta else content, author=author, reason=reason, trigger=trigger)
     if base_version is not None and base_version != p.version:
         raise Conflict(f"{path} changed since it was read (now version {p.version}); read it again first.")
     if author != COACH and _norm(heading) in {_norm(h) for h in (p.locked or [])}:
         raise WorkbookError(f"The coach has locked '{heading}' on {path}; suggest the change instead.")
-    _revise(db, p, replace_section(p.content, heading, text), author, reason, trigger)
+    content = replace_section(p.content, heading, text)
+    if header:
+        meta, body = parse(content)
+        meta.update({k: v for k, v in header.items() if v not in (None, "", [])})
+        content = render(meta, body)
+    _revise(db, p, content, author, reason, trigger)
     db.commit()
     return p
+
+
+def may_write(role: str, path: str) -> bool:
+    """Whether a path is inside the folders this worker writes in (their job description's 'Where I write')."""
+    w = worker(role)
+    allowed = [x.strip() for x in w.writes.split(",") if x.strip()]
+    path = _clean_path(path)
+    return any(path.startswith(a) if a.endswith("/") else path == a for a in allowed)
 
 
 def append_journal(db: DBSession, role: str, text: str, *, author: Optional[str] = None, trigger: Optional[str] = None,

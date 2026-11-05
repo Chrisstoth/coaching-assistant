@@ -142,7 +142,25 @@ def _session_operation(row: models.AIOperation, db) -> str:
     summary = f"Assessed {len(assessments)} coach-observed swimmer response{'' if len(assessments) == 1 else 's'}."
     if queued:
         summary += f" Queued {queued} profile update{'' if queued == 1 else 's'}."
+    # Then the staff update their workbooks from the same session (the first full loop).
+    enqueue_operation(
+        db, operation_type="workbook_update", title=f"Staff workbooks after {session.title or session.date}",
+        entity_type="session", entity_id=session.id, payload=dict(row.payload or {}),
+        idempotency_key=f"workbook:{session.id}:{(row.payload or {}).get('register_revision') or row.id}",
+    )
     return summary
+
+
+def _workbook_operation(row: models.AIOperation, db) -> str:
+    """Fiona and Jess read a finished session and update their workbooks."""
+    from backend.services import workbook_writer
+    session = db.query(models.Session).filter(models.Session.id == row.entity_id).first()
+    if not session:
+        raise ValueError("The related session no longer exists")
+    out = workbook_writer.update_after_session(db, session)
+    saved = sum(len(v["saved"]) for v in out.values())
+    refused = sum(len(v["refused"]) for v in out.values())
+    return f"The staff made {saved} workbook change{'' if saved == 1 else 's'}" + (f"; {refused} refused by the rules" if refused else "") + "."
 
 
 def _profile_refresh_operation(row: models.AIOperation, db) -> str:
@@ -247,6 +265,8 @@ def process_operation(operation_id: int) -> bool:
                     summary = _debrief_operation(row, db)
                 elif row.operation_type == "profile_refresh":
                     summary = _profile_refresh_operation(row, db)
+                elif row.operation_type == "workbook_update":
+                    summary = _workbook_operation(row, db)
                 else:
                     raise ValueError(f"Unsupported AI operation type: {row.operation_type}")
             row.status = "completed"

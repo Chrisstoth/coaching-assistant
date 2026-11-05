@@ -209,7 +209,17 @@ def payload(db: DBSession, session: models.Session) -> dict:
         "club": {"name": s.club_name if s else None, "logo": s.logo_data_url if s else None},
         "effort_scale": usual_scale(db),
         "scales": [{"key": k, "name": N.EFF_SYSTEMS[k]["name"]} for k in N.EFF_ORDER],
+        "staff_notes": _staff_notes(db),
     }
+
+
+def _staff_notes(db: DBSession) -> list:
+    """What the staff wrote down lately, shown at the top of the builder."""
+    try:
+        from backend.services import workbook_writer
+        return workbook_writer.recent_notes(db)
+    except Exception:  # noqa: BLE001 - notes are a bonus; the builder must open regardless
+        return []
 
 
 def copy_to_next_week(db: DBSession, session: models.Session) -> models.Session:

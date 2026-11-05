@@ -200,6 +200,19 @@ function Builder({ id }) {
           <Link to={`/sessions/${payload.id}/register`} className="shrink-0 text-accent-400 font-semibold">Register</Link>
         </div>
       )}
+      {payload && payload.staff_notes?.length > 0 && (
+        <details className="px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
+          <summary className="cursor-pointer text-pool-300">From the staff since last time ({payload.staff_notes.length})</summary>
+          <ul className="mt-1.5 space-y-1">
+            {payload.staff_notes.map((n, i) => (
+              <li key={i} className="text-pool-300">
+                <Link to={`/workbooks/${n.role}/page?path=${encodeURIComponent(n.page)}`} className="font-semibold text-pool-100">{n.name}</Link>{' '}
+                <span dangerouslySetInnerHTML={{ __html: n.text.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>') }} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       {payload && picking && (
         <AudiencePicker payload={payload} onClose={() => setPicking(false)}
           onSaved={audience => { setPicking(false); setPayload(p => ({ ...p, audience })) }} />
