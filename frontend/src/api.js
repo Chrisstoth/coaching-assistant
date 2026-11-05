@@ -259,6 +259,15 @@ export const api = {
   getStyleCandidates: () => request('POST', '/history-import/style/candidates'),
   answerStyle: (statement, choice, reason) => request('POST', '/history-import/style/answer', { statement, choice, reason }),
 
+  // The coach's Season Planner (its documents and versions)
+  getPlannerSquads: () => request('GET', '/season-planner/squads'),
+  getPlannerDocs: (squad) => request('GET', `/season-planner/${encodeURIComponent(squad)}/docs`),
+  putPlannerDoc: (squad, key, data) => request('PUT', `/season-planner/${encodeURIComponent(squad)}/docs/${key}`, { data }),
+  getPlannerVersions: (squad, limit = 40) => request('GET', `/season-planner/${encodeURIComponent(squad)}/versions?limit=${limit}`),
+  getPlannerVersion: (squad, id) => request('GET', `/season-planner/${encodeURIComponent(squad)}/versions/${id}`),
+  deletePlannerVersion: (squad, id) => request('DELETE', `/season-planner/${encodeURIComponent(squad)}/versions/${id}`),
+  addPlannerVersion: (squad, v) => request('POST', `/season-planner/${encodeURIComponent(squad)}/versions`, v),
+
   // Staff workbooks
   getWorkbooks: () => request('GET', '/workbooks'),
   getWorkbook: (role) => request('GET', `/workbooks/${role}`),

@@ -1558,3 +1558,37 @@ class Prediction(Base):
     trigger = Column(String, nullable=True)
     checked_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class PlanDoc(Base):
+    """The Season Planner's saved documents (the coach's planner, run inside the app).
+
+    "plan" holds the season (groups, weeks, phases, loads, meets, camps,
+    personal changes); "roster" holds the swimmers as the planner sees them.
+    Stored exactly as the planner writes them; backend/services/season_planner.py
+    works out each week's plan from them for the staff and the load counter.
+    """
+    __tablename__ = "plan_docs"
+    __table_args__ = (UniqueConstraint("club", "squad", "key", name="uq_plan_doc"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    club = Column(String, nullable=False, default="default")
+    squad = Column(String, nullable=False, default="")
+    key = Column(String, nullable=False)                 # plan / roster
+    data = Column(JSON, nullable=False)
+    revision = Column(Integer, nullable=False, default=1)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class PlanVersion(Base):
+    """A named version of the season plan the coach can go back to."""
+    __tablename__ = "plan_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    club = Column(String, nullable=False, default="default")
+    squad = Column(String, nullable=False, default="")
+    name = Column(String, nullable=True)
+    saved_at = Column(String, nullable=True)
+    plan = Column(JSON, nullable=False)
+    roster = Column(JSON, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

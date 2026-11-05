@@ -1,0 +1,269 @@
+{
+ "schema": 1,
+ "settings": {
+  "near": 0.015,
+  "season": "2026-27",
+  "squad": "Test Squad",
+  "start": "2026-08-24",
+  "weeks": 12
+ },
+ "branches": [
+  {
+   "id": "core",
+   "name": "Regionals",
+   "parent": null,
+   "color": "#8E44AD",
+   "note": "",
+   "weeks": {
+    "0": {
+     "p": "pre",
+     "load": 0.3
+    },
+    "1": {
+     "p": "pre",
+     "load": 0.4
+    },
+    "2": {
+     "p": "pre",
+     "load": 0.5
+    },
+    "3": {
+     "p": "bld",
+     "load": 0.6
+    },
+    "4": {
+     "p": "bld",
+     "load": 0.7
+    },
+    "5": {
+     "p": "bld",
+     "load": 0.8
+    },
+    "6": {
+     "p": "bld",
+     "load": 0.85
+    },
+    "7": {
+     "p": "bld",
+     "load": 0.9
+    },
+    "8": {
+     "p": "bld",
+     "load": 0.75
+    },
+    "9": {
+     "p": "tap",
+     "load": 0.6
+    },
+    "10": {
+     "p": "tap",
+     "load": 0.5
+    },
+    "11": {
+     "p": "tap",
+     "load": 0.4
+    }
+   }
+  },
+  {
+   "id": "nats",
+   "name": "Nationals",
+   "parent": "core",
+   "color": "#D1495B",
+   "note": "",
+   "weeks": {
+    "6": {
+     "p": "bld",
+     "load": 0.95,
+     "spd": 1.2
+    },
+    "7": {
+     "p": "tap",
+     "load": 0.7
+    },
+    "8": {
+     "p": "tap",
+     "load": 0.5
+    }
+   }
+  },
+  {
+   "id": "girls",
+   "name": "Girls group",
+   "parent": "core",
+   "color": "#00798C",
+   "note": "",
+   "weeks": {
+    "4": {
+     "p": "bld",
+     "load": 0.65
+    }
+   }
+  }
+ ],
+ "phases": {
+  "pre": {
+   "macro": "1",
+   "name": "Pre-season",
+   "objective": "Routine",
+   "template": "Pre-season",
+   "course": "SC"
+  },
+  "bld": {
+   "macro": "1",
+   "name": "Build",
+   "objective": "Aerobic base",
+   "template": "General prep",
+   "course": "SC"
+  },
+  "tap": {
+   "macro": "2",
+   "name": "Taper",
+   "objective": "Peak for County",
+   "template": "Taper",
+   "course": "SC"
+  }
+ },
+ "templates": [
+  {
+   "name": "Pre-season",
+   "note": "",
+   "f": {
+    "monam": {
+     "a": 11,
+     "b": 13
+    },
+    "tuepm": {
+     "a": 21
+    }
+   },
+   "s": {
+    "monam": "Aerobic",
+    "tuepm": "Speed"
+   }
+  },
+  {
+   "name": "General prep",
+   "note": "",
+   "f": {
+    "monam": {
+     "a": 15
+    },
+    "tuepm": {
+     "a": 17,
+     "b": 19
+    }
+   },
+   "s": {
+    "monam": "Threshold",
+    "tuepm": "VO2"
+   }
+  },
+  {
+   "name": "Taper",
+   "note": "",
+   "f": {
+    "monam": {
+     "a": 13
+    },
+    "tuepm": {
+     "a": 20
+    }
+   },
+   "s": {
+    "monam": "Easy",
+    "tuepm": "Race pace"
+   }
+  }
+ ],
+ "sessions": [
+  {
+   "id": "monam",
+   "day": 0,
+   "hours": 1.5,
+   "label": "Mon AM",
+   "mph": 2500,
+   "pool": "25m",
+   "role": "Aerobic",
+   "time": "05:30-07:00"
+  },
+  {
+   "id": "tuepm",
+   "day": 1,
+   "hours": 1.0,
+   "label": "Tue PM",
+   "mph": 2400,
+   "pool": "25m",
+   "role": "Speed",
+   "time": "20:00-21:00"
+  }
+ ],
+ "calendar": [
+  {
+   "id": "c1",
+   "name": "County Champs",
+   "short": "County",
+   "start": "2026-11-07",
+   "end": "2026-11-08",
+   "course": "25m",
+   "level": "L2",
+   "venue": "Test pool",
+   "note": "",
+   "prio": {
+    "core": "A",
+    "nats": "B",
+    "girls": "A"
+   }
+  }
+ ],
+ "events": [
+  {
+   "id": "e1",
+   "name": "Half term",
+   "type": "Holiday",
+   "start": "2026-10-26",
+   "end": "2026-10-30"
+  },
+  {
+   "id": "e2",
+   "name": "Test camp",
+   "type": "Camp",
+   "start": "2026-09-21",
+   "end": "2026-09-25",
+   "camp": {
+    "attendees": [
+     "s2"
+    ],
+    "load": 1.2,
+    "aer": 1.1,
+    "ana": 0.6
+   }
+  }
+ ],
+ "notes": {
+  "3": "A note on week 3"
+ },
+ "personal": {
+  "s1": {
+   "own": {
+    "core": {
+     "3": {
+      "p": "pre",
+      "load": 0.2
+     }
+    }
+   }
+  },
+  "s3": {
+   "away": [
+    {
+     "id": "a1",
+     "type": "Injury",
+     "from": "2026-09-28",
+     "to": "2026-09-29",
+     "note": "shoulder"
+    }
+   ]
+  }
+ }
+}

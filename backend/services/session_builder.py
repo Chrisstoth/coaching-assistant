@@ -65,11 +65,21 @@ def slot_of(start_time: Optional[str]) -> str:
     return "PM" if mins is not None and mins >= 12 * 60 else "AM"
 
 
-def week_key(session: models.Session) -> str:
-    """The plan's week code (macro.meso.micro) from the session's cycle code."""
+def week_key(session: models.Session, db: Optional[DBSession] = None) -> str:
+    """The plan's week code (macro.meso.micro): from the session's cycle code, or the coach's Season Planner."""
     code = session.cycle_code or ""
     parts = code.split(".")
-    return ".".join(parts[:3]) if len(parts) >= 3 else code
+    if len(parts) >= 3:
+        return ".".join(parts[:3])
+    if db is not None and session.date:
+        try:
+            from backend.services import season_planner
+            planned = season_planner.week_code(db, session.squad, session.date)
+            if planned and planned != "Off":
+                return planned
+        except Exception:  # noqa: BLE001 - a week code is a convenience
+            pass
+    return code
 
 
 def plan_groups(db: DBSession, on: date, squad: Optional[str]) -> list:
@@ -92,7 +102,7 @@ def blank_builder(db: DBSession, session: models.Session) -> dict:
         "end": session.end_time or "",
         "venue": "",
         "coach": "",
-        "weekKey": week_key(session),
+        "weekKey": week_key(session, db),
         "aims": ["", ""],
         "groups": groups,
         "blocks": [N.new_block(name) for name in DEFAULT_BLOCKS],
@@ -137,7 +147,7 @@ def builder_for(db: DBSession, session: models.Session) -> dict:
     b.setdefault("aims", ["", ""])
     b.setdefault("effSys", usual_scale(db))
     if not b.get("weekKey"):
-        b["weekKey"] = week_key(session)
+        b["weekKey"] = week_key(session, db)
     return b
 
 
@@ -235,7 +245,7 @@ def copy_to_next_week(db: DBSession, session: models.Session) -> models.Session:
     link_session(new, db)
     b["blocks"] = [N.clone_with_new_ids(x) for x in b["blocks"]]
     b["date"] = nxt.isoformat()
-    b["weekKey"] = week_key(new)
+    b["weekKey"] = week_key(new, db)
     if b.get("title"):
         b["title"] = b["title"] + " (copy)"
     # keep the session's groups, but take this week's swimmers from the plan

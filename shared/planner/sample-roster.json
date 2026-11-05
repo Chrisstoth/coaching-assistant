@@ -1,0 +1,93 @@
+{
+ "schema": 1,
+ "source": "made up for tests",
+ "rules": {
+  "er": "Test region"
+ },
+ "qts": {
+  "er": {
+   "100 Free": {
+    "F": 62.1,
+    "M": 56.6
+   }
+  }
+ },
+ "swimmers": [
+  {
+   "id": "s1",
+   "name": "Alex Test",
+   "g": "F",
+   "dob": "2011-05-01",
+   "branch": "core",
+   "camp": "",
+   "note": "",
+   "tag": "Test",
+   "events": [
+    {
+     "e": "100 Free",
+     "em": "Test meet",
+     "er": 63.2,
+     "lc": null,
+     "sb": null,
+     "sc": 63.2,
+     "wc": "SC",
+     "wd": "01/10/2026",
+     "wm": "Test meet",
+     "wn": null
+    }
+   ]
+  },
+  {
+   "id": "s2",
+   "name": "Bo Test",
+   "g": "M",
+   "dob": "2010-03-02",
+   "branch": "core",
+   "moves": [
+    {
+     "w": 6,
+     "to": "nats"
+    }
+   ],
+   "camp": "",
+   "note": "",
+   "tag": "Test",
+   "events": [
+    {
+     "e": "100 Free",
+     "em": "Test meet",
+     "er": 56.1,
+     "lc": null,
+     "sb": null,
+     "sc": 56.1,
+     "wc": "SC",
+     "wd": "01/10/2026",
+     "wm": "Test meet",
+     "wn": null
+    }
+   ]
+  },
+  {
+   "id": "s3",
+   "name": "Cam Test",
+   "g": "F",
+   "dob": "2012-07-09",
+   "branch": "girls",
+   "camp": "",
+   "note": "",
+   "tag": "Test",
+   "events": []
+  },
+  {
+   "id": "s4",
+   "name": "Dee Test",
+   "g": "M",
+   "dob": "2012-01-01",
+   "branch": "",
+   "camp": "",
+   "note": "",
+   "tag": "Test",
+   "events": []
+  }
+ ]
+}

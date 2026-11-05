@@ -38,6 +38,7 @@ import { SessionPresentationProvider } from './components/SessionPresentationPro
 
 // The Session Builder carries the PDF writer, so it loads only when opened.
 const SessionBuilder = lazy(() => import('./pages/SessionBuilder'))
+const SeasonPlanner = lazy(() => import('./pages/SeasonPlanner'))
 
 function RequireAuth({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />
@@ -274,7 +275,9 @@ export default function App() {
           <Route path="/workbooks/:role" element={<Workbooks />} />
           <Route path="/workbooks/:role/page" element={<Workbooks />} />
           <Route path="/builder/:id" element={<Suspense fallback={<p className="p-4 text-sm text-pool-400">Opening the Session Builder…</p>}><SessionBuilder /></Suspense>} />
-          <Route path="/season" element={<SeasonPlan />} />
+          <Route path="/season" element={<Suspense fallback={<p className="p-4 text-sm text-pool-400">Opening the season plan…</p>}><SeasonPlanner /></Suspense>} />
+          <Route path="/season/classic" element={<SeasonPlan />} />
+          <Route path="/season/:squad" element={<Suspense fallback={<p className="p-4 text-sm text-pool-400">Opening the season plan…</p>}><SeasonPlanner /></Suspense>} />
           <Route path="/planning" element={<PlanningWorkspace />} />
                 <Route path="/assistant" element={<AssistantInbox />} />
                 <Route path="/settings" element={<Settings />} />

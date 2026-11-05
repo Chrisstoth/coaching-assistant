@@ -1,0 +1,1022 @@
+{
+ "core": [
+  {
+   "i": 0,
+   "p": "pre",
+   "code": "1.1.1",
+   "load": 0.3,
+   "comps": {
+    "aer": 0.27,
+    "ana": 0.09,
+    "spd": 0.18
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 1,
+   "p": "pre",
+   "code": "1.1.2",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.36,
+    "ana": 0.12,
+    "spd": 0.24
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 2,
+   "p": "pre",
+   "code": "1.1.3",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.45,
+    "ana": 0.15,
+    "spd": 0.3
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 3,
+   "p": "bld",
+   "code": "1.2.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.6,
+    "ana": 0.48,
+    "spd": 0.48
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 4,
+   "p": "bld",
+   "code": "1.2.2",
+   "load": 0.7,
+   "comps": {
+    "aer": 0.7,
+    "ana": 0.56,
+    "spd": 0.56
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 5,
+   "p": "bld",
+   "code": "1.2.3",
+   "load": 0.8,
+   "comps": {
+    "aer": 0.8,
+    "ana": 0.64,
+    "spd": 0.64
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 6,
+   "p": "bld",
+   "code": "1.2.4",
+   "load": 0.85,
+   "comps": {
+    "aer": 0.85,
+    "ana": 0.68,
+    "spd": 0.68
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 7,
+   "p": "bld",
+   "code": "1.2.5",
+   "load": 0.9,
+   "comps": {
+    "aer": 0.9,
+    "ana": 0.72,
+    "spd": 0.72
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 8,
+   "p": "bld",
+   "code": "1.2.6",
+   "load": 0.75,
+   "comps": {
+    "aer": 0.75,
+    "ana": 0.6,
+    "spd": 0.6
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 9,
+   "p": "tap",
+   "code": "2.1.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.72,
+    "spd": 1.14
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 10,
+   "p": "tap",
+   "code": "2.1.2",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  },
+  {
+   "i": 11,
+   "p": "tap",
+   "code": "2.1.3",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.32,
+    "ana": 0.48,
+    "spd": 0.76
+   },
+   "camp": null,
+   "group": null,
+   "away": false
+  }
+ ],
+ "nats": [
+  {
+   "i": 0,
+   "p": "pre",
+   "code": "1.1.1",
+   "load": 0.3,
+   "comps": {
+    "aer": 0.27,
+    "ana": 0.09,
+    "spd": 0.18
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 1,
+   "p": "pre",
+   "code": "1.1.2",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.36,
+    "ana": 0.12,
+    "spd": 0.24
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 2,
+   "p": "pre",
+   "code": "1.1.3",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.45,
+    "ana": 0.15,
+    "spd": 0.3
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 3,
+   "p": "bld",
+   "code": "1.2.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.6,
+    "ana": 0.48,
+    "spd": 0.48
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 4,
+   "p": "bld",
+   "code": "1.2.2",
+   "load": 0.7,
+   "comps": {
+    "aer": 0.7,
+    "ana": 0.56,
+    "spd": 0.56
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 5,
+   "p": "bld",
+   "code": "1.2.3",
+   "load": 0.8,
+   "comps": {
+    "aer": 0.8,
+    "ana": 0.64,
+    "spd": 0.64
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 6,
+   "p": "bld",
+   "code": "1.2.4",
+   "load": 0.95,
+   "comps": {
+    "aer": 0.95,
+    "ana": 0.76,
+    "spd": 1.2
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 7,
+   "p": "tap",
+   "code": "2.1.1",
+   "load": 0.7,
+   "comps": {
+    "aer": 0.56,
+    "ana": 0.84,
+    "spd": 1.33
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 8,
+   "p": "tap",
+   "code": "2.1.2",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 9,
+   "p": "tap",
+   "code": "2.1.3",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.72,
+    "spd": 1.14
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 10,
+   "p": "tap",
+   "code": "2.1.4",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 11,
+   "p": "tap",
+   "code": "2.1.5",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.32,
+    "ana": 0.48,
+    "spd": 0.76
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  }
+ ],
+ "girls": [
+  {
+   "i": 0,
+   "p": "pre",
+   "code": "1.1.1",
+   "load": 0.3,
+   "comps": {
+    "aer": 0.27,
+    "ana": 0.09,
+    "spd": 0.18
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 1,
+   "p": "pre",
+   "code": "1.1.2",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.36,
+    "ana": 0.12,
+    "spd": 0.24
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 2,
+   "p": "pre",
+   "code": "1.1.3",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.45,
+    "ana": 0.15,
+    "spd": 0.3
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 3,
+   "p": "bld",
+   "code": "1.2.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.6,
+    "ana": 0.48,
+    "spd": 0.48
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 4,
+   "p": "bld",
+   "code": "1.2.2",
+   "load": 0.65,
+   "comps": {
+    "aer": 0.65,
+    "ana": 0.52,
+    "spd": 0.52
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 5,
+   "p": "bld",
+   "code": "1.2.3",
+   "load": 0.8,
+   "comps": {
+    "aer": 0.8,
+    "ana": 0.64,
+    "spd": 0.64
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 6,
+   "p": "bld",
+   "code": "1.2.4",
+   "load": 0.85,
+   "comps": {
+    "aer": 0.85,
+    "ana": 0.68,
+    "spd": 0.68
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 7,
+   "p": "bld",
+   "code": "1.2.5",
+   "load": 0.9,
+   "comps": {
+    "aer": 0.9,
+    "ana": 0.72,
+    "spd": 0.72
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 8,
+   "p": "bld",
+   "code": "1.2.6",
+   "load": 0.75,
+   "comps": {
+    "aer": 0.75,
+    "ana": 0.6,
+    "spd": 0.6
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 9,
+   "p": "tap",
+   "code": "2.1.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.72,
+    "spd": 1.14
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 10,
+   "p": "tap",
+   "code": "2.1.2",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 11,
+   "p": "tap",
+   "code": "2.1.3",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.32,
+    "ana": 0.48,
+    "spd": 0.76
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  }
+ ],
+ "sw:s1": [
+  {
+   "i": 0,
+   "p": "pre",
+   "code": "1.1.1",
+   "load": 0.3,
+   "comps": {
+    "aer": 0.27,
+    "ana": 0.09,
+    "spd": 0.18
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 1,
+   "p": "pre",
+   "code": "1.1.2",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.36,
+    "ana": 0.12,
+    "spd": 0.24
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 2,
+   "p": "pre",
+   "code": "1.1.3",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.45,
+    "ana": 0.15,
+    "spd": 0.3
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 3,
+   "p": "pre",
+   "code": "1.1.4",
+   "load": 0.2,
+   "comps": {
+    "aer": 0.18,
+    "ana": 0.06,
+    "spd": 0.12
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 4,
+   "p": "bld",
+   "code": "1.2.1",
+   "load": 0.7,
+   "comps": {
+    "aer": 0.7,
+    "ana": 0.56,
+    "spd": 0.56
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 5,
+   "p": "bld",
+   "code": "1.2.2",
+   "load": 0.8,
+   "comps": {
+    "aer": 0.8,
+    "ana": 0.64,
+    "spd": 0.64
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 6,
+   "p": "bld",
+   "code": "1.2.3",
+   "load": 0.85,
+   "comps": {
+    "aer": 0.85,
+    "ana": 0.68,
+    "spd": 0.68
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 7,
+   "p": "bld",
+   "code": "1.2.4",
+   "load": 0.9,
+   "comps": {
+    "aer": 0.9,
+    "ana": 0.72,
+    "spd": 0.72
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 8,
+   "p": "bld",
+   "code": "1.2.5",
+   "load": 0.75,
+   "comps": {
+    "aer": 0.75,
+    "ana": 0.6,
+    "spd": 0.6
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 9,
+   "p": "tap",
+   "code": "2.1.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.72,
+    "spd": 1.14
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 10,
+   "p": "tap",
+   "code": "2.1.2",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 11,
+   "p": "tap",
+   "code": "2.1.3",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.32,
+    "ana": 0.48,
+    "spd": 0.76
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  }
+ ],
+ "sw:s2": [
+  {
+   "i": 0,
+   "p": "pre",
+   "code": "1.1.1",
+   "load": 0.3,
+   "comps": {
+    "aer": 0.27,
+    "ana": 0.09,
+    "spd": 0.18
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 1,
+   "p": "pre",
+   "code": "1.1.2",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.36,
+    "ana": 0.12,
+    "spd": 0.24
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 2,
+   "p": "pre",
+   "code": "1.1.3",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.45,
+    "ana": 0.15,
+    "spd": 0.3
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 3,
+   "p": "bld",
+   "code": "1.2.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.6,
+    "ana": 0.48,
+    "spd": 0.48
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 4,
+   "p": "bld",
+   "code": "1.2.2",
+   "load": 1.2,
+   "comps": {
+    "aer": 1.1,
+    "ana": 0.6,
+    "spd": 0.96
+   },
+   "camp": "e2",
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 5,
+   "p": "bld",
+   "code": "1.2.3",
+   "load": 0.8,
+   "comps": {
+    "aer": 0.8,
+    "ana": 0.64,
+    "spd": 0.64
+   },
+   "camp": null,
+   "group": "core",
+   "away": false
+  },
+  {
+   "i": 6,
+   "p": "bld",
+   "code": "1.2.4",
+   "load": 0.95,
+   "comps": {
+    "aer": 0.95,
+    "ana": 0.76,
+    "spd": 1.2
+   },
+   "camp": null,
+   "group": "nats",
+   "away": false
+  },
+  {
+   "i": 7,
+   "p": "tap",
+   "code": "2.1.1",
+   "load": 0.7,
+   "comps": {
+    "aer": 0.56,
+    "ana": 0.84,
+    "spd": 1.33
+   },
+   "camp": null,
+   "group": "nats",
+   "away": false
+  },
+  {
+   "i": 8,
+   "p": "tap",
+   "code": "2.1.2",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "nats",
+   "away": false
+  },
+  {
+   "i": 9,
+   "p": "tap",
+   "code": "2.1.3",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.72,
+    "spd": 1.14
+   },
+   "camp": null,
+   "group": "nats",
+   "away": false
+  },
+  {
+   "i": 10,
+   "p": "tap",
+   "code": "2.1.4",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "nats",
+   "away": false
+  },
+  {
+   "i": 11,
+   "p": "tap",
+   "code": "2.1.5",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.32,
+    "ana": 0.48,
+    "spd": 0.76
+   },
+   "camp": null,
+   "group": "nats",
+   "away": false
+  }
+ ],
+ "sw:s3": [
+  {
+   "i": 0,
+   "p": "pre",
+   "code": "1.1.1",
+   "load": 0.3,
+   "comps": {
+    "aer": 0.27,
+    "ana": 0.09,
+    "spd": 0.18
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 1,
+   "p": "pre",
+   "code": "1.1.2",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.36,
+    "ana": 0.12,
+    "spd": 0.24
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 2,
+   "p": "pre",
+   "code": "1.1.3",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.45,
+    "ana": 0.15,
+    "spd": 0.3
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 3,
+   "p": "bld",
+   "code": "1.2.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.6,
+    "ana": 0.48,
+    "spd": 0.48
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 4,
+   "p": "bld",
+   "code": "1.2.2",
+   "load": 0.65,
+   "comps": {
+    "aer": 0.65,
+    "ana": 0.52,
+    "spd": 0.52
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 5,
+   "p": "bld",
+   "code": "1.2.3",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.13,
+    "spd": 0
+   },
+   "camp": null,
+   "group": "girls",
+   "away": true
+  },
+  {
+   "i": 6,
+   "p": "bld",
+   "code": "1.2.4",
+   "load": 0.85,
+   "comps": {
+    "aer": 0.85,
+    "ana": 0.68,
+    "spd": 0.68
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 7,
+   "p": "bld",
+   "code": "1.2.5",
+   "load": 0.9,
+   "comps": {
+    "aer": 0.9,
+    "ana": 0.72,
+    "spd": 0.72
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 8,
+   "p": "bld",
+   "code": "1.2.6",
+   "load": 0.75,
+   "comps": {
+    "aer": 0.75,
+    "ana": 0.6,
+    "spd": 0.6
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 9,
+   "p": "tap",
+   "code": "2.1.1",
+   "load": 0.6,
+   "comps": {
+    "aer": 0.48,
+    "ana": 0.72,
+    "spd": 1.14
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 10,
+   "p": "tap",
+   "code": "2.1.2",
+   "load": 0.5,
+   "comps": {
+    "aer": 0.4,
+    "ana": 0.6,
+    "spd": 0.95
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  },
+  {
+   "i": 11,
+   "p": "tap",
+   "code": "2.1.3",
+   "load": 0.4,
+   "comps": {
+    "aer": 0.32,
+    "ana": 0.48,
+    "spd": 0.76
+   },
+   "camp": null,
+   "group": "girls",
+   "away": false
+  }
+ ]
+}

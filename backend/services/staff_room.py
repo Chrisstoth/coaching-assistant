@@ -594,6 +594,12 @@ def _attendance_lines(db: DBSession, subject: Subject, attendees: list) -> str:
     return "\n".join(lines)
 
 
+def _default_squad(db: DBSession) -> Optional[str]:
+    """The squad with a season plan, when only one squad has one."""
+    rows = db.query(models.PlanDoc.squad).filter(models.PlanDoc.key == "plan").all()
+    return rows[0][0] if len(rows) == 1 else None
+
+
 def role_context(role: str, db: DBSession, subject: Subject) -> str:
     """The slice of real data this specialist looks at."""
     from backend.services import claude_service as cs
@@ -726,7 +732,13 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
     # Then the coach's direction for this worker (the editable part of their job description).
     from backend.services import workbooks
     direction = _safe(workbooks.job_direction_block, db, role)
-    head = "\n\n".join(x for x in (rules, direction) if x)
+    # The coach's season plan for the week (the Season Planner), for the staff who plan around it.
+    plan = ""
+    if role in ("planner", "physiologist", "sessions", "manager"):
+        from backend.services import season_planner
+        on = subject.session_date or subject.week_start or date.today()
+        plan = _safe(season_planner.staff_lines, db, subject.squad or _default_squad(db), on)
+    head = "\n\n".join(x for x in (rules, direction, plan) if x)
     return f"{head}\n\n{data}" if head else data
 
 

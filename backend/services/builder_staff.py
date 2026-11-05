@@ -261,6 +261,13 @@ def draft(db: DBSession, session: models.Session, current: dict, brief: str, ask
     ask = ask or _ask
     W.ensure_workbooks(db)
     parts = [session_workshop.writing_context(db, session.date, session.squad, _attendees(current))]
+    try:
+        from backend.services import season_planner
+        week_plan = season_planner.staff_lines(db, session.squad, session.date)
+        if week_plan:
+            parts.append(week_plan)
+    except Exception:  # noqa: BLE001 - the plan is extra context, never a blocker
+        pass
     for path in ("style/current-style.md", "style/moved-on-from.md"):
         text = W.read_page(db, "sessions", path)
         if text:
