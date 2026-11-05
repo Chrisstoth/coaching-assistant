@@ -121,15 +121,18 @@ def _ask(system: str, user: str) -> dict:
         return {}
 
 
-def apply_edits(db: DBSession, role: str, edits: list, session: models.Session) -> dict:
-    """Save the edits that pass the rules; report the rest."""
-    trigger = f"session:{session.id}"
-    reason = f"after the {session.date:%d %b} session"
+def apply_edits(db: DBSession, role: str, edits: list, session: Optional[models.Session] = None, *,
+                trigger: Optional[str] = None, reason: Optional[str] = None, on=None) -> dict:
+    """Save the edits that pass the rules (own folders, small, a confidence on every page); report the rest."""
+    if session is not None:
+        trigger = trigger or f"session:{session.id}"
+        reason = reason or f"after the {session.date:%d %b} session"
+        on = on or session.date
     saved, refused = [], []
     for e in (edits or [])[:MAX_EDITS]:
         try:
             if e.get("kind") == "journal" and str(e.get("text") or "").strip():
-                W.append_journal(db, role, str(e["text"])[:400], trigger=trigger, on=session.date)
+                W.append_journal(db, role, str(e["text"])[:400], trigger=trigger, on=on)
                 saved.append("journal")
             elif e.get("kind") == "section":
                 path = str(e.get("path") or "")

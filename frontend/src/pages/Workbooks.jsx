@@ -12,6 +12,67 @@ function Back({ to, label }) {
   return <Link to={to} className="text-pool-400 text-sm">‹ {label}</Link>
 }
 
+/* The coach's one short list each week: what changed, gaps, predictions and track records. */
+function ThisWeek() {
+  const [wk, setWk] = useState(null)
+  const [msg, setMsg] = useState('')
+  const load = () => api.getWeeklyReview().then(setWk).catch(() => setWk(null))
+  useEffect(() => { load() }, [])
+  if (!wk) return null
+  const tick = async c => { await api.tickWorkbookPage(c.role, c.path); load() }
+  const mark = async (p, outcome) => { await api.markPrediction(p.id, outcome); load() }
+  const run = async () => { await api.runWeeklyReview(); setMsg('The staff are doing their weekly review. Changes appear here when they finish.') }
+  const open = wk.changes.filter(c => !c.reviewed)
+  const record = Object.entries(wk.track_record || {})
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs font-semibold uppercase tracking-wider text-pool-500">This week</h2>
+        <button onClick={run} className="text-xs text-accent-400 font-semibold">Run the weekly review</button>
+      </div>
+      {msg && <p className="text-xs text-green-400">{msg}</p>}
+      <div className={`${card} divide-y divide-pool-700`}>
+        {wk.changes.length === 0 && <p className="px-4 py-3 text-sm text-pool-400">No workbook changes this week.</p>}
+        {wk.changes.map(c => (
+          <div key={c.role + c.path} className="flex items-center justify-between gap-2 px-4 py-2.5">
+            <Link to={`/workbooks/${c.role}/page?path=${encodeURIComponent(c.path)}`} className="min-w-0">
+              <span className="block text-sm text-pool-100 truncate">{c.name}: {c.title}</span>
+              <span className="block text-xs text-pool-400 truncate">{[c.summary, c.confidence, c.reason].filter(Boolean).join(' · ')}</span>
+            </Link>
+            {c.reviewed ? <span className="text-xs text-green-400 shrink-0">✓ read</span>
+              : <button onClick={() => tick(c)} className="shrink-0 text-xs border border-pool-600 rounded-lg px-2 py-1 text-pool-200" title="It's right">✓</button>}
+          </div>
+        ))}
+      </div>
+      {open.length > 0 && <p className="text-[11px] text-pool-500 pl-1">Tick a page when it's right; open it to correct it. Every change can be restored.</p>}
+      {wk.gaps.length > 0 && (
+        <div className={`${card} px-4 py-3 space-y-1`}>
+          <p className="text-xs font-semibold text-pool-200">Gaps found in the sessions</p>
+          {wk.gaps.map((g, i) => <p key={i} className="text-xs text-amber-300">{g.squad ? `${g.squad}: ` : ''}{g.text}</p>)}
+        </div>
+      )}
+      {wk.predictions.length > 0 && (
+        <div className={`${card} divide-y divide-pool-700`}>
+          {wk.predictions.map(p => (
+            <div key={p.id} className="px-4 py-2.5">
+              <p className="text-sm text-pool-100">{p.name}: {p.statement}</p>
+              <p className="text-xs text-pool-400">{p.outcome ? `${p.outcome}${p.actual ? ` · ${p.actual}` : ''}` : `due ${p.due}`}</p>
+              {!p.outcome && p.kind === 'other' && (
+                <div className="flex gap-2 mt-1">
+                  {['right', 'wrong'].map(o => <button key={o} onClick={() => mark(p, o)} className="text-xs border border-pool-600 rounded-lg px-2 py-0.5 text-pool-300">{o === 'right' ? 'It happened' : "It didn't"}</button>)}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {record.length > 0 && (
+        <p className="text-xs text-pool-400 pl-1">Track record: {record.map(([n, r]) => `${n} ${r.right || 0} right, ${r.wrong || 0} wrong${r.rate != null ? ` (${r.rate}%)` : ''}`).join(' · ')}</p>
+      )}
+    </section>
+  )
+}
+
 /* The staff, each with their workbook; snapshots and search across all of them. */
 function StaffList() {
   const [staff, setStaff] = useState(null)
@@ -43,6 +104,7 @@ function StaffList() {
         <h1 className="text-xl font-bold mt-1">Staff workbooks</h1>
         <p className="text-pool-400 text-sm mt-0.5">What each member of staff has written down. Every change is kept; you can edit, compare and restore.</p>
       </header>
+      <ThisWeek />
       <form onSubmit={find} className="flex gap-2">
         <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search every workbook"
           className="flex-1 bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm" />

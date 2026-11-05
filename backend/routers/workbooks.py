@@ -151,3 +151,51 @@ def lock(role: str, body: Lock, db: DBSession = Depends(get_db)):
     except W.WorkbookError as e:
         _fail(e)
     return {"path": p.path, "locked": p.locked}
+
+
+# ---------------------------------------------------------------- the weekly review
+
+class Tick(BaseModel):
+    role: str
+    path: str
+
+
+class Outcome(BaseModel):
+    outcome: str
+
+
+@router.get("/review/week")
+def review_week(db: DBSession = Depends(get_db)):
+    """The coach's one short list: what changed this week, gaps, predictions and track records."""
+    from backend.services import weekly_review
+    return weekly_review.this_week(db)
+
+
+@router.post("/review/tick")
+def review_tick(body: Tick, db: DBSession = Depends(get_db)):
+    from backend.services import weekly_review
+    try:
+        weekly_review.tick(db, body.role, body.path)
+    except W.WorkbookError as e:
+        _fail(e)
+    return {"ok": True}
+
+
+@router.post("/review/run", status_code=202)
+def review_run(db: DBSession = Depends(get_db)):
+    from backend.services.ai_operations import enqueue_operation, operation_out
+    from datetime import date as _date
+    op = enqueue_operation(db, operation_type="weekly_review", title="The staff's weekly review",
+                           idempotency_key=f"weekly:{_date.today().isoformat()}")
+    db.commit()
+    return operation_out(op)
+
+
+@router.post("/predictions/{prediction_id}")
+def mark_prediction(prediction_id: int, body: Outcome, db: DBSession = Depends(get_db)):
+    from backend.services import predictions
+    try:
+        p = predictions.mark(db, prediction_id, body.outcome)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"id": p.id, "outcome": p.outcome}

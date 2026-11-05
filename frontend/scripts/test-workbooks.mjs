@@ -29,4 +29,9 @@ assert.match(hist, /Moved on/)
 assert.match(app, /path="\/history-import"/)
 assert.match(settings, /to: '\/history-import'/)
 
+const wbPage = await readFile(new URL('../src/pages/Workbooks.jsx', import.meta.url), 'utf8')
+assert.match(wbPage, /<ThisWeek \/>/, 'the weekly list sits at the top of the workbooks')
+assert.match(wbPage, /api\.tickWorkbookPage\(/)
+assert.match(wbPage, /Track record/)
+
 console.log('Workbook checks passed')

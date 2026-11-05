@@ -267,6 +267,12 @@ def process_operation(operation_id: int) -> bool:
                     summary = _profile_refresh_operation(row, db)
                 elif row.operation_type == "workbook_update":
                     summary = _workbook_operation(row, db)
+                elif row.operation_type == "weekly_review":
+                    from backend.services import weekly_review
+                    done = weekly_review.run(db)
+                    saved = sum(len(v["saved"]) for v in done.values())
+                    made = sum(v["predictions"] for v in done.values())
+                    summary = f"The staff's weekly review: {saved} workbook change{'' if saved == 1 else 's'}, {made} prediction{'' if made == 1 else 's'}."
                 elif row.operation_type == "history_import_batch":
                     from backend.services import import_queue
                     done = import_queue.run_batch(db, limit=int((row.payload or {}).get("limit") or 50),

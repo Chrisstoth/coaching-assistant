@@ -1530,3 +1530,31 @@ class ImportItem(Base):
     session_id = Column(Integer, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Prediction(Base):
+    """Something a member of staff expects to happen, written so it can be checked.
+
+    A race-time prediction ("Ruby 200 free under 2:10 at County") is checked
+    in code against the results; anything else is marked by the coach. Each
+    worker's track record says how far to trust them.
+    """
+    __tablename__ = "predictions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    club = Column(String, nullable=False, default="default", index=True)
+    role = Column(String, nullable=False, index=True)
+    statement = Column(Text, nullable=False)
+    kind = Column(String, nullable=False, default="other")       # race_time / other
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id", ondelete="CASCADE"), nullable=True, index=True)
+    distance = Column(Integer, nullable=True)
+    stroke = Column(String, nullable=True)                        # Freestyle / Backstroke / Breaststroke / Butterfly / IM
+    course = Column(String(3), nullable=True)                     # SCM / LCM
+    target_seconds = Column(Float, nullable=True)
+    meet_id = Column(Integer, ForeignKey("meets.id", ondelete="SET NULL"), nullable=True)
+    due = Column(Date, nullable=True)
+    outcome = Column(String, nullable=True, index=True)           # right / wrong / no result
+    actual = Column(Text, nullable=True)
+    trigger = Column(String, nullable=True)
+    checked_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
