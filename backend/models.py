@@ -1424,3 +1424,69 @@ class SwimmerPlan(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
     swimmer = relationship("Swimmer")
+
+
+# ---------------------------------------------------------------------------
+# Workbooks: what each member of staff knows, written down
+# ---------------------------------------------------------------------------
+
+class WorkbookPage(Base):
+    """One markdown page in a worker's workbook (see backend/services/workbooks.py).
+
+    The page's text starts with a small header (title, kind, swimmers,
+    confidence, summary...) that is copied into the columns below so pages can
+    be listed and searched. Every save is a new PageRevision; nothing is
+    overwritten. Pages belong to a club (and to a coach where they are one
+    coach's own, such as session style).
+    """
+    __tablename__ = "workbook_pages"
+    __table_args__ = (UniqueConstraint("club", "role", "path", name="uq_workbook_page_path"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    club = Column(String, nullable=False, default="default", index=True)
+    coach = Column(String, nullable=True)
+    role = Column(String, nullable=False, index=True)        # physiologist / analyst / ... / records
+    path = Column(String, nullable=False)                    # e.g. swimmers/ruby-w.md
+    title = Column(String, nullable=False)
+    kind = Column(String, nullable=False, default="case")    # job / philosophy / case / journal / glossary / format / log / style ...
+    summary = Column(Text, nullable=True)
+    confidence = Column(String, nullable=True)               # hypothesis / seen-once / pattern
+    swimmer_ids = Column(JSON, default=list)
+    last_reviewed = Column(Date, nullable=True)
+    locked = Column(JSON, default=list)                      # headings only the coach may change
+    content = Column(Text, nullable=False, default="")
+    version = Column(Integer, nullable=False, default=1)
+    archived = Column(Boolean, default=False, index=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    revisions = relationship("PageRevision", back_populates="page", cascade="all, delete-orphan",
+                             order_by="PageRevision.version")
+
+
+class PageRevision(Base):
+    """One saved version of a workbook page: who wrote it, why, and what prompted it."""
+    __tablename__ = "page_revisions"
+    __table_args__ = (UniqueConstraint("page_id", "version", name="uq_page_revision_version"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    page_id = Column(Integer, ForeignKey("workbook_pages.id", ondelete="CASCADE"), nullable=False, index=True)
+    version = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False, default="")
+    author = Column(String, nullable=False)                  # a worker's role, or "coach"
+    reason = Column(Text, nullable=True)                     # "after the 12 Nov debrief"
+    trigger = Column(String, nullable=True, index=True)      # "thread:12", "debrief:88", "import:3" ...
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    page = relationship("WorkbookPage", back_populates="revisions")
+
+
+class WorkbookSnapshot(Base):
+    """A named point to come back to: every page's version at that moment."""
+    __tablename__ = "workbook_snapshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    club = Column(String, nullable=False, default="default", index=True)
+    name = Column(String, nullable=False)
+    versions = Column(JSON, nullable=False, default=dict)    # {page_id: version}
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -723,7 +723,11 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
     # The coach's own rules come first and are never trimmed.
     from backend.services import coach_guidance
     rules = _safe(coach_guidance.prompt_block, db, role)
-    return f"{rules}\n\n{data}" if rules else data
+    # Then the coach's direction for this worker (the editable part of their job description).
+    from backend.services import workbooks
+    direction = _safe(workbooks.job_direction_block, db, role)
+    head = "\n\n".join(x for x in (rules, direction) if x)
+    return f"{head}\n\n{data}" if head else data
 
 
 # ---------------------------------------------------------------------------

@@ -29,6 +29,16 @@ const SECTIONS = [
         ),
       },
       {
+        to: '/workbooks',
+        label: 'Staff workbooks',
+        description: 'What each member of staff has written down, and their job descriptions. Edit, compare and restore any page.',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+          </svg>
+        ),
+      },
+      {
         to: '/settings/session-presentation',
         label: 'Session Print & Terminology',
         description: 'Add your club logo, choose your intensity language, and map it to LaneWatch training zones.',

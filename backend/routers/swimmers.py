@@ -420,6 +420,10 @@ def bulk_delete_swimmers(body: dict = Body(...), db: DBSession = Depends(get_db)
 
 def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     """Delete all child records for a swimmer before deleting the swimmer row."""
+    # Their workbook pages go too, with every old version and their name on other pages.
+    from backend.services import workbooks
+    leaving = db.get(models.Swimmer, swimmer_id)
+    workbooks.forget_swimmer(db, swimmer_id, leaving.name if leaving else None)
     # Keep this explicit rather than relying only on ORM relationship cascades:
     # production databases enforce foreign keys, and several newer planning and
     # competition tables are intentionally not loaded as Swimmer relationships.

@@ -16,6 +16,7 @@ import Schedule from './pages/Schedule'
 import Calendar from './pages/Calendar'
 import CoachingContext from './pages/CoachingContext'
 import SessionPlanner from './pages/SessionPlanner'
+import Workbooks from './pages/Workbooks'
 import PlanHub from './pages/PlanHub'
 import CoachAI from './pages/CoachAI'
 import Settings from './pages/Settings'
@@ -269,6 +270,9 @@ export default function App() {
           <Route path="/session-planner" element={<Navigate to="/builder/new" replace />} />
           {/* The older planner, kept only for writing with the staff until the builder has live staff comments */}
           <Route path="/session-planner/staff" element={<SessionPlanner />} />
+          <Route path="/workbooks" element={<Workbooks />} />
+          <Route path="/workbooks/:role" element={<Workbooks />} />
+          <Route path="/workbooks/:role/page" element={<Workbooks />} />
           <Route path="/builder/:id" element={<Suspense fallback={<p className="p-4 text-sm text-pool-400">Opening the Session Builder…</p>}><SessionBuilder /></Suspense>} />
           <Route path="/season" element={<SeasonPlan />} />
           <Route path="/planning" element={<PlanningWorkspace />} />
