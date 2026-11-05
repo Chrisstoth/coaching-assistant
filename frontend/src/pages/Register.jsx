@@ -5,6 +5,14 @@ import VoiceInput from '../components/VoiceInput'
 import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
+// One tap on the register: how a swimmer went, for the staff to learn from.
+const RESPONSES = [
+  { key: 'good', label: 'Good', on: 'bg-green-600 text-white' },
+  { key: 'flat', label: 'Flat', on: 'bg-amber-600 text-white' },
+  { key: 'ill', label: 'Ill', on: 'bg-red-700 text-white' },
+  { key: 'injured', label: 'Injured', on: 'bg-red-700 text-white' },
+]
+
 function SessionWatchpoints({ notes }) {
   const [open, setOpen] = useState(false)
   if (notes.length === 0) return null
@@ -145,6 +153,7 @@ export default function Register() {
         ),
         sub_group_done: r.sub_group_done ?? null,
         coach_observation: r.coach_observation ?? '',
+        response: r.response ?? null,
         ai_characterisation: r.ai_characterisation ?? null,
         ai_expected_response: r.ai_expected_response ?? null,
       }))
@@ -240,13 +249,17 @@ export default function Register() {
     setGroupCountPending(true)
   }
 
+  // Was the session swum as written? The staff learn from what was actually swum.
+  const [asSwum, setAsSwum] = useState(null)
+  useEffect(() => { if (session) setAsSwum(session.as_swum || null) }, [session?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const submit = async (runAI = true, sessionComplete = true) => {
     setSubmitting(true)
     try {
       const revision = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`
       const clientSavedAt = new Date().toISOString()
       const payload = {
-        entries: entries.map(({ swimmer_id, attended, group_planned, sub_group_planned, group_done, sub_group_done, coach_observation }) => ({
+        entries: entries.map(({ swimmer_id, attended, group_planned, sub_group_planned, group_done, sub_group_done, coach_observation, response }) => ({
           swimmer_id,
           attended,
           group_planned: group_planned ?? null,
@@ -254,7 +267,9 @@ export default function Register() {
           group_done: attended ? group_done : null,
           sub_group_done: attended ? sub_group_done : null,
           coach_observation: attended ? coach_observation : null,
+          response: attended ? response : null,
         })),
+        as_swum: asSwum,
         run_ai: runAI,
         session_complete: sessionComplete,
         revision,
@@ -332,6 +347,8 @@ export default function Register() {
     }
   }
   const plannedGroupNumbers = (session?.groups || []).map(group => group.group_number)
+  // A Session Builder session names its groups (e.g. "Group 1 Girls"); older ones are G1, G2…
+  const groupLabel = n => ((session?.groups || []).find(g => g.group_number === n)?.description || '').trim() || `G${n}`
   const groupNumbers = groupCount > 1
     ? (plannedGroupNumbers.length === groupCount
         ? plannedGroupNumbers
@@ -454,9 +471,9 @@ export default function Register() {
                   {groupCount === 1
                     ? 'Whole squad session'
                     : entry.group_done
-                    ? `G${entry.group_done}${entry.sub_group_done || ''}`
+                    ? `${groupLabel(entry.group_done)}${entry.sub_group_done || ''}`
                     : entry.group_planned
-                      ? `Planned G${entry.group_planned}${entry.sub_group_planned || ''}`
+                      ? `Planned ${groupLabel(entry.group_planned)}${entry.sub_group_planned || ''}`
                       : entry.attended ? 'Tap to set group or add a note' : 'Not marked present'}
                   {entry.availability?.detail ? ` · ${entry.availability.detail}` : ''}
                 </p>
@@ -481,7 +498,7 @@ export default function Register() {
                 {groupCount > 1 && (
                   <div>
                     <p className="text-[11px] font-medium text-pool-400 mb-1.5">Which group is this swimmer in?</p>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 flex-wrap">
                       {groupNumbers.map((g) => (
                         <button
                           key={g}
@@ -492,7 +509,7 @@ export default function Register() {
                               : 'bg-pool-700 text-pool-400'
                           }`}
                         >
-                          G{g}
+                          <span className="block truncate px-1">{groupLabel(g)}</span>
                         </button>
                       ))}
                     </div>
@@ -518,6 +535,22 @@ export default function Register() {
                   </div>
                 )}
 
+                {/* How they went: one tap, for the staff */}
+                <div>
+                  <p className="text-[11px] font-medium text-pool-400 mb-1.5">How did they go?</p>
+                  <div className="flex gap-1.5">
+                    {RESPONSES.map(r => (
+                      <button
+                        key={r.key}
+                        onClick={() => update(entry.swimmer_id, 'response', entry.response === r.key ? null : r.key)}
+                        className={`flex-1 rounded-lg py-1.5 text-xs font-semibold transition-colors ${entry.response === r.key ? r.on : 'bg-pool-700 text-pool-400'}`}
+                      >
+                        {r.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 {/* Observation */}
                 <PredictionCard prediction={entry.ai_expected_response} />
                 <VoiceInput
@@ -540,6 +573,29 @@ export default function Register() {
             Watchpoints open for {watchpointNames}{additionalWatchpointCount ? ` and ${additionalWatchpointCount} more` : ''} — cover {openWatchpoints.length === 1 ? 'it' : 'them'} in the debrief after you save.
           </p>
         )}
+        <div className="bg-pool-800 rounded-xl p-3 space-y-2">
+          <p className="text-xs font-semibold text-pool-200">Was it swum as written?</p>
+          <div className="flex gap-2">
+            {[['as_written', 'As written'], ['changed', 'Changed on deck']].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setAsSwum(asSwum?.status === key ? null : { status: key, note: asSwum?.note || '' })}
+                className={`flex-1 rounded-lg py-2 text-xs font-semibold ${asSwum?.status === key ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-400'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          {asSwum?.status === 'changed' && (
+            <textarea
+              value={asSwum.note || ''}
+              onChange={e => setAsSwum({ status: 'changed', note: e.target.value })}
+              placeholder="What changed? e.g. main set cut to 3 rounds, Girls swam the Boys' kick set"
+              rows={2}
+              className="w-full bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-xs text-pool-100"
+            />
+          )}
+        </div>
         <div className="flex gap-2">
           <button
             onClick={() => submit(true, false)}

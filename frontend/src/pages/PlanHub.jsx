@@ -144,7 +144,7 @@ export default function PlanHub() {
         </Link>
 
         <Link
-          to="/session-planner"
+          to="/builder/new"
           className="bg-pool-800 rounded-2xl p-4 flex flex-col gap-2 active:bg-pool-700 transition-colors"
         >
           <span className="p-2 bg-pool-700 rounded-xl text-accent-400 self-start">
@@ -209,7 +209,7 @@ export default function PlanHub() {
           ) : sessions.length === 0 ? (
             <div className="py-8 text-center">
               <p className="text-pool-400 text-sm">No sessions yet</p>
-              <Link to="/session-planner" className="text-accent-400 text-sm mt-1 inline-block">Write your first session</Link>
+              <Link to="/builder/new" className="text-accent-400 text-sm mt-1 inline-block">Write your first session</Link>
             </div>
           ) : (
             sessions.map(s => <SessionRow key={s.id} session={s} />)

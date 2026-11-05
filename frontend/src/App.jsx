@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom'
 import { api, getToken } from './api'
 import { getOfflineSaveCount, subscribeToOfflineQueue } from './offlineQueue'
@@ -34,6 +34,9 @@ import AIOperations from './pages/AIOperations'
 import SessionDebrief from './pages/SessionDebrief'
 import { LaneWatchAIButton, LaneWatchWordmark } from './components/LaneWatchBrand'
 import { SessionPresentationProvider } from './components/SessionPresentationProvider'
+
+// The Session Builder carries the PDF writer, so it loads only when opened.
+const SessionBuilder = lazy(() => import('./pages/SessionBuilder'))
 
 function RequireAuth({ children }) {
   return getToken() ? children : <Navigate to="/login" replace />
@@ -263,7 +266,10 @@ export default function App() {
           <Route path="/coach-checkins/:id" element={<CoachCheckIn />} />
           <Route path="/ai" element={<CoachAI />} />
           <Route path="/plan" element={<PlanHub />} />
-          <Route path="/session-planner" element={<SessionPlanner />} />
+          <Route path="/session-planner" element={<Navigate to="/builder/new" replace />} />
+          {/* The older planner, kept only for writing with the staff until the builder has live staff comments */}
+          <Route path="/session-planner/staff" element={<SessionPlanner />} />
+          <Route path="/builder/:id" element={<Suspense fallback={<p className="p-4 text-sm text-pool-400">Opening the Session Builder…</p>}><SessionBuilder /></Suspense>} />
           <Route path="/season" element={<SeasonPlan />} />
           <Route path="/planning" element={<PlanningWorkspace />} />
                 <Route path="/assistant" element={<AssistantInbox />} />

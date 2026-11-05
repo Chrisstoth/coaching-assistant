@@ -212,17 +212,22 @@ export default function SessionDetail() {
         </div>
       )}
 
-      {!hasPlan && (
+      {session.status !== 'cancelled' && (
         <div className="bg-accent-600/10 border border-accent-500/40 rounded-xl p-4 flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-pool-100">No session plan attached yet</p>
-            <p className="text-xs text-pool-400 mt-1">Import the workbook into this calendar session before opening the register.</p>
+            <p className="text-sm font-semibold text-pool-100">{hasPlan ? 'Session plan' : 'No session plan yet'}</p>
+            <p className="text-xs text-pool-400 mt-1">
+              {hasPlan ? 'Edit it, view it poolside or print it in the Session Builder.' : 'Write it in the Session Builder, or import a workbook.'}
+            </p>
+            {!hasPlan && (
+              <Link to={`/import?${importTarget.toString()}`} className="text-xs text-accent-400 mt-1 inline-block">Import a workbook instead</Link>
+            )}
           </div>
           <Link
-            to={`/import?${importTarget.toString()}`}
+            to={`/builder/${session.id}`}
             className="shrink-0 bg-accent-600 hover:bg-accent-500 text-white rounded-lg px-3 py-2 text-xs font-semibold"
           >
-            Import plan
+            {hasPlan ? 'Open in builder' : 'Write session'}
           </Link>
         </div>
       )}

@@ -73,6 +73,15 @@ def _apply_migrations():
             add_col("sessions", "start_time", "VARCHAR")
             add_col("sessions", "end_time", "VARCHAR")
             add_col("sessions", "status", "VARCHAR DEFAULT 'completed'")
+            add_col("sessions", "builder", "JSON")
+            add_col("sessions", "audience", "JSON")
+            add_col("sessions", "as_swum", "JSON")
+
+        if "session_entries" in insp.get_table_names():
+            add_col("session_entries", "response", "VARCHAR")
+
+        if "session_presentation_settings" in insp.get_table_names():
+            add_col("session_presentation_settings", "effort_scale", "VARCHAR")
             add_col("sessions", "pool_slot_id", "INTEGER")
             add_col("sessions", "cancel_reason", "TEXT")
             add_col("sessions", "course", "VARCHAR")

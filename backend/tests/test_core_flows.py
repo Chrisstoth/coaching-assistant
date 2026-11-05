@@ -1905,7 +1905,7 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(changed_groups.json()["register_group_count"], 2)
         invalid_groups = self.client.put(
             f"/sessions/{session_id}", headers=self.headers,
-            json={"register_group_count": 4},
+            json={"register_group_count": 9},
         )
         self.assertEqual(invalid_groups.status_code, 422, invalid_groups.text)
         restored_groups = self.client.put(

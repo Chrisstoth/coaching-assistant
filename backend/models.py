@@ -214,6 +214,19 @@ class Session(Base):
     session_sequence = Column(Integer, nullable=True)
     cycle_code = Column(String, nullable=True, index=True)
 
+    # The session as written in the Session Builder (blocks, groups, sets in the
+    # shared notation - see backend/services/session_notation.py). When present it
+    # is the source of truth: the groups, zone volumes and planned content below
+    # are derived from it on every save.
+    builder = Column(JSON, nullable=True)
+    # Who the session was for: {"kind": "squad"|"group"|"camp"|"swimmer",
+    # "label", "training_group_ids", "swimmer_ids", "camp"}. Missing means the
+    # whole squad of the session.
+    audience = Column(JSON, nullable=True)
+    # Whether the session was swum as written: {"status": "as_written"|"changed", "note"}.
+    # The staff learn from what was actually swum, not from the plan.
+    as_swum = Column(JSON, nullable=True)
+
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 
     course = Column(String(3), nullable=True)               # SCM / LCM
@@ -291,6 +304,8 @@ class SessionEntry(Base):
     sub_group_done = Column(String, nullable=True)       # "A" / "B" — actual on the day
     sets_completed = Column(JSON, nullable=True)
     coach_observation = Column(Text, nullable=True)
+    # How the swimmer went, tapped on the register: good / flat / ill / injured.
+    response = Column(String, nullable=True)
 
     ai_characterisation = Column(Text, nullable=True)   # Claude's read on how this swimmer did
     ai_expected_response = Column(Text, nullable=True)  # what adaptation is expected
@@ -912,6 +927,7 @@ class SessionPresentationSettings(Base):
     id = Column(Integer, primary_key=True, default=1)
     club_name = Column(String, nullable=True)
     logo_data_url = Column(Text, nullable=True)
+    effort_scale = Column(String, nullable=True)   # the coach's usual intensity scale (session notation key)
     terminology_name = Column(String, nullable=False, default="LaneWatch energy zones")
     terminology_levels = Column(JSON, nullable=False, default=list)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

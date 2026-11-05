@@ -233,6 +233,16 @@ export const api = {
     return request('GET', `/sessions${qs ? '?' + qs : ''}`)
   },
   getSession: (id) => request('GET', `/sessions/${id}`),
+
+  // Session Builder (sessions written in the shared notation)
+  newBuilderSession: (data) => request('POST', '/session-builder/sessions', data),
+  getBuilderSession: (id) => request('GET', `/session-builder/sessions/${id}`),
+  saveBuilderSession: (id, session, audience) => request('PUT', `/session-builder/sessions/${id}`, audience === undefined ? { session } : { session, audience }),
+  copyBuilderSessionToNextWeek: (id) => request('POST', `/session-builder/sessions/${id}/copy-next-week`),
+  setBuilderAudience: (id, audience) => request('PUT', `/session-builder/sessions/${id}/audience`, audience),
+  getPlanGroups: (on, squad) => request('GET', `/session-builder/plan-groups?on=${on}${squad ? `&squad=${encodeURIComponent(squad)}` : ''}`),
+  getBuilderSettings: () => request('GET', '/session-builder/settings'),
+  setBuilderScale: (effortScale) => request('PUT', '/session-builder/settings', { effort_scale: effortScale }),
   createSession: (data) => request('POST', '/sessions', data),
   deleteSession: (id) => request('DELETE', `/sessions/${id}`),
   deleteTimes: (swimmerId = null) => request('DELETE', `/times${swimmerId ? `?swimmer_id=${swimmerId}` : ''}`),

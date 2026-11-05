@@ -45,7 +45,7 @@ class SessionCreate(BaseModel):
     pool_slot_id: Optional[int] = None
     status: Optional[str] = 'completed'
     course: Optional[str] = None   # SCM / LCM
-    register_group_count: Optional[int] = Field(default=None, ge=1, le=3)
+    register_group_count: Optional[int] = Field(default=None, ge=1, le=8)
     microcycle_id: Optional[int] = None
     session_sequence: Optional[int] = Field(default=None, ge=1)
     # Set only when the coach has deliberately chosen to overwrite the plan
@@ -80,6 +80,10 @@ class RegisterEntry(BaseModel):
     group_done: Optional[int] = None
     sub_group_done: Optional[str] = None
     coach_observation: Optional[str] = None
+    response: Optional[str] = None   # good / flat / ill / injured
+
+
+RESPONSES = {"good", "flat", "ill", "injured"}
 
 
 class RegisterSubmit(BaseModel):
@@ -88,7 +92,8 @@ class RegisterSubmit(BaseModel):
     session_complete: bool = True
     revision: Optional[str] = None
     client_saved_at: Optional[datetime] = None
-    register_group_count: Optional[int] = Field(default=None, ge=1, le=3)
+    register_group_count: Optional[int] = Field(default=None, ge=1, le=8)
+    as_swum: Optional[dict] = None   # {"status": "as_written"|"changed", "note"}
 
 
 class ExcelImportConfirm(BaseModel):
@@ -459,8 +464,8 @@ def update_session(
             setattr(session, k, v)
     if "register_group_count" in body:
         count = body["register_group_count"]
-        if count is not None and count not in (1, 2, 3):
-            raise HTTPException(status_code=422, detail="Register group count must be 1, 2 or 3")
+        if count is not None and count not in range(1, 9):
+            raise HTTPException(status_code=422, detail="Register group count must be between 1 and 8")
         session.register_group_count = count
     if "microcycle_id" in body or "session_sequence" in body:
         microcycle_id = body.get("microcycle_id", session.microcycle_id)
@@ -797,6 +802,14 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
     # Lanes are picked at the register each session - a training group is not
     # a lane, and swimmers in one group can swim different sets depending on
     # who turns up - so nothing is pre-selected unless it was already saved.
+    # The one exception is a session written in the Session Builder: its groups
+    # start from the season plan, so each swimmer's expected group is offered as
+    # the planned one (attendance still starts blank, and the coach can change it).
+    expected = {}
+    if session.builder:
+        for g in session.groups or []:
+            for sid in g.target_swimmer_ids or []:
+                expected.setdefault(sid, g.group_number)
     result = []
     for s in swimmers:
         e = existing_entries.get(s.id)
@@ -813,11 +826,12 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
                 "date_from": availability["date_from"].isoformat(),
                 "date_to": availability["date_to"].isoformat(),
             } if availability else None),
-            "group_planned": e.group_planned if e else None,
+            "group_planned": (e.group_planned if e and e.group_planned else expected.get(s.id)),
             "sub_group_planned": e.sub_group_planned if e else None,
             "group_done": e.group_done if e else None,
             "sub_group_done": e.sub_group_done if e else None,
             "coach_observation": e.coach_observation if e else None,
+            "response": e.response if e else None,
             "ai_characterisation": _decode_ai_json(e.ai_characterisation) if e else None,
             "ai_expected_response": _decode_ai_json(e.ai_expected_response) if e else None,
             "entry_id": e.id if e else None,
@@ -854,6 +868,12 @@ def submit_register(
 
     if body.register_group_count is not None:
         session.register_group_count = body.register_group_count
+    if body.as_swum is not None:
+        status = body.as_swum.get("status")
+        if status in ("as_written", "changed"):
+            session.as_swum = {"status": status, "note": str(body.as_swum.get("note") or "").strip()[:2000]}
+        elif status is None:
+            session.as_swum = None
 
     results = []
     for entry_data in body.entries:
@@ -881,6 +901,7 @@ def submit_register(
         entry.group_done = entry_data.group_done
         entry.sub_group_done = entry_data.sub_group_done
         entry.coach_observation = entry_data.coach_observation
+        entry.response = entry_data.response if entry_data.attended and entry_data.response in RESPONSES else None
         db.flush()
 
         # Mirror coach observation into swimmer observation log
@@ -1412,6 +1433,8 @@ def _session_detail(s: models.Session, db: DBSession) -> dict:
     return {
         **_session_summary(s),
         "coach_notes": s.coach_notes,
+        "as_swum": s.as_swum,
+        "builder": bool(s.builder),
         "register_revision": s.register_revision,
         "register_saved_at": s.register_saved_at,
         "planned_content": s.planned_content,

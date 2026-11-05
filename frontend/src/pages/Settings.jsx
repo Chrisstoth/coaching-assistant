@@ -92,6 +92,37 @@ const SECTIONS = [
   },
 ]
 
+// The coach's usual intensity scale for the Session Builder. Every intensity is
+// stored on one common scale, so this only changes how sets are shown and typed;
+// a single session can still use another scale.
+function SessionBuilderSettings() {
+  const [settings, setSettings] = useState(null)
+  const [saved, setSaved] = useState(false)
+  useEffect(() => { api.getBuilderSettings().then(setSettings).catch(() => setSettings(null)) }, [])
+  if (!settings) return null
+  const choose = async (key) => {
+    setSaved(false)
+    const res = await api.setBuilderScale(key)
+    setSettings(s => ({ ...s, effort_scale: res.effort_scale }))
+    setSaved(true)
+  }
+  return (
+    <section className="space-y-2">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-pool-500 pl-1">Session Builder</h2>
+      <div className="bg-pool-800 rounded-xl p-4 space-y-2">
+        <label className="block text-sm font-medium text-pool-100" htmlFor="usual-scale">Your usual intensity scale</label>
+        <p className="text-xs text-pool-400">New sessions show intensity in this scale. A single session can use another one; the values stay the same underneath.</p>
+        <select id="usual-scale" value={settings.effort_scale} onChange={e => choose(e.target.value)}
+          className="w-full bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm text-pool-100">
+          {settings.scales.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
+        </select>
+        {saved && <p className="text-xs text-green-400">Saved</p>}
+        <p className="text-xs text-pool-500">The club name and logo on session PDFs are set in <Link to="/settings/session-presentation" className="text-accent-400">Session Print &amp; Terminology</Link>.</p>
+      </div>
+    </section>
+  )
+}
+
 export default function Settings() {
   const [usage, setUsage] = useState(null)
   const [usageError, setUsageError] = useState('')
@@ -194,6 +225,8 @@ export default function Settings() {
           {checkInError && <p className="text-xs text-red-300 mt-3">Could not update check-ins: {checkInError}</p>}
         </div>
       </section>
+
+      <SessionBuilderSettings />
 
       <CoachGuidancePanel />
 

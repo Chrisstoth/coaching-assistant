@@ -17,6 +17,6 @@ assert.match(calendarDayLabel('2026-08-24'), /^Monday 24 August$/)
 
 const planHub = await readFile(new URL('../src/pages/PlanHub.jsx', import.meta.url), 'utf8')
 assert.match(planHub, /to="\/calendar"[\s\S]*?>Calendar</, 'Plan should expose Calendar as its own action.')
-assert.match(planHub, /to="\/session-planner"[\s\S]*?>Write Session</, 'Plan should expose Write Session separately.')
+assert.match(planHub, /to="\/builder\/new"[\s\S]*?>Write Session</, 'Plan should expose Write Session (the Session Builder) separately.')
 
 console.log('Calendar date and navigation checks passed')
