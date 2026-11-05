@@ -82,6 +82,7 @@ def _apply_migrations():
 
         if "session_presentation_settings" in insp.get_table_names():
             add_col("session_presentation_settings", "effort_scale", "VARCHAR")
+            add_col("session_presentation_settings", "import_roots", "JSON")
             add_col("sessions", "pool_slot_id", "INTEGER")
             add_col("sessions", "cancel_reason", "TEXT")
             add_col("sessions", "course", "VARCHAR")

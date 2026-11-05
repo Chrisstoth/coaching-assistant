@@ -247,6 +247,18 @@ export const api = {
   decideBuilderComment: (noteId, data) => request('POST', `/session-builder/comments/${noteId}`, data),
   draftBuilderSession: (id, session, brief) => request('POST', `/session-builder/sessions/${id}/draft`, { session, brief }),
 
+  // Maggie's desk: old sessions into the app, and the style review
+  getHistoryImport: () => request('GET', '/history-import'),
+  setHistoryImportRoots: (roots) => request('PUT', '/history-import/roots', { roots }),
+  scanHistoryImport: () => request('POST', '/history-import/scan'),
+  runHistoryImport: (data) => request('POST', '/history-import/run', data),
+  getHistoryImportItems: (status = 'pending') => request('GET', `/history-import/items?status=${status}`),
+  decideHistoryImportItem: (id, action) => request('POST', `/history-import/items/${id}`, { action: action === 'open' ? 'import' : action }),
+  getHistoryImportQuestions: () => request('GET', '/history-import/questions'),
+  answerHistoryImportQuestion: (term, meaning) => request('POST', '/history-import/questions', { term, meaning }),
+  getStyleCandidates: () => request('POST', '/history-import/style/candidates'),
+  answerStyle: (statement, choice, reason) => request('POST', '/history-import/style/answer', { statement, choice, reason }),
+
   // Staff workbooks
   getWorkbooks: () => request('GET', '/workbooks'),
   getWorkbook: (role) => request('GET', `/workbooks/${role}`),

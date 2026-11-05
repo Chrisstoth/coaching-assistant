@@ -928,6 +928,7 @@ class SessionPresentationSettings(Base):
     club_name = Column(String, nullable=True)
     logo_data_url = Column(Text, nullable=True)
     effort_scale = Column(String, nullable=True)   # the coach's usual intensity scale (session notation key)
+    import_roots = Column(JSON, nullable=True)     # the folders the coach's old session files are in (Maggie's import)
     terminology_name = Column(String, nullable=False, default="LaneWatch energy zones")
     terminology_levels = Column(JSON, nullable=False, default=list)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -1496,3 +1497,36 @@ class WorkbookSnapshot(Base):
     name = Column(String, nullable=False)
     versions = Column(JSON, nullable=False, default=dict)    # {page_id: version}
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ImportItem(Base):
+    """One old session file in Maggie's import queue (backend/services/import_queue.py).
+
+    Clean readings become sessions straight away; uncertain ones wait here for
+    the coach with the reading, Maggie's doubts and the shorthand she wasn't
+    sure of. The original file is only ever read.
+    """
+    __tablename__ = "import_items"
+    __table_args__ = (UniqueConstraint("club", "sha1", name="uq_import_item_file"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    club = Column(String, nullable=False, default="default")
+    path = Column(Text, nullable=False)
+    sha1 = Column(String, nullable=False, index=True)
+    period = Column(String, nullable=True, index=True)
+    camp = Column(String, nullable=True)
+    squad = Column(String, nullable=True)
+    file_date = Column(Date, nullable=True)
+    slot = Column(String, nullable=True)
+    week_code = Column(String, nullable=True)
+    status = Column(String, nullable=False, default="new", index=True)   # new / pending / imported / skipped / duplicate / failed
+    method = Column(String, nullable=True)            # template / ai
+    draft = Column(JSON, nullable=True)               # the reading, as a builder session
+    totals = Column(JSON, nullable=True)
+    notes = Column(JSON, default=list)
+    flagged = Column(JSON, default=list)
+    terms = Column(JSON, default=list)
+    error = Column(Text, nullable=True)
+    session_id = Column(Integer, ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

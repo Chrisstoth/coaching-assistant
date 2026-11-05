@@ -267,6 +267,11 @@ def process_operation(operation_id: int) -> bool:
                     summary = _profile_refresh_operation(row, db)
                 elif row.operation_type == "workbook_update":
                     summary = _workbook_operation(row, db)
+                elif row.operation_type == "history_import_batch":
+                    from backend.services import import_queue
+                    done = import_queue.run_batch(db, limit=int((row.payload or {}).get("limit") or 50),
+                                                  use_ai=bool((row.payload or {}).get("use_ai", True)))
+                    summary = f"Maggie read {done['read']} files: " + ", ".join(f"{v} {k}" for k, v in done.items() if k != "read")
                 else:
                     raise ValueError(f"Unsupported AI operation type: {row.operation_type}")
             row.status = "completed"

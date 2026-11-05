@@ -177,8 +177,10 @@ if __name__ == "__main__":
     report = run(roots)
     summary = summarise(report)
     text = markdown(report, summary)
+    saved = save_to_log(text)                     # save first: a console that can't print a symbol mustn't lose the report
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(text)
-    print("Saved to Maggie's workbook:", save_to_log(text))
+    print("Saved to Maggie's workbook:", saved)
     out = [{"file": str(r.info.path), "stratum": r.stratum, "method": r.method, "status": r.status, "totals": r.totals,
             "notes": r.notes, "flagged": r.flagged, "unknown_terms": r.unknown_terms, "error": r.error,
             "session": r.session} for r in report["results"]]

@@ -23,4 +23,10 @@ assert.match(app, /path="\/workbooks\/:role"/)
 const settings = await readFile(new URL('../src/pages/Settings.jsx', import.meta.url), 'utf8')
 assert.match(settings, /to: '\/workbooks'/, 'Settings links to the staff workbooks')
 
+const hist = await readFile(new URL('../src/pages/HistoryImport.jsx', import.meta.url), 'utf8')
+assert.match(hist, /api\.answerHistoryImportQuestion\(/, "Maggie's questions can be answered")
+assert.match(hist, /Moved on/)
+assert.match(app, /path="\/history-import"/)
+assert.match(settings, /to: '\/history-import'/)
+
 console.log('Workbook checks passed')
