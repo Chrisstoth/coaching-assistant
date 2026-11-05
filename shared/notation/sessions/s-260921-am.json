@@ -1,0 +1,238 @@
+{
+ "id": "s-260921-am",
+ "session": {
+  "aims": [
+   "Kick",
+   "Aerobic - Girls HR consistency + SPEED HVO., Boys HR Pull/Kick Work"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "aqba5qhg",
+    "items": [
+     {
+      "desc": "Easy choice - any equipment",
+      "dist": 300,
+      "eff": "8",
+      "id": "h9iz6gzy",
+      "int": 420,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "id": "1vmmau1x",
+      "items": [
+       {
+        "desc": "20m U/W - 2 for pattern, 2 Fast - Fins on - Double Arm 2nd 25",
+        "dist": 50,
+        "eff": "12-17",
+        "id": "gk7li0kj",
+        "int": 70,
+        "int2": null,
+        "reps": 4,
+        "t": "line"
+       },
+       {
+        "desc": "Kick w board",
+        "dist": 100,
+        "eff": "14",
+        "id": "4d1m1cxs",
+        "int": 280,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 2
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "Group 1 Girls",
+    "id": "7mx1bs6q",
+    "items": [
+     {
+      "desc": "Alt 01:35/1:30 - Steadier/Faster",
+      "dist": 100,
+      "eff": "12-14",
+      "id": "bdawdu94",
+      "int": 90,
+      "int2": 100,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HVO Start",
+      "dist": 50,
+      "eff": "21/8",
+      "id": "iofehesv",
+      "int": 70,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Fast Long Underwaters",
+      "dist": 100,
+      "eff": "13",
+      "id": "ej2diqlh",
+      "int": 110,
+      "int2": 120,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HVO Turn",
+      "dist": 50,
+      "eff": "21/8",
+      "id": "xyc3xseu",
+      "int": 70,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Faster Last 50",
+      "dist": 150,
+      "eff": "12-16",
+      "id": "3l9uob3j",
+      "int": 140,
+      "int2": 160,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HVO Finish",
+      "dist": 50,
+      "eff": "21/8",
+      "id": "xc2idpcl",
+      "int": 70,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "HR 25 Hold",
+      "dist": 100,
+      "eff": "13",
+      "id": "rusmgbuc",
+      "int": 90,
+      "int2": 95,
+      "reps": 5,
+      "t": "line"
+     }
+    ],
+    "name": "Group 1"
+   },
+   {
+    "group": "Group 2 Boys",
+    "id": "fhrby2qe",
+    "items": [
+     {
+      "desc": "Steady HR 22-24 Pull - Fast Bursts x 3",
+      "dist": 300,
+      "eff": "12",
+      "id": "lmcjdeq8",
+      "int": 285,
+      "int2": 300,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Swim @ HR 22-24",
+      "dist": 150,
+      "eff": "13",
+      "id": "971w1v4i",
+      "int": 135,
+      "int2": 145,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Kick - Neg Split",
+      "dist": 50,
+      "eff": "12-14",
+      "id": "f2fa7uij",
+      "int": 95,
+      "int2": 105,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Swim @ HR 22-24",
+      "dist": 100,
+      "eff": "13",
+      "id": "vgp5hn1y",
+      "int": 90,
+      "int2": 95,
+      "reps": 3,
+      "t": "line"
+     },
+     {
+      "desc": "Rest",
+      "dist": 0,
+      "eff": "",
+      "id": "h57ocwrl",
+      "int": 120,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Swim @ HR 22-24",
+      "dist": 150,
+      "eff": "13",
+      "id": "que5f8u8",
+      "int": 135,
+      "int2": 145,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Kick - Neg Split",
+      "dist": 50,
+      "eff": "12-14",
+      "id": "8p50py4w",
+      "int": 95,
+      "int2": 105,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Swim @ HR 24/25",
+      "dist": 100,
+      "eff": "14",
+      "id": "oqr2h06c",
+      "int": 90,
+      "int2": 95,
+      "reps": 3,
+      "t": "line"
+     },
+     {
+      "desc": "Steady HR 22-24 Pull - Fast Bursts x 3",
+      "dist": 300,
+      "eff": "12",
+      "id": "0pkbvx95",
+      "int": 285,
+      "int2": 300,
+      "reps": null,
+      "t": "line"
+     }
+    ],
+    "name": "Group 2"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-09-21",
+  "end": "07:00",
+  "slot": "AM",
+  "start": "05:30",
+  "title": "",
+  "venue": "BSV 25m",
+  "weekKey": "1.1.3"
+ }
+}

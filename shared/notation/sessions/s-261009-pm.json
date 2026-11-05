@@ -1,0 +1,167 @@
+{
+ "id": "s-261009-pm",
+ "session": {
+  "aims": [
+   "SPEED",
+   "Group Mix"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "t2b69umc",
+    "items": [
+     {
+      "desc": "Swim",
+      "dist": 300,
+      "eff": "10",
+      "id": "joek51ew",
+      "int": 360,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Alt: Tech / 80%-90%",
+      "dist": 50,
+      "eff": "10-18",
+      "id": "n9n9zj4a",
+      "int": 60,
+      "int2": null,
+      "reps": 6,
+      "t": "line"
+     },
+     {
+      "desc": "2 x 95% Starts / 2 x 100% Finishes",
+      "dist": 25,
+      "eff": "19/21",
+      "id": "rbpu42ii",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Easy Swim",
+      "dist": 100,
+      "eff": "",
+      "id": "8jwp5ekv",
+      "int": 240,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     }
+    ],
+    "name": "Warm-up"
+   },
+   {
+    "group": "",
+    "id": "iwrcdol3",
+    "items": [
+     {
+      "desc": "5m Dead start Kick into turn to 12.5m Swim ?Fins?",
+      "dist": 25,
+      "eff": "21",
+      "id": "up4agjv9",
+      "int": 80,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "5m Dead start pull (Head up) into turn to 12.5m Swim (Some head up)",
+      "dist": 25,
+      "eff": "21",
+      "id": "sa0qdvz2",
+      "int": 80,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "No U/W max 15 - Surface Swim",
+      "dist": 25,
+      "eff": "21",
+      "id": "sjh4ns6a",
+      "int": 80,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Easy Swim",
+      "dist": 25,
+      "eff": "8",
+      "id": "8wa3lzae",
+      "int": 60,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Timed 25",
+      "dist": 25,
+      "eff": "21",
+      "id": "hc8bd8r4",
+      "int": 105,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Timed 50 - Fins if wanted",
+      "dist": 50,
+      "eff": "",
+      "id": "64zuitut",
+      "int": 105,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     }
+    ],
+    "name": "Main 1"
+   },
+   {
+    "group": "Group 1",
+    "id": "f91jecqm",
+    "items": [
+     {
+      "desc": "Swim - 1) 25 F/C 25 No F/c / 2) 50/50 / 3) Choice",
+      "dist": 300,
+      "eff": "",
+      "id": "8u9aauem",
+      "int": 330,
+      "int2": 300,
+      "reps": 3,
+      "t": "line"
+     }
+    ],
+    "name": "Main 2"
+   },
+   {
+    "group": "Group 2",
+    "id": "th1aukjg",
+    "items": [
+     {
+      "desc": "25 F/C 25 No F/C Faster / 50 F/C 50 No F/C Faster",
+      "dist": 150,
+      "eff": "",
+      "id": "6g9mnwmn",
+      "int": 160,
+      "int2": 150,
+      "reps": 6,
+      "t": "line"
+     }
+    ],
+    "name": "Main 2"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-10-09",
+  "end": "21:30",
+  "slot": "PM",
+  "start": "20:30",
+  "title": "",
+  "venue": "BSV SE",
+  "weekKey": "1.1.3"
+ }
+}

@@ -1,0 +1,91 @@
+{
+ "id": "8uh637js",
+ "session": {
+  "aims": [
+   "",
+   ""
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "4fke62i9",
+    "items": [
+     {
+      "desc": "",
+      "dist": null,
+      "eff": "8",
+      "id": "21peu5bf",
+      "int": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Easy",
+      "dist": 300,
+      "eff": "",
+      "id": "q2yihvac",
+      "int": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Fly Kick - 15m u.w. build 1-4",
+      "dist": 25,
+      "eff": "",
+      "id": "1axdvj5i",
+      "int": null,
+      "reps": 8,
+      "t": "line"
+     },
+     {
+      "desc": "x 50 as Build 1-4 (60)",
+      "dist": 4,
+      "eff": "",
+      "id": "a3g5x719",
+      "int": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "id": "ravl921h",
+      "items": [
+       {
+        "desc": "",
+        "dist": 50,
+        "eff": "",
+        "id": "hvdyhu8l",
+        "int": null,
+        "reps": 4,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 2
+     }
+    ],
+    "name": "Warm up"
+   },
+   {
+    "group": "",
+    "id": "kwd9uuta",
+    "items": [],
+    "name": "Main set"
+   },
+   {
+    "group": "",
+    "id": "tss06oy0",
+    "items": [],
+    "name": "Swim down"
+   }
+  ],
+  "coach": "",
+  "date": "2026-10-23",
+  "end": "",
+  "slot": "AM",
+  "start": "",
+  "title": "",
+  "venue": "",
+  "weekKey": ""
+ }
+}

@@ -1,0 +1,151 @@
+{
+ "id": "s-261020-pm",
+ "session": {
+  "aims": [
+   "Endurance / Rest",
+   "Tehnical Execution"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "vrglkatd",
+    "items": [
+     {
+      "desc": "Choice Swim",
+      "dist": 300,
+      "eff": "10",
+      "id": "bu9mvwti",
+      "int": 360,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Kick/Drills",
+      "dist": 50,
+      "eff": "12",
+      "id": "xznghzmm",
+      "int": 70,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Build 1-3 (90%), Build 4-6 (95%)",
+      "dist": 50,
+      "eff": "12-19",
+      "id": "w1lwx17o",
+      "int": 60,
+      "int2": null,
+      "reps": 6,
+      "t": "line"
+     },
+     {
+      "desc": "HVO",
+      "dist": 25,
+      "eff": "21",
+      "id": "fdqxq8ie",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "",
+    "id": "m8hlid99",
+    "items": [
+     {
+      "desc": "PB + 8/10 / PB + 15/18",
+      "dist": 100,
+      "eff": "",
+      "id": "g0hm681u",
+      "int": 120,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "m6ffkpld",
+      "int": 120,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "Build to Max",
+      "dist": 25,
+      "eff": "",
+      "id": "o41r3ung",
+      "int": 35,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "gjz2ekt2",
+      "int": 120,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "id": "twtp17nb",
+      "items": [
+       {
+        "desc": "Brkn 100",
+        "dist": 25,
+        "eff": "",
+        "id": "k0irn5yx",
+        "int": 35,
+        "int2": null,
+        "reps": 2,
+        "t": "line"
+       },
+       {
+        "desc": "Brkn 100",
+        "dist": 50,
+        "eff": "",
+        "id": "4g686lts",
+        "int": 90,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       },
+       {
+        "desc": "THR is 24/25",
+        "dist": 50,
+        "eff": "",
+        "id": "scmcc7n8",
+        "int": 55,
+        "int2": null,
+        "reps": 4,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 3
+     }
+    ],
+    "name": "Main 1"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-10-20",
+  "end": "21:00",
+  "slot": "PM",
+  "start": "20:00",
+  "title": "",
+  "venue": "BSV Lanes 4-6",
+  "weekKey": "1.1.7"
+ }
+}

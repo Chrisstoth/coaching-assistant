@@ -1,0 +1,198 @@
+{
+ "id": "s-261008-am",
+ "session": {
+  "aims": [
+   "Kick",
+   "Aerobic - Girls HR through Alternate Repitition., Boys Paddle Pull"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "fxab3ci9",
+    "items": [
+     {
+      "desc": "Easy choice - any equipment",
+      "dist": 300,
+      "eff": "8",
+      "id": "ir1uuxjq",
+      "int": 240,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "id": "5pnre3o6",
+      "items": [
+       {
+        "desc": "Kick Steady",
+        "dist": 50,
+        "eff": "12",
+        "id": "0gs82isq",
+        "int": 80,
+        "int2": null,
+        "reps": 2,
+        "t": "line"
+       },
+       {
+        "desc": "Kick Fast",
+        "dist": 100,
+        "eff": "18",
+        "id": "8ua3gf08",
+        "int": 140,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 3
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "Group 1 IM",
+    "id": "gm9syy4o",
+    "items": [
+     {
+      "desc": "Move along double Up",
+      "dist": 125,
+      "eff": "",
+      "id": "168t00uj",
+      "int": 120,
+      "int2": 135,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HR Hold 24-25",
+      "dist": 100,
+      "eff": "",
+      "id": "28q9hreg",
+      "int": 90,
+      "int2": 100,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "50/25 IM order",
+      "dist": 75,
+      "eff": "",
+      "id": "o26q9jdt",
+      "int": 75,
+      "int2": 85,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Free Neg Split",
+      "dist": 50,
+      "eff": "",
+      "id": "g1fkm890",
+      "int": 50,
+      "int2": 55,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HVO",
+      "dist": 25,
+      "eff": "",
+      "id": "2652sdxz",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "IM no Free",
+      "dist": 150,
+      "eff": "",
+      "id": "f9uocjo0",
+      "int": 145,
+      "int2": 165,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Group 1"
+   },
+   {
+    "group": "Group 2 No.1",
+    "id": "nc5pmzhl",
+    "items": [
+     {
+      "desc": "Move along 50 No Free",
+      "dist": 125,
+      "eff": "",
+      "id": "cqj7kf41",
+      "int": 120,
+      "int2": 135,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HR Hold 24-25",
+      "dist": 100,
+      "eff": "",
+      "id": "46wdju0e",
+      "int": 90,
+      "int2": 100,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "50/25 as 50 No Free, 25 Free",
+      "dist": 75,
+      "eff": "",
+      "id": "g5a5bg85",
+      "int": 75,
+      "int2": 85,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Free Neg Split",
+      "dist": 50,
+      "eff": "",
+      "id": "cb8bizwl",
+      "int": 50,
+      "int2": 55,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "HVO",
+      "dist": 25,
+      "eff": "",
+      "id": "jbr7c92p",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "1) 25/25, 2) 50/50/50, 3) 25/25 3) 50/50/50",
+      "dist": 150,
+      "eff": "",
+      "id": "2qfnn8u6",
+      "int": 145,
+      "int2": 165,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Group 2"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-10-08",
+  "end": "07:00",
+  "slot": "AM",
+  "start": "05:30",
+  "title": "",
+  "venue": "BSV 25m",
+  "weekKey": "1.1.5"
+ }
+}

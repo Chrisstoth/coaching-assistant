@@ -1,0 +1,160 @@
+{
+ "id": "s-261006-pm",
+ "session": {
+  "aims": [
+   "Endurance",
+   "Tehnical Execution"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "8khs5phc",
+    "items": [
+     {
+      "desc": "Choice Swim",
+      "dist": 200,
+      "eff": "10",
+      "id": "tnc9yifh",
+      "int": 240,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Kick - 25 Steady 25 Fast + build",
+      "dist": 50,
+      "eff": "12-16",
+      "id": "u4uhzux2",
+      "int": 70,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Build 1-4",
+      "dist": 50,
+      "eff": "12-18",
+      "id": "ymd0148z",
+      "int": 60,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "2 @90% , 2 x HVO",
+      "dist": 25,
+      "eff": "18/21",
+      "id": "srismxse",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "Girls + Boys Development",
+    "id": "a7075h1v",
+    "items": [
+     {
+      "desc": "1) PB + 12 / 2) PB + 12 / 3) PB + 10 / 4) Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "4997jeva",
+      "int": 105,
+      "int2": null,
+      "reps": 8,
+      "t": "line"
+     },
+     {
+      "desc": "1 x Best Hold 3 x Easy / 2 x best hold 2 x Easy (1:15 send-off) / 3 x Best Hold 1 x easy (1:25 send-off)",
+      "dist": 50,
+      "eff": "",
+      "id": "ovea094b",
+      "int": 75,
+      "int2": 65,
+      "reps": 12,
+      "t": "line"
+     },
+     {
+      "desc": "Easy Swim",
+      "dist": 100,
+      "eff": "",
+      "id": "rgkcp71t",
+      "int": 150,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Descend 1-4",
+      "dist": 50,
+      "eff": "",
+      "id": "i9t8by2p",
+      "int": 60,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Main 1"
+   },
+   {
+    "group": "Boys",
+    "id": "90zc8j0f",
+    "items": [
+     {
+      "desc": "1) 25 Fast 75 Easy / 2) 35 Fast 50 easy / 3) PB + 10 or Less / 4) Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "jfh8wogq",
+      "int": 105,
+      "int2": null,
+      "reps": 8,
+      "t": "line"
+     },
+     {
+      "desc": "Alt 1 Fast 1 Easy / More Rest = Hold or Faster (1:15 send-off) / (1:25 send-off)",
+      "dist": 50,
+      "eff": "",
+      "id": "ct8fig2j",
+      "int": 75,
+      "int2": 65,
+      "reps": 12,
+      "t": "line"
+     },
+     {
+      "desc": "Easy Swim",
+      "dist": 100,
+      "eff": "",
+      "id": "zy7fex95",
+      "int": 150,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Descend 1-4",
+      "dist": 50,
+      "eff": "",
+      "id": "vqn2a8cp",
+      "int": 60,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Main 1"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-10-06",
+  "end": "21:00",
+  "slot": "PM",
+  "start": "20:00",
+  "title": "",
+  "venue": "BSV Lanes 4-6",
+  "weekKey": "1.1.5"
+ }
+}

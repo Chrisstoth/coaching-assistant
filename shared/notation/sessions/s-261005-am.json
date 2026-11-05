@@ -1,0 +1,218 @@
+{
+ "id": "s-261005-am",
+ "session": {
+  "aims": [
+   "Underwater Kick + No Boards",
+   "Aerobic - Girls HR through Alternate Repitition., Boys Paddle Pull"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "2s7e6gr3",
+    "items": [
+     {
+      "desc": "Easy choice - any equipment",
+      "dist": 200,
+      "eff": "8",
+      "id": "8jyzcyvn",
+      "int": 240,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "id": "q8nd4xpj",
+      "items": [
+       {
+        "desc": "25 u/w 25 kick arms by side",
+        "dist": 50,
+        "eff": "14",
+        "id": "wjh11uhx",
+        "int": 70,
+        "int2": null,
+        "reps": 4,
+        "t": "line"
+       },
+       {
+        "desc": "Kick no Board - Fast Underwaters",
+        "dist": 150,
+        "eff": "12-17",
+        "id": "h3y3rxv0",
+        "int": 180,
+        "int2": null,
+        "reps": 2,
+        "t": "line"
+       }
+      ],
+      "note": "Fins",
+      "t": "round",
+      "times": 2
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "Group 1 Girls",
+    "id": "pw9cxvxa",
+    "items": [
+     {
+      "desc": "Fast Start + Turn 2",
+      "dist": 150,
+      "eff": "12-19",
+      "id": "igcwkam0",
+      "int": 140,
+      "int2": null,
+      "reps": 2,
+      "t": "line"
+     },
+     {
+      "desc": "PB + 15 Start with Fast DPS",
+      "dist": 100,
+      "eff": "14",
+      "id": "tfqsuaqw",
+      "int": 90,
+      "int2": 100,
+      "reps": 3,
+      "t": "line"
+     },
+     {
+      "desc": "Neg split Every 50",
+      "dist": 300,
+      "eff": "12-16",
+      "id": "md51gflk",
+      "int": 285,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "PB + 15 Start with Fast DPS",
+      "dist": 100,
+      "eff": "14",
+      "id": "antgucan",
+      "int": 90,
+      "int2": 100,
+      "reps": 3,
+      "t": "line"
+     },
+     {
+      "desc": "Pull 25 Fast 25 Steady Paddles",
+      "dist": 50,
+      "eff": "18-12",
+      "id": "t1n0glmr",
+      "int": 115,
+      "int2": null,
+      "reps": 6,
+      "t": "line"
+     },
+     {
+      "desc": "PB + 15 Start with Fast DPS",
+      "dist": 100,
+      "eff": "14",
+      "id": "5mz8fnxp",
+      "int": 90,
+      "int2": 100,
+      "reps": 3,
+      "t": "line"
+     },
+     {
+      "desc": "Swim HR 25-26",
+      "dist": 200,
+      "eff": "",
+      "id": "1clg7y09",
+      "int": 180,
+      "int2": 200,
+      "reps": 2,
+      "t": "line"
+     }
+    ],
+    "name": "Group 1"
+   },
+   {
+    "group": "Group 2 Boys",
+    "id": "y0me0zlq",
+    "items": [
+     {
+      "desc": "Steady HR 22-24 Pull Paddles",
+      "dist": 300,
+      "eff": "12",
+      "id": "lsuyqa53",
+      "int": 285,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "1) 25 Fast 75 Easy, 2) PB + 18 3) Last 25 Fast / 4) PB + 18 5) Neg Spli",
+      "dist": 100,
+      "eff": "18-12",
+      "id": "k6hxbl6s",
+      "int": 90,
+      "int2": 100,
+      "reps": 5,
+      "t": "line"
+     },
+     {
+      "desc": "Pull Neg Split no Paddles",
+      "dist": 50,
+      "eff": "12-16!",
+      "id": "yxmuazfi",
+      "int": 95,
+      "int2": 105,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Steady HR 22-24 Swim Paddles",
+      "dist": 300,
+      "eff": "12",
+      "id": "slv7xlrc",
+      "int": 90,
+      "int2": 95,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "1) 25 Fast 75 Easy, 2) PB + 18 3) Last 25 Fast",
+      "dist": 100,
+      "eff": "18-12",
+      "id": "8b4rgflm",
+      "int": 90,
+      "int2": 100,
+      "reps": 3,
+      "t": "line"
+     },
+     {
+      "desc": "Pull Neg Split no Paddles",
+      "dist": 50,
+      "eff": "12-16!",
+      "id": "2n5duyi8",
+      "int": 95,
+      "int2": 105,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "PB + 15-18, or 1 x 400 Swim HR 22-24",
+      "dist": 100,
+      "eff": "",
+      "id": "21sikzwu",
+      "int": null,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     }
+    ],
+    "name": "Group 2"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-10-05",
+  "end": "07:00",
+  "slot": "AM",
+  "start": "05:30",
+  "title": "",
+  "venue": "BSV 25m",
+  "weekKey": "1.1.5"
+ }
+}

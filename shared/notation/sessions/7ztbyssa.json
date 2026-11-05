@@ -1,0 +1,158 @@
+{
+ "id": "7ztbyssa",
+ "session": {
+  "aims": [
+   "Aerobic with speed",
+   ""
+  ],
+  "blocks": [
+   {
+    "groups": [],
+    "id": "e3i435ue",
+    "items": [
+     {
+      "desc": "easy",
+      "dist": 300,
+      "eff": "6",
+      "est": null,
+      "id": "6idf4rk0",
+      "int": 360,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "id": "73c3ii6a",
+      "items": [
+       {
+        "desc": "as 1) last 25 fast, 2) last 50 fast 3) 1st 25 fast",
+        "dist": 75,
+        "eff": "10-16",
+        "est": null,
+        "id": "qf2iigsv",
+        "int": 105,
+        "int2": null,
+        "reps": 3,
+        "rest": null,
+        "t": "line"
+       },
+       {
+        "desc": "as 1) 10 tombstone fast 2) easy 3) 25 fast",
+        "dist": 25,
+        "eff": "18-10",
+        "est": null,
+        "id": "ejw8ym90",
+        "int": 40,
+        "int2": null,
+        "reps": 3,
+        "rest": null,
+        "t": "line"
+       }
+      ],
+      "note": "KICK - ALL KICK",
+      "t": "round",
+      "times": 2
+     },
+     {
+      "desc": "Rest before set",
+      "dist": 0,
+      "eff": "",
+      "est": null,
+      "id": "75ftv1cu",
+      "int": 180,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Warm up"
+   },
+   {
+    "groups": [],
+    "id": "9z1ka4re",
+    "items": [
+     {
+      "desc": "as 1) 2nd 50 faster 2) 3rd faster 3) 3rd +6th 25 fast 4) hvo turn 3+6",
+      "dist": 200,
+      "eff": "10-16",
+      "est": 180,
+      "id": "p68ncpl8",
+      "int": null,
+      "int2": null,
+      "reps": 4,
+      "rest": 20,
+      "t": "line"
+     },
+     {
+      "desc": "HVO start esp. u/w 1:40",
+      "dist": 75,
+      "eff": "",
+      "est": null,
+      "id": "88b409sw",
+      "int": 90,
+      "int2": null,
+      "reps": 4,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "rest",
+      "dist": 0,
+      "eff": "",
+      "est": null,
+      "id": "a9qjr9u6",
+      "int": 120,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Main "
+   },
+   {
+    "groups": [],
+    "id": "nazkzu77",
+    "items": [
+     {
+      "desc": "50 drill or pull 50 swim (+15) as 4 fins + 4 paddles + 4 both, every 3rd",
+      "dist": 100,
+      "eff": "12",
+      "est": 95,
+      "id": "uopl1lv2",
+      "int": null,
+      "int2": null,
+      "reps": 12,
+      "rest": 15,
+      "t": "line"
+     },
+     {
+      "desc": "HVO turn",
+      "dist": 50,
+      "eff": "",
+      "est": null,
+      "id": "doerisdo",
+      "int": 75,
+      "int2": null,
+      "reps": 4,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Tech main "
+   }
+  ],
+  "coach": "",
+  "date": "2026-10-29",
+  "effSys": "effort20",
+  "end": "07:00",
+  "groups": [],
+  "slot": "AM",
+  "start": "05:30",
+  "title": "",
+  "venue": "BSV SC 1-3",
+  "weekKey": "1.2.2"
+ }
+}

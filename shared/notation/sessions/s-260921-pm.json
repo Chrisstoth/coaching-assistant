@@ -1,0 +1,133 @@
+{
+ "id": "s-260921-pm",
+ "session": {
+  "aims": [
+   "Speed 2nd Progression",
+   "Timed 25s"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "fm9his99",
+    "items": [
+     {
+      "desc": "12 Mins Choice",
+      "dist": null,
+      "eff": "8",
+      "id": "lsg7o0ig",
+      "int": 720,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Timed 25",
+      "dist": 25,
+      "eff": "21",
+      "id": "2rsz2fhf",
+      "int": 180,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "",
+    "id": "mzfdb142",
+    "items": [
+     {
+      "desc": "Group 1 Pace - 1st from a Dive",
+      "dist": 25,
+      "eff": "",
+      "id": "x7xt7ldk",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "SAME PACE",
+      "dist": 50,
+      "eff": "",
+      "id": "wfo4ckj9",
+      "int": 60,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "t1poi2pd",
+      "int": 180,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Group 1 Pace - 1st from a Dive",
+      "dist": 25,
+      "eff": "",
+      "id": "h4l1yrtr",
+      "int": 45,
+      "int2": null,
+      "reps": 5,
+      "t": "line"
+     },
+     {
+      "desc": "SAME PACE",
+      "dist": 50,
+      "eff": "",
+      "id": "nmzhw75d",
+      "int": 60,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "576zm9mi",
+      "int": 180,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "desc": "Group 1 Pace - 1st from a Dive",
+      "dist": 25,
+      "eff": "",
+      "id": "jo6q6kap",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "t": "line"
+     },
+     {
+      "desc": "Easy",
+      "dist": 100,
+      "eff": "",
+      "id": "l6gwro3f",
+      "int": 180,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     }
+    ],
+    "name": "Main 1"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-09-21",
+  "end": "21:30",
+  "slot": "PM",
+  "start": "20:30",
+  "title": "",
+  "venue": "BSV Lanes 6-8",
+  "weekKey": "1.1.3"
+ }
+}

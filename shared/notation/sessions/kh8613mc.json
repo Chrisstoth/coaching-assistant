@@ -1,0 +1,270 @@
+{
+ "id": "kh8613mc",
+ "session": {
+  "aims": [
+   "Speed",
+   ""
+  ],
+  "blocks": [
+   {
+    "groups": [],
+    "id": "x2w3g826",
+    "items": [
+     {
+      "desc": "easy",
+      "dist": 300,
+      "eff": "",
+      "est": null,
+      "id": "npyz1pcg",
+      "int": 360,
+      "int2": null,
+      "reps": 1,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "build underwater 1-4 - 2nd 4 is fins",
+      "dist": 25,
+      "eff": "12-18",
+      "est": null,
+      "id": "p11j7ady",
+      "int": 45,
+      "int2": null,
+      "reps": 8,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "25 Drill 25 Swim faster 25 steady",
+      "dist": 75,
+      "eff": "10-16",
+      "est": null,
+      "id": "x02vnsua",
+      "int": 80,
+      "int2": null,
+      "reps": 4,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "Descend 1-4",
+      "dist": 50,
+      "eff": "",
+      "est": null,
+      "id": "cgnm3sfq",
+      "int": 70,
+      "int2": null,
+      "reps": 4,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "HVO",
+      "dist": 25,
+      "eff": "",
+      "est": null,
+      "id": "4i06m11z",
+      "int": 45,
+      "int2": null,
+      "reps": 4,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "Rest",
+      "dist": 0,
+      "eff": "",
+      "est": null,
+      "id": "dy56a7a3",
+      "int": 180,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Warm up"
+   },
+   {
+    "groups": [],
+    "id": "c8wg4mr0",
+    "items": [
+     {
+      "desc": "kick or swim",
+      "dist": 25,
+      "eff": "20",
+      "est": null,
+      "id": "bga0xmiu",
+      "int": 40,
+      "int2": null,
+      "reps": 2,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "easy",
+      "dist": 50,
+      "eff": "6",
+      "est": null,
+      "id": "5l2qa6i9",
+      "int": 90,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "Kick or swim",
+      "dist": 50,
+      "eff": "20",
+      "est": null,
+      "id": "an3wbnrm",
+      "int": 60,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "easy",
+      "dist": 150,
+      "eff": "6",
+      "est": null,
+      "id": "yygkgg5l",
+      "int": 240,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "easy",
+      "dist": 50,
+      "eff": "6",
+      "est": null,
+      "id": "qiatzny3",
+      "int": 90,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "max effort paddles (pull or swim)",
+      "dist": 50,
+      "eff": "20",
+      "est": null,
+      "id": "ule5iy0o",
+      "int": 60,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "easy",
+      "dist": 150,
+      "eff": "6",
+      "est": null,
+      "id": "x9xb4et8",
+      "int": 240,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "max swim no EQ.",
+      "dist": 25,
+      "eff": "20",
+      "est": null,
+      "id": "vvckvat9",
+      "int": 40,
+      "int2": null,
+      "reps": 2,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "easy",
+      "dist": 50,
+      "eff": "6",
+      "est": null,
+      "id": "az61fedc",
+      "int": 90,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "max effort swim",
+      "dist": 25,
+      "eff": "20",
+      "est": null,
+      "id": "rgz5zrn7",
+      "int": 45,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "steady",
+      "dist": 25,
+      "eff": "6",
+      "est": null,
+      "id": "gj29dxpq",
+      "int": 90,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "max effort",
+      "dist": 25,
+      "eff": "20",
+      "est": null,
+      "id": "jz4ql3tr",
+      "int": null,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Main set"
+   },
+   {
+    "groups": [],
+    "id": "veo4s2m0",
+    "items": [
+     {
+      "desc": "Continuous till the end",
+      "dist": null,
+      "eff": "",
+      "est": null,
+      "id": "t1yio24m",
+      "int": null,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Swim down"
+   }
+  ],
+  "coach": "Nigel",
+  "date": "2026-10-30",
+  "effSys": "effort20",
+  "end": "21:30",
+  "groups": [],
+  "slot": "PM",
+  "start": "20:30",
+  "title": "",
+  "venue": "BSV Shallow 4-7",
+  "weekKey": "1.2.2"
+ }
+}

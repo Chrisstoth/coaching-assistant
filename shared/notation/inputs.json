@@ -1,0 +1,90 @@
+{
+  "_about": "Inputs for the session notation reference answers. Run `node scripts/build-notation-cases.mjs` in frontend/ to turn these (and sessions/*.json) into cases.json.",
+  "lines": [
+    "4x100", "4 x 100", "4×100", "4x100m", "200", "200m", "400 easy", "8 x 50m fly",
+    "4x100 Free build", "4x100 @1:30", "4x100 @ 1:30", "4x100 (1:30)", "4x100 on 1:30", "4x100 off 1:30", "4x100 off 1.30",
+    "6x50 on 60", "6x50 on 50", "8x25 @ 30", "4x100 @1:30/1:40", "4x100 off 1:30/1:40", "4x100 (1:30/1:40)",
+    "4x100 r20", "4x100 r20 ~1:20", "4x100 r 20", "4x100 w/ 20", "4x100 rest 30", "4x100 20s rest", "4x100 1 min rest", "4x100 :20 rest", "4x100 r:20",
+    "4x100 r20 est 1:20", "4x100 ~1:20", "4x200 r30 ≈ 2:40", "Rest 2 mins", "rest 30", "20s rest", "1:00 rest",
+    "4x100 [14]", "4x100 [14-16]", "4x100 [12->16]", "4x100 [12→16]", "4x100 e 14", "4x100 effort 16", "4x100 eff 14-16",
+    "4x50 [Red]", "4x50 [red]", "4x50 [A3]", "4x50 [EN2]", "4x50 [HVO]", "4x50 [MVO2]", "4x50 [vo2]", "4x50 [Gold]", "4x50 [Purple->Blue]",
+    "4x100 1) Kick 2) Drill 3) Swim 4) Build", "8x100 1) Kick 2) Drill 3) Swim 4) Build", "6x100 1) Kick 2) Swim",
+    "5x100 1) Kick 2) Drill", "4x100 @1:40 1) Kick 2) Build @4:45 3) Fast r30", "3x200 1) Easy @3:00 2) Hold @2:50 3) Fast @2:40",
+    "4x100 r20 ~1:20 1) Kick 2) Swim r30", "4x100 r20 1) Kick ~1:40 2) Swim ~1:20", "4 x 50 alt max dive start (1:10) and max finish (1:50)",
+    "6 x 50 alternate easy @1:00 and fast @1:10", "4 x 100 (HR 24) steady @1:30", "2x100 kick 1) 50 fast 50 easy",
+    "Fins on", "Explain the main set", "Rest before set",
+    "4x50 off 60, 2x100", "4x50 off 60, 2x100 @1:40", "50 No Free, 25 Free", "4x50 @1:00, 100 easy", "100 easy, 4x50 @1:00",
+    "3x", "3 x", "2 rounds", "3 rounds of 4x50 @1:00", "2 x (4x50 off 60, 2x100)", "3 x (100 @1:40, 2x50 @50) - descend", "2 x (200 easy) @3:00",
+    "4 x (2x50 @1:00) (3:00)", "2x (100 kick @2:00, 4x25 sprint @30)", "3 rounds: 4x50 @1:00", "2 rounds - easy", "4x 100 @1:30",
+    "200 IM drill, 20 seconds rest", "8 x 100 free @ 1:30 Threshold", "16 x 50 @ 45", "10 x 25 fast r15", "400 steady",
+    "2x200 @3:00 [14] 1) Free 2) Back", "1x400 @6:00", "1x100", "12 Mins Choice", "x 50 as Build 1-4 (60)",
+    "4x100 4 each", "2x 50 each @1:00", "300 swim, 200 kick, 100 pull", "4x100 r15 ~1:25 [16]"
+  ],
+  "descs": [
+    "1 Fast 1 Easy",
+    "1 x Best Hold 3 x Easy / 2 x best hold 2 x Easy (1:15 send-off) / 3 x Best Hold 1 x easy (1:25 send-off)",
+    "1) 25 Fast 75 Easy / 2) 35 Fast 50 easy / 3) PB + 10 or Less / 4) Easy",
+    "1) 25 Fast 75 Easy, 2) PB + 18 3) Last 25 Fast",
+    "1) 25/25, 2) 50/50/50, 3) 25/25 3) 50/50/50",
+    "1) Turn Start HVO, 2) Start HVO",
+    "2 @90% , 2 x HVO",
+    "2 x HR 23, 1 x HR 25 , 1 x Buid",
+    "20m U/W - 2 for pattern, 2 Fast - Fins on - Double Arm 2nd 25",
+    "50 drill or pull 50 swim (+15) as 4 fins + 4 paddles + 4 both, every 3rd",
+    "50/25 as 50 No Free, 25 Free",
+    "50K 50Dr 1) BK 2) no.1 (4:00)",
+    "Alt 01:35/1:30 - Steadier/Faster",
+    "Alt 1 Fast 1 Easy / More Rest = Hold or Faster (1:15 send-off) / (1:25 send-off)",
+    "Alt Drill / Swim Build 1-3",
+    "Build 1-3 (90%), Build 4-6 (95%)",
+    "HVO start esp. u/w 1:40",
+    "No.1 1) 50 fast 50 easy 2) 50 easy 50 fast",
+    "PB + 15 (HR 25-27)",
+    "PB + 15-18, or 1 x 400 Swim HR 22-24",
+    "R1) No.1  R2) No.2 instead of No.1",
+    "Swim - 1) 25 F/C 25 No F/c / 2) 50/50 / 3) Choice",
+    "as 1) 2nd 50 faster 2) 3rd faster 3) 3rd +6th 25 fast 4) hvo turn 3+6",
+    "no.1 1) HVO start (15m max) 2) HVO finish (last 15 max)",
+    "Kick - 25 Steady 25 Fast + build"
+  ],
+  "texts": [
+    "400 easy\n4x100 @1:40 [14]\n200 pull",
+    "3x\n  4x50 @1:00 [16]\n  100 easy @2:00\n200 swim down",
+    "2x\n  100 kick @2:00\n  2x\n    50 fast @1:00\n    50 easy @1:10\n100 easy",
+    "4x100 @1:40\n1) Kick\n2) Drill\n3) Swim\n4) Build",
+    "8x50 @1:00\n2) easy\n3) fast",
+    "Fins on\n4x50 kick @1:10\n\n\n200 easy",
+    "3 rounds of\n  100 @1:30\n  50 @1:00\nRest 2 mins\n400 r30 ~6:00",
+    "\t2x\n\t\t100 @1:40\n\t100 easy"
+  ],
+  "parts": [
+    ["2x100 kick @2:00", "2) swim"],
+    ["4x100 @1:40", "1) Kick", "2) Swim @1:30", "3) Build [16]"],
+    ["4x100 Free", "3) Fast"],
+    ["8x50 @1:00", "2) Fast r20"]
+  ],
+  "dictation": [
+    ["4 by 50 on 1 10", false], ["4 by 50 on 1 10", true], ["four by fifty on one ten", true], ["four by fifty on 110", true],
+    ["4 times 100 on 1:30", false], ["4 lots of 50", false], ["4 by 1 50 on 2 30", false], ["two hundred easy", true],
+    ["a hundred easy", true], ["six fifties on a minute", true], ["4 by 100 with 20 seconds rest about 1 20 each", false],
+    ["4 by 100 20 seconds rest about 1:20 each", true], ["8 by 25 leaving on the 30", false], ["8 by 25 every 30 seconds", false],
+    ["4 by 50 on a minute and a half", false], ["3 by 200 on 2 minutes 50", false], ["4 by 100 effort 14", false],
+    ["4 by 100 effort 14 to 18", false], ["4 by 100 effort 14 building to 18", false], ["4 by 50 zone red", false],
+    ["line 2 build on 4 45", false], ["line to build on 4 45", true], ["number 3 fast", false],
+    ["for by fifty", true], ["to by two hundred", true], ["200 easy with 1 minute rest", false], ["rest for 30 seconds", false],
+    ["4 times through", false], ["10 by 25 heart rate 24 to 26", true], ["4 by 100 build 1 to 4", true], ["one twenty fives", true],
+    ["twelve seventy fives on one fifteen", true], ["4 by 100 on the 1:30.", true], ["4 by 100 at 1:30", false]
+  ],
+  "effort": {
+    "toCanon": [
+      ["14", "effort20"], ["14-16", "effort20"], ["12->16", "effort20"], ["7", "rpe"], ["3-9", "rpe"], ["Red", "bpsc"], ["red", "effort20"],
+      ["Yellow->Blue", "bpsc"], ["A3", "sweetenham"], ["AT->LT", "sweetenham"], ["EN2", "maglischo"], ["HVO", "effort20"], ["sp", "effort20"],
+      ["Pink", "urbanchek"], ["Green", "urbanchek"], ["vo2", "effort20"], ["Nonsense", "bpsc"], ["16.5", "effort20"]
+    ],
+    "fromCanon": [
+      ["14", "effort20"], ["14.25", "effort20"], ["12-16", "rpe"], ["17", "bpsc"], ["12->18", "bpsc"], ["15.5", "sweetenham"],
+      ["21", "maglischo"], ["13.5", "urbanchek"], ["6", "rpe"], ["20.6", "bpsc"]
+    ]
+  },
+  "times": ["1:30", "1.30", "90", "5", "130", "01:35", ":20", "", "abc", "12:5", "1:30/1:40", "@1:30", "r20", "r20 ~1:20", "~6:00", "fast"]
+}

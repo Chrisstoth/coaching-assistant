@@ -1,0 +1,151 @@
+{
+ "id": "z578fgfr",
+ "session": {
+  "aims": [
+   "",
+   ""
+  ],
+  "blocks": [
+   {
+    "groups": [],
+    "id": "n96qopfc",
+    "items": [
+     {
+      "desc": "200 free 200 reverse IM",
+      "dist": 400,
+      "eff": "",
+      "est": null,
+      "id": "3x0rk6zl",
+      "int": 390,
+      "int2": null,
+      "reps": null,
+      "rest": null,
+      "t": "line"
+     },
+     {
+      "desc": "50K 50Dr 1) BK 2) no.1 (4:00)",
+      "dist": 200,
+      "eff": "",
+      "est": null,
+      "id": "g3px0tjj",
+      "int": 240,
+      "int2": null,
+      "reps": 2,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "warm up"
+   },
+   {
+    "groups": [],
+    "id": "yb4nky4k",
+    "items": [],
+    "name": "Swim down"
+   },
+   {
+    "groups": [],
+    "id": "h6mnhexk",
+    "items": [
+     {
+      "id": "wkabxrmq",
+      "items": [
+       {
+        "desc": "No.1 1) 50 fast 50 easy 2) 50 easy 50 fast",
+        "dist": 100,
+        "eff": "",
+        "est": null,
+        "id": "xf68rkbg",
+        "int": 110,
+        "int2": null,
+        "reps": 2,
+        "rest": null,
+        "t": "line"
+       },
+       {
+        "desc": "no.1 1) 25 fast 50 easy 2) 50 easy 25 Fast",
+        "dist": 75,
+        "eff": "",
+        "est": null,
+        "id": "htfn2pj3",
+        "int": 90,
+        "int2": null,
+        "reps": 2,
+        "rest": null,
+        "t": "line"
+       },
+       {
+        "desc": "no.1 1) HVO start (15m max) 2) HVO finish (last 15 max)",
+        "dist": 50,
+        "eff": "",
+        "est": null,
+        "id": "aspwdd3n",
+        "int": 60,
+        "int2": null,
+        "reps": 2,
+        "rest": null,
+        "t": "line"
+       },
+       {
+        "desc": "MAX",
+        "dist": 25,
+        "eff": "",
+        "est": null,
+        "id": "wugtny5s",
+        "int": 45,
+        "int2": null,
+        "reps": 2,
+        "rest": null,
+        "t": "line"
+       },
+       {
+        "desc": "easy back",
+        "dist": 200,
+        "eff": "",
+        "est": null,
+        "id": "ye7b08yi",
+        "int": 270,
+        "int2": null,
+        "reps": null,
+        "rest": null,
+        "t": "line"
+       }
+      ],
+      "note": "R1) No.1  R2) No.2 instead of No.1",
+      "t": "round",
+      "times": 2
+     },
+     {
+      "desc": "max effort with fins",
+      "dist": 50,
+      "eff": "",
+      "est": null,
+      "id": "mes2sn18",
+      "int": 120,
+      "int2": null,
+      "reps": 2,
+      "rest": null,
+      "t": "line"
+     }
+    ],
+    "name": "Main set "
+   },
+   {
+    "groups": [],
+    "id": "d269ilko",
+    "items": [],
+    "name": "swim Down"
+   }
+  ],
+  "coach": "Nigel",
+  "date": "2026-10-30",
+  "effSys": "effort20",
+  "end": "21:30",
+  "groups": [],
+  "slot": "PM",
+  "start": "20:30",
+  "title": "Friday 30th October Silver 2",
+  "venue": "BSV Shallow 4-7",
+  "weekKey": ""
+ }
+}

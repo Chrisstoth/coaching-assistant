@@ -1,0 +1,209 @@
+{
+ "id": "s-260927-am",
+ "session": {
+  "aims": [
+   "Kick",
+   "Aerobic - Girls HR consistency + SPEED HVO., Brst pull work"
+  ],
+  "blocks": [
+   {
+    "group": "",
+    "id": "r8sea0yz",
+    "items": [
+     {
+      "desc": "Easy choice - any equipment",
+      "dist": 300,
+      "eff": "8",
+      "id": "lgd93y0x",
+      "int": 420,
+      "int2": null,
+      "reps": null,
+      "t": "line"
+     },
+     {
+      "id": "t5x7thq6",
+      "items": [
+       {
+        "desc": "Kick w board",
+        "dist": 200,
+        "eff": "14",
+        "id": "s47zb06j",
+        "int": 280,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       },
+       {
+        "desc": "Fly Kick Fins - Timed 2 and 4",
+        "dist": 25,
+        "eff": "14/21",
+        "id": "2g48mhd7",
+        "int": 50,
+        "int2": null,
+        "reps": 4,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 2
+     }
+    ],
+    "name": "Warm Up"
+   },
+   {
+    "group": "",
+    "id": "vboqz97n",
+    "items": [
+     {
+      "id": "dte0dt1d",
+      "items": [
+       {
+        "desc": "Technical - Drill/Swim",
+        "dist": 100,
+        "eff": "12",
+        "id": "0edqyyg3",
+        "int": 110,
+        "int2": 120,
+        "reps": 2,
+        "t": "line"
+       },
+       {
+        "desc": "Swim Tech Focus - Either Build or F/E Mix",
+        "dist": 50,
+        "eff": "14-16",
+        "id": "f5tv9hic",
+        "int": 60,
+        "int2": null,
+        "reps": 2,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 3
+     }
+    ],
+    "name": "All Groups Sub"
+   },
+   {
+    "group": "Group 1 Girls",
+    "id": "i9ifop54",
+    "items": [
+     {
+      "id": "9il63ppt",
+      "items": [
+       {
+        "desc": "25 Timed 25 Easy",
+        "dist": 50,
+        "eff": "20-8",
+        "id": "dl125lfn",
+        "int": 80,
+        "int2": null,
+        "reps": 2,
+        "t": "line"
+       },
+       {
+        "desc": "Build 1-4 - finish at HR 27",
+        "dist": 100,
+        "eff": "12-16",
+        "id": "nml1fk43",
+        "int": 90,
+        "int2": 100,
+        "reps": 4,
+        "t": "line"
+       },
+       {
+        "desc": "Brst Pull",
+        "dist": 50,
+        "eff": "14",
+        "id": "br2lqkeo",
+        "int": 75,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       },
+       {
+        "desc": "Drill/Swim",
+        "dist": 200,
+        "eff": "13",
+        "id": "3elbkogt",
+        "int": 225,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 3
+     }
+    ],
+    "name": "Group 1"
+   },
+   {
+    "group": "Group 2 Boys",
+    "id": "hgx6r8bj",
+    "items": [
+     {
+      "id": "1ef2l19f",
+      "items": [
+       {
+        "desc": "Hold HR 24. - Longer Underwaters every 3rd turn",
+        "dist": 400,
+        "eff": "12",
+        "id": "gxvwaqs7",
+        "int": 330,
+        "int2": null,
+        "reps": null,
+        "t": "line"
+       },
+       {
+        "desc": "Pull 25 Brst 25 Choice",
+        "dist": 50,
+        "eff": "13",
+        "id": "f7bhnkzn",
+        "int": 70,
+        "int2": null,
+        "reps": 4,
+        "t": "line"
+       },
+       {
+        "desc": "2 x HR 23, 1 x HR 25 , 1 x Buid",
+        "dist": 100,
+        "eff": "12-14",
+        "id": "j4qiv9ck",
+        "int": 90,
+        "int2": 95,
+        "reps": 4,
+        "t": "line"
+       },
+       {
+        "desc": "HVO Start",
+        "dist": 50,
+        "eff": "13",
+        "id": "4iag6e0s",
+        "int": null,
+        "int2": null,
+        "reps": 2,
+        "t": "line"
+       }
+      ],
+      "note": "",
+      "t": "round",
+      "times": 2
+     }
+    ],
+    "name": "Group 2"
+   }
+  ],
+  "coach": "Chris Stothard",
+  "date": "2026-09-27",
+  "end": "07:45",
+  "slot": "AM",
+  "start": "06:00",
+  "title": "",
+  "venue": "BSV 25m",
+  "weekKey": "1.1.3"
+ }
+}
