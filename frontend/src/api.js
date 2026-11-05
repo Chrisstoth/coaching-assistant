@@ -242,6 +242,10 @@ export const api = {
   setBuilderAudience: (id, audience) => request('PUT', `/session-builder/sessions/${id}/audience`, audience),
   getPlanGroups: (on, squad) => request('GET', `/session-builder/plan-groups?on=${on}${squad ? `&squad=${encodeURIComponent(squad)}` : ''}`),
   getBuilderSettings: () => request('GET', '/session-builder/settings'),
+  reviewBuilderSession: (id, session) => request('POST', `/session-builder/sessions/${id}/review`, { session }),
+  getBuilderComments: (id) => request('GET', `/session-builder/sessions/${id}/comments`),
+  decideBuilderComment: (noteId, data) => request('POST', `/session-builder/comments/${noteId}`, data),
+  draftBuilderSession: (id, session, brief) => request('POST', `/session-builder/sessions/${id}/draft`, { session, brief }),
 
   // Staff workbooks
   getWorkbooks: () => request('GET', '/workbooks'),

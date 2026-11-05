@@ -156,6 +156,9 @@ def _apply_migrations():
 
         if "staff_notes" in insp.get_table_names():
             add_col("staff_notes", "proposed_action", "JSON")
+            add_col("staff_notes", "anchor", "JSON")
+            add_col("staff_notes", "flag", "VARCHAR")
+            add_col("staff_notes", "useful", "BOOLEAN")
             add_col("staff_notes", "action_status", "VARCHAR")
             add_col("staff_notes", "action_result", "TEXT")
             add_col("staff_notes", "options", "JSON")

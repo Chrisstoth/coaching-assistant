@@ -50,9 +50,6 @@ assert.match(html, /Swimmer notes/)
 assert.match(html, /Taper: halve the main set/)
 assert.equal((html.match(/400/g) || []).length, 1, 'The warm-up is printed once, not in every set.')
 
-// --- each set's workload includes the warm-up and cool-down when saved --------------
-const planner = await readFile(new URL('../src/pages/SessionPlanner.jsx', import.meta.url), 'utf8')
-assert.match(planner, /if \(parsed\.warm_up\) lines\.push\(`Warm up: \$\{parsed\.warm_up\}`\)/)
-assert.doesNotMatch(planner, /index === 0 && parsed\.warm_up/)
+// (Sessions are now written in the Session Builder; its PDF is checked in test-session-builder-ui.mjs.)
 
 console.log('Session print checks passed')

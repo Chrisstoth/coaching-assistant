@@ -134,11 +134,9 @@ assert.equal(workInText({ role: 'physiologist', message: 'Leo needs an easier ma
   'The Physiologist says: Leo needs an easier main set. Work this into the session.')
 assert.equal(workInText({ kind: 'decision', decision: 'Rest Leo' }), "I've decided: Rest Leo. Work this into the session.")
 
-const planner = await read('../src/pages/SessionPlanner.jsx')
-assert.match(planner, /trigger: 'session_draft'/, 'The staff are told they are reviewing a session draft.')
-assert.match(planner, /attendee_ids:/, 'They know who is expected at the session.')
-assert.match(planner, /onWorkIn=\{/, 'A staff point can be worked straight into the draft.')
-assert.match(planner, /seq !== draftSeq\.current/, 'Late staff notes never land on a different session.')
+const builderPage = await read('../src/pages/SessionBuilder.jsx')
+assert.match(builderPage, /setTimeout\(\(\) => askStaff\(true\), 30000\)/, 'The staff read the session after a pause, never on every keystroke.')
+assert.match(builderPage, /if \(auto && key === lastRead\.current\) return/, 'Nothing is re-read when nothing changed.')
 assert.match(voices, /Work this in/)
 
 console.log('Session writer checks passed')

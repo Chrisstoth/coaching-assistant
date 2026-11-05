@@ -380,3 +380,12 @@
 @media (max-width:520px){.sb .pl{grid-template-columns:auto minmax(0,1fr);font-size:16px}.sb .pi,.sb .pe{grid-column:2;justify-self:start}.sb .pq{font-size:21px}}
 
 @media (prefers-reduced-motion:reduce){.sb, .sb *{transition:none!important;animation:none!important}}
+
+/* The staff's comments, pinned under a set (app addition) */
+.sb .sc-pin{grid-column:1/-1;margin:2px 0 6px 30px;padding:6px 10px;border-radius:8px;background:var(--surface-2);border-left:3px solid var(--accent);font-size:13px;line-height:1.4;color:var(--ink)}
+.sb .sc-pin.safety{border-left-color:var(--bad)}
+.sb .sc-pin .who{font-weight:600;color:var(--accent-text);margin-right:6px}
+.sb .sc-pin.safety .who{color:var(--bad)}
+.sb .sc-pin .acts{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
+.sb .sc-pin .acts button{border:1px solid var(--line);background:transparent;border-radius:6px;padding:2px 8px;font-size:12px;color:var(--muted)}
+.sb .sc-pin .acts button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent-text)}

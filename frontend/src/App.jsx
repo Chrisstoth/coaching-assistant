@@ -15,7 +15,6 @@ import Import from './pages/Import'
 import Schedule from './pages/Schedule'
 import Calendar from './pages/Calendar'
 import CoachingContext from './pages/CoachingContext'
-import SessionPlanner from './pages/SessionPlanner'
 import Workbooks from './pages/Workbooks'
 import PlanHub from './pages/PlanHub'
 import CoachAI from './pages/CoachAI'
@@ -268,8 +267,7 @@ export default function App() {
           <Route path="/ai" element={<CoachAI />} />
           <Route path="/plan" element={<PlanHub />} />
           <Route path="/session-planner" element={<Navigate to="/builder/new" replace />} />
-          {/* The older planner, kept only for writing with the staff until the builder has live staff comments */}
-          <Route path="/session-planner/staff" element={<SessionPlanner />} />
+          <Route path="/session-planner/staff" element={<Navigate to="/builder/new" replace />} />
           <Route path="/workbooks" element={<Workbooks />} />
           <Route path="/workbooks/:role" element={<Workbooks />} />
           <Route path="/workbooks/:role/page" element={<Workbooks />} />

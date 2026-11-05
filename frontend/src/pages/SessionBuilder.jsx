@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import { mountBuilder } from '../notation/builderUi'
+import VoiceInput from '../components/VoiceInput'
 import '../notation/builder.css'
 
 const toIso = d => d.toISOString().slice(0, 10)
@@ -134,10 +135,7 @@ function NewSession() {
         </button>
       </div>
       {error && <p className="text-sm text-red-400">{error}</p>}
-      <p className="text-xs text-pool-500">
-        Want the staff to draft it with you? <Link to="/session-planner/staff" className="text-accent-400">Write it with the staff</Link>
-        {' '}(the older planner, until the staff can comment inside the builder).
-      </p>
+      <p className="text-xs text-pool-500">Once it's open, "Draft with Jess" writes it from a brief, and the staff comment as you go.</p>
     </div>
   )
 }
@@ -150,6 +148,58 @@ function Builder({ id }) {
   const [payload, setPayload] = useState(null)
   const [error, setError] = useState('')
   const [picking, setPicking] = useState(false)
+  // The staff reading along: comments pinned to lines, and Jess drafting from a brief.
+  const builderRef = useRef(null)
+  const [comments, setComments] = useState([])
+  const [loose, setLoose] = useState([])
+  const [reading, setReading] = useState(false)
+  const [live, setLive] = useState(() => { try { return localStorage.getItem('sb.liveComments') !== 'off' } catch { return true } })
+  const [jess, setJess] = useState(false)
+  const [brief, setBrief] = useState('')
+  const [drafting, setDrafting] = useState('')
+  const idle = useRef(null)
+  const lastRead = useRef('')
+
+  const showComments = list => { setComments(list); if (builderRef.current) builderRef.current.setComments(list) }
+  const askStaff = async (auto = false) => {
+    const b = builderRef.current
+    if (!b || reading) return
+    const session = b.getSession()
+    const key = JSON.stringify(session.blocks) + JSON.stringify(session.groups)
+    if (auto && key === lastRead.current) return          // nothing new to read
+    lastRead.current = key
+    setReading(true)
+    try { showComments((await api.reviewBuilderSession(payload.id, session)).comments) }
+    catch { /* the staff not answering never blocks writing */ }
+    finally { setReading(false) }
+  }
+  const onChange = () => {
+    clearTimeout(idle.current)
+    if (live) idle.current = setTimeout(() => askStaff(true), 30000)   // after a pause, never on every keystroke
+  }
+  const onComment = async (c, action) => {
+    let body = { action }
+    if (action === 'useful' || action === 'notuseful') body = { action: 'useful', useful: action === 'useful' }
+    if (action === 'dismiss' && c.flag !== 'safety') {
+      const reason = window.prompt(`Why not? ${c.name} will remember this and stop raising it. (Leave empty to just dismiss.)`, '')
+      if (reason === null) return
+      body.reason = reason
+    }
+    await api.decideBuilderComment(c.id, body)
+    showComments((await api.getBuilderComments(payload.id)).comments)
+  }
+  const draftWithJess = async () => {
+    const b = builderRef.current
+    if (!b || !brief.trim()) return
+    setDrafting('Jess is writing…')
+    try {
+      const d = await api.draftBuilderSession(payload.id, b.getSession(), brief)
+      b.addBlocks(d.blocks, { title: d.title, aims: d.aims })
+      setDrafting([d.note, d.flagged?.length ? `Check these lines: ${d.flagged.join(' · ')}` : ''].filter(Boolean).join(' '))
+      setJess(false)
+    } catch (e) { setDrafting(e.message || 'Jess could not write it this time.') }
+  }
+  useEffect(() => () => clearTimeout(idle.current), [])
 
   useEffect(() => {
     let live = true
@@ -172,6 +222,9 @@ function Builder({ id }) {
       pdfHeader: `${squad ? squad + ' · ' : ''}Session plan`,
       pdfFooter: `${club.name ? club.name + ' ' : ''}Session Builder`,
       save: s => api.saveBuilderSession(payload.id, s),
+      onChange: () => onChangeRef.current(),
+      onComment: (c, action) => onCommentRef.current(c, action),
+      onLooseComments: setLoose,
       copyNextWeek: async () => {
         try {
           const next = await api.copyBuilderSessionToNextWeek(payload.id)
@@ -179,10 +232,18 @@ function Builder({ id }) {
         } catch (e) { window.alert(e.message || 'Could not copy the session.') }
       },
     })
-    return () => builder.destroy()
+    builderRef.current = builder
+    api.getBuilderComments(payload.id).then(r => showComments(r.comments)).catch(() => {})
+    return () => { builderRef.current = null; builder.destroy() }
     // Mount once per session: later payload changes (e.g. who it's for) must not
     // rebuild the builder from the copy loaded when the page opened.
   }, [payload?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // the builder keeps the first callbacks it was given, so route them through refs
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange
+  const onCommentRef = useRef(onComment); onCommentRef.current = onComment
+  const toggleLive = () => { const v = !live; setLive(v); try { localStorage.setItem('sb.liveComments', v ? 'on' : 'off') } catch { /* fine */ } }
+  const openCount = comments.filter(c => c.status === 'open').length
 
   if (error) return <div className="p-4 text-sm text-red-400">{error} <Link className="underline" to="/sessions">Back to sessions</Link></div>
   return (
@@ -212,6 +273,37 @@ function Builder({ id }) {
             ))}
           </ul>
         </details>
+      )}
+      {payload && (
+        <div className="flex items-center gap-2 flex-wrap px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
+          <button onClick={() => askStaff(false)} disabled={reading} className="rounded-lg bg-pool-700 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
+            {reading ? 'The staff are reading…' : 'Ask the staff'}
+          </button>
+          <button onClick={() => setJess(j => !j)} className="rounded-lg bg-pool-700 px-3 py-1.5 font-semibold text-pool-100">Draft with Jess</button>
+          <label className="flex items-center gap-1.5 text-pool-400 ml-auto">
+            <input type="checkbox" checked={live} onChange={toggleLive} /> Comment as I write
+          </label>
+          {openCount > 0 && <span className="w-full text-pool-400">{openCount} comment{openCount === 1 ? '' : 's'} from the staff, under the sets they're about.</span>}
+          {loose.map(c => (
+            <span key={c.id} className="w-full text-pool-300"><b className={c.flag === 'safety' ? 'text-red-400' : 'text-pool-100'}>{c.name}{c.flag === 'safety' ? ' · safety' : ''}</b> {c.message}{' '}
+              <button onClick={() => onComment(c, 'accept')} className="text-accent-400">Accept</button>{' · '}
+              <button onClick={() => onComment(c, 'dismiss')} className="text-pool-400">{c.flag === 'safety' ? 'Acknowledge' : 'Dismiss'}</button></span>
+          ))}
+          {drafting && !jess && <span className="w-full text-pool-300">Jess: {drafting}</span>}
+        </div>
+      )}
+      {payload && jess && (
+        <div className="px-4 py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
+          <p className="text-pool-300">Tell Jess what the session is for: the aim, the groups, anything you want in it. She writes it in your current style; you edit from there.</p>
+          <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={3} placeholder="e.g. Aerobic Monday. Girls threshold 3 rounds, boys pull with paddles, finish with some fast 25s off the blocks."
+            className="w-full bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm text-pool-100" />
+          <VoiceInput onTranscript={t => setBrief(b => (b ? b + ' ' : '') + t)} placeholder="Or tap the mic and say it" />
+          <div className="flex gap-2 justify-end">
+            <button onClick={() => setJess(false)} className="px-3 py-1.5 text-pool-400">Cancel</button>
+            <button onClick={draftWithJess} disabled={!brief.trim() || drafting === 'Jess is writing…'}
+              className="px-3 py-1.5 rounded-lg bg-accent-600 text-white font-semibold disabled:opacity-40">{drafting === 'Jess is writing…' ? 'Jess is writing…' : 'Write it'}</button>
+          </div>
+        </div>
       )}
       {payload && picking && (
         <AudiencePicker payload={payload} onClose={() => setPicking(false)}

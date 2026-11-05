@@ -1140,6 +1140,12 @@ class StaffNote(Base):
     # coach approves it; the result of doing it is kept alongside.
     proposed_action = Column(JSON, nullable=True)
     action_status = Column(String, nullable=True)         # proposed / applied / declined / failed
+    # Live comments in the Session Builder: the line a comment is pinned to, whether it is a
+    # safety flag (can be acknowledged, never switched off) or a preference, and whether the
+    # coach found it useful. Workers are judged on usefulness, not on agreement.
+    anchor = Column(JSON, nullable=True)                  # {"line_id": "...", "block": "Main set"}
+    flag = Column(String, nullable=True)                  # safety / preference
+    useful = Column(Boolean, nullable=True)
     action_result = Column(Text, nullable=True)
 
     # "Your call": when specialists disagree, nobody settles it but the coach.

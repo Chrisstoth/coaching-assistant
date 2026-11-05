@@ -281,6 +281,7 @@ function renderBlocks(focus){
   }
   renderSummary();
   renderSelbar();
+  paintComments();
 }
 function renderMeta(){
   const s = S();
@@ -1013,6 +1014,43 @@ window.addEventListener('pagehide', flushNow);
     setStatus('saved', 'Saved')
   }
 
+  /* ---------- the staff's comments, pinned under the line they are about ---------- */
+  let comments = []
+  function paintComments(){
+    if (!root.isConnected && !root.parentNode) return
+    $$('.sc-pin', root).forEach(el => el.remove())
+    const loose = []
+    for (const c of comments.filter(x => x.status === 'open')) {
+      const host = c.line_id && root.querySelector(`.node[data-id="${c.line_id}"]`)
+      if (!host) { loose.push(c); continue }
+      host.insertAdjacentHTML('beforeend',
+        `<div class="sc-pin${c.flag === 'safety' ? ' safety' : ''}" data-cid="${c.id}"><span class="who">${esc(c.name)}${c.flag === 'safety' ? ' · safety' : ''}</span>${esc(c.message)}` +
+        `<div class="acts"><button type="button" data-cmt="accept">Accept</button><button type="button" data-cmt="dismiss">${c.flag === 'safety' ? 'Acknowledge' : 'Dismiss'}</button>` +
+        `<button type="button" data-cmt="useful" aria-pressed="${c.useful === true}">Useful</button><button type="button" data-cmt="notuseful" aria-pressed="${c.useful === false}">Not useful</button></div></div>`)
+    }
+    if (opts.onLooseComments) opts.onLooseComments(loose)
+  }
+  root.addEventListener('click', e => {
+    const b = e.target.closest('[data-cmt]'); if (!b) return
+    const pin = b.closest('[data-cid]'), id = pin && +pin.dataset.cid; if (!id || !opts.onComment) return
+    const c = comments.find(x => x.id === id)
+    const action = b.dataset.cmt
+    opts.onComment(c, action)
+  })
+
+  /* ---------- Jess's draft, added as new blocks ---------- */
+  function addBlocks(blocks, meta = {}){
+    pushUndo()
+    const s = S()
+    // the empty starter blocks make way for the draft
+    s.blocks = s.blocks.filter(b => (b.items || []).length || (b.kind === 'notes' && hasNoteText(b)))
+    s.blocks.push(...blocks)
+    if (meta.title && !s.title) s.title = meta.title
+    ;(meta.aims || []).forEach((a, i) => { s.aims = s.aims || ['', '']; if (a && !s.aims[i]) s.aims[i] = a })
+    renderMeta(); renderBlocks(); markDirty()
+    toast("Jess's draft is in. Edit anything; Undo takes it out again.", 'Undo', undo)
+  }
+
   if (speechOK()) { const tip = $('#tipSpeech'), alt = $('#tipDictate'); if (tip) tip.hidden = false; if (alt) alt.hidden = true }
   $('#brandName').textContent = opts.brand || 'Session Builder'
   openSession(opts.id, opts.session)
@@ -1022,6 +1060,8 @@ window.addEventListener('pagehide', flushNow);
     flush: flushNow,
     getSession: () => JSON.parse(JSON.stringify(S())),
     setView,
+    setComments(list){ comments = list || []; paintComments() },
+    addBlocks,
     destroy(){
       flushNow()
       try { micStop() } catch (e) {}

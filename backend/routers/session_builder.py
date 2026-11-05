@@ -137,3 +137,53 @@ def parse(body: ParseText):
     text = N.normalize_dictation(body.text, body.speech) if "\n" not in body.text else body.text
     nodes = N.parse_text(text)
     return {"text": text, "items": nodes, "stats": N.stats_of(nodes), "zones": N.item_zones(nodes)}
+
+
+# ---------------------------------------------------------------- the staff in the builder
+
+class ReviewIn(BaseModel):
+    session: dict
+
+
+class CommentDecision(BaseModel):
+    action: str                     # accept / dismiss / useful
+    reason: Optional[str] = None
+    useful: Optional[bool] = None
+
+
+class DraftIn(BaseModel):
+    session: dict
+    brief: str
+
+
+@router.post("/sessions/{session_id}/review")
+def review(session_id: int, body: ReviewIn, db: DBSession = Depends(get_db)):
+    """The staff read the session as it stands and pin comments to lines."""
+    from backend.services import builder_staff
+    s = _get(db, session_id)
+    B.apply_builder(db, s, body.session)
+    return {"comments": builder_staff.review(db, s, s.builder)}
+
+
+@router.get("/sessions/{session_id}/comments")
+def comments(session_id: int, db: DBSession = Depends(get_db)):
+    from backend.services import builder_staff
+    return {"comments": builder_staff.comments_out(db, _get(db, session_id))}
+
+
+@router.post("/comments/{note_id}")
+def decide_comment(note_id: int, body: CommentDecision, db: DBSession = Depends(get_db)):
+    from backend.services import builder_staff, workbooks
+    try:
+        return builder_staff.decide(db, note_id, body.action, body.reason, body.useful)
+    except workbooks.WorkbookError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+
+@router.post("/sessions/{session_id}/draft")
+def draft(session_id: int, body: DraftIn, db: DBSession = Depends(get_db)):
+    """Jess drafts the session from the coach's brief, in the notation. Nothing is saved until the coach keeps it."""
+    from backend.services import builder_staff
+    if not body.brief.strip():
+        raise HTTPException(status_code=422, detail="Tell Jess what the session is for.")
+    return builder_staff.draft(db, _get(db, session_id), body.session, body.brief)
