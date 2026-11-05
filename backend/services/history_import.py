@@ -691,7 +691,13 @@ def read_file(info: FileInfo, glossary: str = "", formats: str = "", use_ai: boo
         res.totals = [{"group": t["g"] or "All", "dist": t["dist"], "time": t["time"]} for t in N.totals_for(res.session)]
         empty = not any(t["dist"] for t in res.totals)
         mismatch = res.method == "template" and res.blocks_matching + res.blocks_explained < res.blocks_checked
-        res.status = "doubts" if (res.flagged or res.unknown_terms or mismatch or empty or res.notes) else "clean"
+        if res.method == "template":
+            # the sheet's own totals are the check: advisory notes (no send-off, a likely typo) travel
+            # with the session but don't hold it back when every block agrees
+            unchecked = not res.blocks_checked and res.notes      # nothing to check against, and something to say
+            res.status = "doubts" if (mismatch or empty or unchecked) else "clean"
+        else:
+            res.status = "doubts" if (res.flagged or res.unknown_terms or res.total_mismatch or empty or res.notes) else "clean"
     except Exception as e:  # noqa: BLE001 - one bad file must not stop a batch
         res.method, res.status, res.error = res.method or "failed", "failed", str(e)[:300]
     return res
