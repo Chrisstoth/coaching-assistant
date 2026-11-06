@@ -69,12 +69,23 @@ export function mountPlanner(root, opts){
   const window = track(globalThis.window)
   root.classList.add('sp')
   root.innerHTML = PLANNER_TEMPLATE
-  if (opts.squad) { const h = root.querySelector('.title h1'); if (h) h.textContent = `${opts.squad} Season Planner` }
+  { const h = root.querySelector('.title h1'); if (h) h.textContent = 'Season plan' }
   const mark = root.querySelector('.mark'); if (mark) mark.textContent = opts.mark || 'PLAN'
+  // A finger needs bigger rows, and taps that don't fire while scrolling.
+  const COARSE = !!(globalThis.matchMedia && globalThis.matchMedia('(pointer: coarse)').matches);
+  const icon = d => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+  [['#undoBtn', 'Undo', 'M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3'],
+   ['#redoBtn', 'Redo', 'm15 15 6-6m0 0-6-6m6 6H9a6 6 0 0 0 0 12h3'],
+   ['#versBtn', 'Saved versions', 'M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z']].forEach(([sel, label, d]) => {
+    const b = root.querySelector(sel); if (!b) return
+    b.innerHTML = icon(d); b.setAttribute('aria-label', label); b.title = label; b.classList.add('icon')
+  });
+  const hintEl = root.querySelector('#hint')
+  if (hintEl && COARSE) hintEl.textContent = 'Tap a block, a week or a swimmer to open it · to change the plan, press and hold a bar or a block edge, then slide'
 
 'use strict';
 const DAY=864e5, WK=7*DAY, NS='http://www.w3.org/2000/svg';
-const S={plan:null,roster:null,view:'season',sel:null,colW:46,ro:false,undo:[],redo:[],focus:'',sheet:'',hidden:[],collapsed:[],expanded:[],expandAll:false,adding:false,wwLine:'',wwDiff:false,tplOpen:[],loaded:{plan:false,roster:false}};
+const S={plan:null,roster:null,view:'season',sel:null,colW:46,names:typeof root!=='undefined'&&root.clientWidth>=760?'full':'short',ro:false,undo:[],redo:[],focus:'',sheet:'',hidden:[],collapsed:[],expanded:[],expandAll:false,adding:false,wwLine:'',wwDiff:false,tplOpen:[],loaded:{plan:false,roster:false}};
 let db=null, planRef=null, rosterRef=null, verCol=null, downloads=null;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -461,7 +472,7 @@ const mc=m=>m==='–'?'moff':'m'+m;
 
 /* ---------- timeline ---------- */
 /* rows: each group lane, a group header with its swimmer list, one slim line per swimmer (full lane when selected) */
-const MINI=22,GH=24,CH=62;
+const MINI=COARSE?30:22,GH=COARSE?32:24,CH=62;
 const isX=bid=>S.expandAll||S.expanded.includes(bid);
 const laneH=bid=>LANE+(isX(bid)?CK.length*CH+6:0);
 function tlRows(){const out=[];lanes().filter(b=>!S.hidden.includes(b.id)).forEach(b=>{out.push({t:'lane',bid:b.id,h:laneH(b.id)});const ms=members(b.id);if(!ms.length&&!allSw().some(s=>planned(s)&&groupRuns(s).some(r=>r.g===b.id)))return;
@@ -527,7 +538,7 @@ function drawLane(svg,b,y0,cw){
   if(child)arr.forEach(w=>{if(!w.diff)sv('rect',{x:w.i*cw,y:yM-1,width:cw,height:L.MAC+L.MES+2,class:'veil'},g);});
   pr.forEach((r,k)=>{if(!k)return;const x=r.start*cw;const me=arr[r.start].macro!==arr[r.start-1].macro;const y1=me?yM:yP,hh=(me?L.MAC+1:0)+L.MES-2;
     sv('line',{x1:x-2,x2:x-2,y1:y1+8,y2:y1+hh-8,class:'grip'},g);sv('line',{x1:x+2,x2:x+2,y1:y1+8,y2:y1+hh-8,class:'grip'},g);
-    const hd=sv('rect',{x:x-7,y:y1,width:14,height:hh,class:'handle','data-act':'bnd','data-bid':b.id,'data-j':r.start},g);stitle(hd,'Drag to move this boundary');});
+    const hd=sv('rect',{x:x-(COARSE?12:7),y:y1,width:COARSE?24:14,height:hh,class:'handle','data-act':'bnd','data-bid':b.id,'data-j':r.start},g);stitle(hd,'Drag to move this boundary');});
   [.25,.5,.75,1].forEach(v=>{const y=yC-v/LMAX*L.LOAD;sv('line',{x1:0,x2:n*cw,y1:y,y2:y,class:v===1?'grid g100':'grid'},g);});
   // a bar chart with draggable top edges; used for overall load and for each component
   const chart=(top,hh,key,val,pval,dif,barCls)=>{const base=top+hh;
@@ -537,7 +548,7 @@ function drawLane(svg,b,y0,cw){
       if(w.camp){sv('rect',{x:x+2,y:top,width:cw-4,height:hh,rx:3,class:'campmark'},g);}
       if(cw>=34&&v>0){const t=stext(g,x+cw/2,base-h-3,(v>LMAX?'▲':'')+Math.round(v*100),'bar-v'+(d?' dif':''),'middle');if(d)t.style.fill=b.color;}});
     if(child)sv('polyline',{points:arr.map(w=>`${w.i*cw+cw/2},${base-Math.min(LMAX,pval(w)||0)/LMAX*hh}`).join(' '),class:'pline'},g);
-    arr.forEach(w=>{const h=Math.min(LMAX,Math.max(0,val(w)))/LMAX*hh;const hd=sv('rect',{x:w.i*cw+2,y:base-h-7,width:cw-4,height:13,class:'tophandle','data-act':'paint','data-bid':b.id,'data-y':top,'data-h':hh,'data-c':key},g);});};
+    arr.forEach(w=>{const h=Math.min(LMAX,Math.max(0,val(w)))/LMAX*hh;const hd=sv('rect',{x:w.i*cw+2,y:base-h-(COARSE?14:7),width:cw-4,height:COARSE?28:13,class:'tophandle','data-act':'paint','data-bid':b.id,'data-y':top,'data-h':hh,'data-c':key},g);});};
   if(b.kind==='swimmer'){const gr=groupRuns(b.sw);const yS=yP+L.MES;
     if(gr.length>1)gr.forEach(r=>{const gb=BR(r.g);if(!gb)return;const x=r.a*cw,w=(r.b-r.a+1)*cw;const rr=sv('rect',{x:x+1,y:yS,width:w-2,height:11,rx:3,class:'gstrip'},g);rr.style.fill=gb.color;stitle(rr,`${gName(gb)} · ${range(wkS(r.a),wkE(r.b))}`);
       if(w>44)stext(g,x+5,yS+8.6,fit(gb.name,w-10,5),'gstrip-t');});}
@@ -555,12 +566,14 @@ function drawLane(svg,b,y0,cw){
       chart(top,hh,cp.k,w=>w.c[cp.k],w=>w.pc?w.pc[cp.k]:0,w=>w.cd[cp.k],()=>'cbar c-'+cp.k);yy+=CH;});}
   if(b.kind==='swimmer'){const ring=sv('rect',{x:1,y:y0+1,width:n*cw-2,height:laneH(b.id)-2,rx:6,class:'focus-ring'},g);ring.style.stroke=b.color;}
 }
+function shortName(sw){const p=String(sw.name||'').trim().split(/\s+/);const f=p[0]||'';const dup=allSw().some(s=>s!==sw&&String(s.name||'').trim().split(/\s+/)[0]===f);return dup&&p.length>1?f+' '+p[p.length-1][0]:f;}
+function nameSpans(sw){return `<span class="full">${esc(sw.name)}</span><span class="short">${esc(shortName(sw))}</span>`;}
 function renderLabels(rs){
-  const el=$('#tlLabels');const yP=5+L.MAC+1,yL=yP+L.MES+L.GAP;
+  const el=$('#tlLabels');$('#timeline').classList.toggle('slim',S.names==='short');const yP=5+L.MAC+1,yL=yP+L.MES+L.GAP;
   const yC0=yL+L.LOAD+L.CODE+L.PAD;
   const rowsLbl=bid=>`<div class="lab-rows" style="top:0;height:100%"><span style="top:${yL+L.LOAD-24}px">Load %</span><span style="top:${yL+L.LOAD+4}px">Code</span>${isX(bid)?COMPS.map((c,j)=>`<span class="cl c-${c.k}" style="top:${yC0+j*CH+CH/2-6}px">${c.short}</span>`).join(''):''}</div>`;
   const xbtn=bid=>`<button class="btn ghost sm" data-cmd="togglecomp" data-id="${esc(bid)}" aria-expanded="${isX(bid)}">${isX(bid)?'▾':'▸'} Load detail</button>`;
-  let h=`<div class="lab-head" style="height:${L.HEAD}px"><span class="label">Week</span></div><div class="lab-cal" style="height:${L.CAL}px"><div class="label">Meets</div><div class="small muted" style="margin-top:20px">Holidays · exams · camp</div></div>`;
+  let h=`<div class="lab-head" style="height:${L.HEAD}px"><span class="label full">Week</span><button class="namesbtn" data-cmd="names" aria-label="${S.names==='short'?'Show full names':'Make the names column narrow'}">${S.names==='short'?'Names ›':'‹ Narrow'}</button></div><div class="lab-cal" style="height:${L.CAL}px"><div class="label">Meets</div><div class="small muted full" style="margin-top:20px">Holidays · exams · camp</div></div>`;
   rs.forEach(r=>{const b=BR(r.bid);
     if(r.t==='lane'&&b.kind==='swimmer'){const sw=r.sw,arr=TL(b.id),dr=arr.filter(w=>w.diff).length,na=arr.filter(w=>w.away).length,g=BR(b.parent),mv=groupRuns(sw).length>1;
       h+=`<div class="lab-lane person" style="height:${r.h}px;--b:${esc(b.color)}"><button class="lab-name" data-cmd="selperson" data-id="${esc(sw.id)}">${esc(sw.name)}</button>
@@ -570,9 +583,9 @@ function renderLabels(rs){
       h+=`<div class="lab-lane" style="height:${r.h}px;--b:${esc(b.color)}"><button class="lab-name" data-cmd="selbranch" data-id="${esc(b.id)}">${esc(b.name)}</button>
         <div class="lab-meta">group · ${members(b.id).length} swimmer${members(b.id).length===1?'':'s'}</div>
         <div class="lab-meta">${b.parent?(dr?`${dr} wk differ from ${esc(BR(b.parent).name)}`:`same as ${esc(BR(b.parent).name)}`):'root plan'}</div><div class="acts">${xbtn(b.id)}</div>${rowsLbl(b.id)}</div>`;}
-    else if(r.t==='grp'){h+=`<div class="lab-grp" style="height:${r.h}px"><button class="grp-tog" data-cmd="togglegroup" data-id="${esc(r.bid)}" aria-expanded="${r.open}">${r.open?'▾':'▸'} ${r.n} swimmer${r.n===1?'':'s'}${r.v?` <span class="small muted">+${r.v} part-season</span>`:''}</button><span class="small muted">${r.k?r.k+' personal':''}</span></div>`;}
-    else if(r.vis){const rr=groupRuns(r.sw).filter(x=>x.g===r.vis);h+=`<div class="lab-mini vis" style="height:${r.h}px;--b:${esc(BR(r.vis).color)}"><button data-cmd="selperson" data-id="${esc(r.sw.id)}" title="${esc(r.sw.name)}: ${esc(groupStory(r.sw))}">${esc(r.sw.name)}</button><span>${rr.map(x=>fd(wkS(x.a))+'–'+fd(wkE(x.b))).join(', ')}</span></div>`;}
-    else{const dv=personalWeeks(r.sw),an=awayNow(r.sw);h+=`<div class="lab-mini${dv?' dv':''}" style="height:${r.h}px;--b:${esc(b.color)}"><button data-cmd="selperson" data-id="${esc(r.sw.id)}" title="Open ${esc(r.sw.name)}'s line${groupRuns(r.sw).length>1?' · '+esc(groupStory(r.sw)):''}">${esc(r.sw.name)}</button><span>${an?`<b class="awayb">${esc(an.type)}</b>`:miniTag(r.sw)}</span></div>`;}});
+    else if(r.t==='grp'){h+=`<div class="lab-grp" style="height:${r.h}px"><button class="grp-tog" data-cmd="togglegroup" data-id="${esc(r.bid)}" aria-expanded="${r.open}">${r.open?'▾':'▸'} ${r.n}<span class="full"> swimmer${r.n===1?'':'s'}${r.v?` <span class="small muted">+${r.v} part-season</span>`:''}</span></button><span class="small muted full">${r.k?r.k+' personal':''}</span></div>`;}
+    else if(r.vis){const rr=groupRuns(r.sw).filter(x=>x.g===r.vis);h+=`<div class="lab-mini vis" style="height:${r.h}px;--b:${esc(BR(r.vis).color)}"><button data-cmd="selperson" data-id="${esc(r.sw.id)}" title="${esc(r.sw.name)}: ${esc(groupStory(r.sw))}">${nameSpans(r.sw)}</button><span>${rr.map(x=>fd(wkS(x.a))+'–'+fd(wkE(x.b))).join(', ')}</span></div>`;}
+    else{const dv=personalWeeks(r.sw),an=awayNow(r.sw);h+=`<div class="lab-mini${dv?' dv':''}" style="height:${r.h}px;--b:${esc(b.color)}"><button data-cmd="selperson" data-id="${esc(r.sw.id)}" title="Open ${esc(r.sw.name)}'s line${groupRuns(r.sw).length>1?' · '+esc(groupStory(r.sw)):''}">${nameSpans(r.sw)}</button><span>${an?`<b class="awayb">${esc(an.type)}</b>`:miniTag(r.sw)}</span></div>`;}});
   if(S.hidden.length)h+=`<div style="padding:8px 10px"><button class="btn sm" data-cmd="showall">Show hidden lanes (${S.hidden.length})</button></div>`;
   el.innerHTML=h;
 }
@@ -583,31 +596,57 @@ const tl=$('#tl');const tip=$('#tip');
 function spt(e){const r=tl.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top};}
 function showTip(e,html){tip.innerHTML=html;tip.hidden=false;const w=tip.offsetWidth,hh=tip.offsetHeight;let x=e.clientX+14,y=e.clientY-hh-10;if(x+w>innerWidth-8)x=e.clientX-w-14;if(y<8)y=e.clientY+16;tip.style.left=x+'px';tip.style.top=y+'px';}
 const hideTip=()=>{tip.hidden=true;};
+/* A mouse acts straight away. A finger might be scrolling, so it opens things on a tap
+   (lifted without moving) and changes the plan only after a press and hold. */
+let press=null;
+function tapAct(t){const a=t.dataset.act;
+  if(a==='week'){select({type:'week',i:+t.dataset.i});return true;}
+  if(a==='meet'){select({type:'meet',id:t.dataset.id});return true;}
+  if(a==='run'){select({type:'run',bid:t.dataset.bid,start:+t.dataset.start});return true;}
+  if(a==='swrow'){focusSwimmer(t.dataset.id,true);return true;}
+  if(a==='event'){select({type:'event',id:t.dataset.id});return true;}
+  return false;}
+function startDrag(t,e){if(S.ro)return;const a=t.dataset.act;
+  if(a==='bnd'){tl.setPointerCapture(e.pointerId);t.classList.add('on');drag={type:'bnd',bid:t.dataset.bid,j:+t.dataset.j,x0:e.clientX,base:JSON.stringify(S.plan),cur:+t.dataset.j};return;}
+  if(a==='paint'){tl.setPointerCapture(e.pointerId);drag={type:'paint',bid:t.dataset.bid,top:+t.dataset.y,h:+t.dataset.h,c:t.dataset.c||'load',base:JSON.stringify(S.plan),last:null,moved:false,x0:e.clientX,y0:e.clientY};}}
+/* A finger drag can't redraw the chart (the browser would lose the element under the finger
+   and start scrolling), so it draws a light preview on top; the chart redraws on release. */
+function touchMark(kind,a,b,v){let g=tl.querySelector('#tguide');if(!g)g=sv('g',{id:'tguide'},tl);
+  if(kind==='bnd'){g.innerHTML='';const x=a*S.colW;sv('line',{x1:x,x2:x,y1:L.HEAD,y2:+tl.getAttribute('height'),class:'guide'},g);return;}
+  const h=Math.min(LMAX,Math.max(0,v))/LMAX*drag.h,base=drag.top+drag.h;
+  for(let k=a;k<=b;k++){const old=g.querySelector('[data-k="'+k+'"]');if(old)old.remove();sv('rect',{'data-k':k,x:k*S.colW+4,y:base-h,width:Math.max(2,S.colW-8),height:h,rx:2,class:'tbar'},g);}}
+function tapAt(t,e){if(tapAct(t))return;const a=t.dataset.act;
+  if(a==='zone'||a==='paint'){const i=Math.max(0,Math.min(NW()-1,Math.floor(spt(e).x/S.colW)));select({type:'week',i,bid:t.dataset.bid});return;}
+  if(a==='bnd'){const r=runAt(t.dataset.bid,+t.dataset.j);if(r)select({type:'run',bid:t.dataset.bid,start:r.start});}}
 tl.addEventListener('pointerdown',e=>{
   if(!S.plan)return;const t=e.target.closest('[data-act]');if(!t)return;const a=t.dataset.act;
-  if(a==='week'){select({type:'week',i:+t.dataset.i});return;}
-  if(a==='meet'){select({type:'meet',id:t.dataset.id});return;}
-  if(a==='run'){select({type:'run',bid:t.dataset.bid,start:+t.dataset.start});return;}
-  if(a==='swrow'){focusSwimmer(t.dataset.id,true);return;}
-  if(a==='event'){select({type:'event',id:t.dataset.id});return;}
-  if(S.ro)return;
-  if(a==='bnd'){e.preventDefault();tl.setPointerCapture(e.pointerId);t.classList.add('on');drag={type:'bnd',bid:t.dataset.bid,j:+t.dataset.j,x0:e.clientX,base:JSON.stringify(S.plan),cur:+t.dataset.j};return;}
-  if(a==='paint'){e.preventDefault();tl.setPointerCapture(e.pointerId);drag={type:'paint',bid:t.dataset.bid,top:+t.dataset.y,h:+t.dataset.h,c:t.dataset.c||'load',base:JSON.stringify(S.plan),last:null,moved:false,x0:e.clientX,y0:e.clientY};}
+  if(e.pointerType==='mouse'){if(tapAct(t))return;if(!S.ro&&(a==='bnd'||a==='paint'))e.preventDefault();startDrag(t,e);return;}
+  if(press)clearTimeout(press.timer);
+  const p={t,id:e.pointerId,x:e.clientX,y:e.clientY,timer:0};press=p;
+  if(!S.ro&&(a==='bnd'||a==='paint'))p.timer=setTimeout(()=>{if(press!==p)return;press=null;
+    try{startDrag(t,{pointerId:p.id,clientX:p.x,clientY:p.y});}catch(err){drag=null;return;}
+    if(!drag)return;drag.touch=true;tl.classList.add('dragging');if(navigator.vibrate)navigator.vibrate(10);
+    showTip({clientX:p.x,clientY:p.y},drag.type==='bnd'?'Slide left or right to move this edge':'Slide up or down to set the load');},420);
 });
+// While a finger is changing the plan, the page must not scroll under it.
+tl.addEventListener('touchmove',e=>{if(drag)e.preventDefault();},{passive:false});
 // double-click anywhere on a lane's charts (or a swimmer line) opens that week
 tl.addEventListener('dblclick',e=>{if(!S.plan)return;const t=e.target.closest('[data-act="zone"],[data-act="paint"]');if(!t)return;const i=Math.max(0,Math.min(NW()-1,Math.floor(spt(e).x/S.colW)));select({type:'week',i,bid:t.dataset.bid});});
 tl.addEventListener('pointermove',e=>{
-  if(!drag){hover(e);return;}
-  if(drag.type==='bnd'){const nj=drag.j+Math.round((e.clientX-drag.x0)/S.colW);if(nj!==drag.cur){S.plan=JSON.parse(drag.base);inval();drag.cur=moveBoundary(drag.bid,drag.j,nj);later(renderTimeline);}
+  if(press&&e.pointerId===press.id){if(Math.abs(e.clientX-press.x)>8||Math.abs(e.clientY-press.y)>8){clearTimeout(press.timer);press=null;}return;}
+  if(!drag){if(e.pointerType==='mouse')hover(e);return;}
+  if(drag.type==='bnd'){const nj=drag.j+Math.round((e.clientX-drag.x0)/S.colW);if(nj!==drag.cur){S.plan=JSON.parse(drag.base);inval();drag.cur=moveBoundary(drag.bid,drag.j,nj);if(drag.touch)touchMark('bnd',drag.cur);else later(renderTimeline);}
     showTip(e,`Boundary → <b>w/c ${fd(wkS(drag.cur))}</b>`);}
   else{if(!drag.moved&&Math.abs(e.clientY-drag.y0)<3&&Math.abs(e.clientX-drag.x0)<3)return;drag.moved=true;paint(spt(e),e);}
 });
-function endDrag(){if(!drag)return;const d=drag;drag=null;hideTip();if(d.type==='paint'&&!d.moved)return;
+function endDrag(){tl.classList.remove('dragging');if(!drag)return;const d=drag;drag=null;hideTip();if(d.type==='paint'&&!d.moved)return;
   if(JSON.stringify(S.plan)!==d.base){S.undo.push(`{"plan":${d.base},"roster":${JSON.stringify(S.roster)}}`);if(S.undo.length>60)S.undo.shift();S.redo=[];dirty('plan');}
   if(d.type==='bnd'&&d.cur===d.j){const r=runAt(d.bid,d.j);if(r)select({type:'run',bid:d.bid,start:r.start});else renderAll();}else renderAll();}
-tl.addEventListener('pointerup',endDrag);tl.addEventListener('pointercancel',endDrag);tl.addEventListener('pointerleave',()=>{if(!drag)hideTip();});
+tl.addEventListener('pointerup',e=>{const p=press;if(p&&e.pointerId===p.id){press=null;clearTimeout(p.timer);tapAt(p.t,e);return;}endDrag();});
+tl.addEventListener('pointercancel',()=>{if(press){clearTimeout(press.timer);press=null;}endDrag();});
+tl.addEventListener('pointerleave',()=>{if(!drag)hideTip();});
 function paint(p,e){const cw=S.colW,n=NW();const i=Math.max(0,Math.min(n-1,Math.floor(p.x/cw)));let v=(drag.top+drag.h-p.y)/drag.h*LMAX;v=Math.max(0,Math.min(LMAX,Math.round(v*20)/20));
-  const a=drag.last==null?i:drag.last;const lo=Math.min(a,i),hi=Math.max(a,i);const pb=BR(drag.bid);for(let k=lo;k<=hi;k++){let vv=v;if(pb&&pb.kind==='swimmer'){const aw=awayIn(pb.sw,k);if(aw){const f=aw.F[drag.c];if(f<.05)continue;vv=Math.min(1.5,r2(v/f));}}if(drag.c==='load')setLoad(drag.bid,k,vv);else setComp(drag.bid,k,drag.c,vv);}drag.last=i;inval();later(renderTimeline);
+  const a=drag.last==null?i:drag.last;const lo=Math.min(a,i),hi=Math.max(a,i);const pb=BR(drag.bid);for(let k=lo;k<=hi;k++){let vv=v;if(pb&&pb.kind==='swimmer'){const aw=awayIn(pb.sw,k);if(aw){const f=aw.F[drag.c];if(f<.05)continue;vv=Math.min(1.5,r2(v/f));}}if(drag.c==='load')setLoad(drag.bid,k,vv);else setComp(drag.bid,k,drag.c,vv);}drag.last=i;inval();if(drag.touch)touchMark('paint',lo,hi,v);else later(renderTimeline);
   const cl=drag.c==='load'?'Load':COMPS.find(c=>c.k===drag.c).label;
   showTip(e,`${esc(BR(drag.bid).name)} · w/c ${fd(wkS(i))}<br><b>${esc(cl)} ${Math.round(v*100)}%</b>${drag.c==='load'?' · '+(v*peakVol()/1000).toFixed(1)+' km':''}`);}
 function hover(e){const t=e.target.closest('[data-act="zone"],[data-act="paint"]');if(!t||!t.dataset.bid){hideTip();return;}const p=spt(e);const i=Math.max(0,Math.min(NW()-1,Math.floor(p.x/S.colW)));const w=TL(t.dataset.bid)[i];const b=BR(t.dataset.bid);
@@ -1080,7 +1119,7 @@ async function renderVersions(){const p=$('#versPanel');if(p.hidden)return;
   catch(e){$('#verList').innerHTML='<li class="small muted">Could not load versions. Try again in a moment.</li>';}}
 
 /* ---------- events ---------- */
-function arm(btn,fn){if(btn.dataset.armed==='1'){btn.dataset.armed='';fn();return;}btn.dataset.armed='1';const t=btn.textContent;btn.textContent='Click again to confirm';setTimeout(()=>{if(btn.isConnected&&btn.dataset.armed==='1'){btn.dataset.armed='';btn.textContent=t;}},3500);}
+function arm(btn,fn){if(btn.dataset.armed==='1'){btn.dataset.armed='';fn();return;}btn.dataset.armed='1';const t=btn.textContent;btn.textContent=COARSE?'Tap again to confirm':'Click again to confirm';setTimeout(()=>{if(btn.isConnected&&btn.dataset.armed==='1'){btn.dataset.armed='';btn.textContent=t;}},3500);}
 const uid=p=>p+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
 document.addEventListener('click',e=>{
   const t=e.target.closest('[data-cmd]');if(!t||t.disabled)return;const c=t.dataset.cmd,ds=t.dataset;
@@ -1088,6 +1127,7 @@ document.addEventListener('click',e=>{
   case 'view':S.view=ds.v;S.sheet&&renderSheet();renderAll();break;
   case 'undo':undo();break;case 'redo':redo();break;
   case 'versions':{const p=$('#versPanel');p.hidden=!p.hidden;renderVersions();break;}
+  case 'names':S.names=S.names==='short'?'full':'short';renderTimeline();break;
   case 'zoom':S.colW=Math.max(26,Math.min(70,S.colW+(+ds.d)));renderTimeline();break;
   case 'today':scrollToWeek(weekOf(today()));break;
   case 'closesel':S.sel=null;renderAll();break;

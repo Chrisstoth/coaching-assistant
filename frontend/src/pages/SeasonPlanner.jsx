@@ -37,16 +37,27 @@ export default function SeasonPlanner() {
 
   return (
     <div className="min-h-full">
-      <div className="flex items-center justify-between gap-3 px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
-        <Link to="/plan" className="text-pool-400">‹ Plan</Link>
-        <span className="text-pool-500 truncate">
-          {squads && squads.length > 1 && squads.map(s => <Link key={s} to={`/season/${encodeURIComponent(s)}`} className={`ml-2 ${s === squad ? 'text-pool-100 font-semibold' : 'text-accent-400'}`}>{s}</Link>)}
-          <Link to="/season/classic" className="ml-3 text-pool-500 underline">Older season planning</Link>
-          <HelpLink topic="swimmers" label="Swimmers, groups and the plan" className="ml-3 align-middle" />
-        </span>
+      <div className="px-4 pt-2 space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <Link to="/plan" className="inline-flex items-center text-xs text-pool-400 hover:text-pool-200">‹ Plan</Link>
+          <HelpLink topic="swimmers" label="Swimmers, groups and the plan" />
+        </div>
+        {squads && squads.length > 1 && (
+          <div className="flex gap-2 overflow-x-auto">
+            {squads.map(s => (
+              <Link key={s} to={`/season/${encodeURIComponent(s)}`} style={{ minHeight: 0 }}
+                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${s === squad ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-700 text-pool-400'}`}>
+                {s}
+              </Link>
+            ))}
+          </div>
+        )}
       </div>
       {!squads && <p className="p-4 text-sm text-pool-400">Opening the season plan…</p>}
       <div ref={host} />
+      <p className="px-4 pb-6 text-xs text-pool-500">
+        <Link to="/season/classic" className="underline" style={{ minHeight: 0 }}>Older season planning</Link>
+      </p>
     </div>
   )
 }

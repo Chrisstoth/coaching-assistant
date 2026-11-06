@@ -1,58 +1,62 @@
-/* Season Planner styles: the planner artifact's own layout, scoped to .sp and
-   using its dark theme on the app's greys, with the app's blue as the accent.
-   Converted with postcss; only the variables below are new. Uses the builder's
-   Barlow fonts (declared in ../notation/builder.css). */
-@font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Regular.ttf') format('truetype'); font-weight: 400; font-display: swap; }
-@font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-SemiBold.ttf') format('truetype'); font-weight: 600; font-display: swap; }
-@font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Bold.ttf') format('truetype'); font-weight: 700; font-display: swap; }
+/* Season Planner styles, scoped to .sp: the planner's layout dressed in the
+   LaneWatch look the rest of the app uses (Oxanium, the pool greys, rounded
+   cards, pill buttons and the family blue). */
 .sp {
-  --bg:#121212; --surface:#1e1e1e; --surface-2:#242424; --ink:#e9ebed; --muted:#aeb3b9; --faint:#7f858c;
-  --line:#383838; --line-2:#2c2c2c; --accent:#2196f3; --accent-2:#0b2c4a; --accent-ink:#ffffff;
+  --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --ink:#e9ebed; --muted:#aeb3b9; --faint:#7f858c;
+  --line:#333333; --line-2:#262626; --accent:#2196f3; --accent-2:#0d2c49; --accent-ink:#ffffff; --accent-soft:#64b5f6; --accent-label:#90caf9;
   --m0:#5D6873; --m1:#B98F27; --m2:#2F8A80; --m3:#89597C; --moff:#2B323A;
   --sh-hol:rgba(210,220,230,.06); --sh-exam:rgba(160,130,225,.13); --sh-camp:rgba(80,160,225,.14); --sh-alt:rgba(255,255,255,.02);
   --good:#58C98A; --good-bg:#16301F; --warn:#F0B44C; --warn-bg:#33270F; --bad:#F2786B; --reg:#7DB3F0; --reg-bg:#15263A; --aer:#D9677A; --ana:#9575D6; --spd:#D9A52A;
-  --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.25);
-  --f-display:"BarlowSC","Barlow Condensed","Arial Narrow",Arial,sans-serif;
-  --f-body:"BarlowSC",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
-  --f-data:ui-monospace,"SFMono-Regular",Menlo,monospace;
-  color-scheme: dark; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.45; min-height: 100%;
+  --shadow:none;
+  --f-display:"Oxanium",system-ui,sans-serif;
+  --f-body:"Oxanium",system-ui,-apple-system,"Segoe UI",Arial,sans-serif;
+  --f-data:"Oxanium",system-ui,sans-serif;
+  color-scheme: dark; background: transparent; color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.45; min-height: 100%;
 }
-.sp .top { top: 0; }
 /* Layout: a season "pool" read left to right — one lane per branch, weeks as columns; summary above, editor below. */
 .sp, .sp *{box-sizing:border-box}
 .sp [hidden]{display:none!important}
 .sp button,.sp input,.sp select,.sp textarea{font:inherit;color:inherit}
-.sp .app{padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px;max-width:1600px;margin:0 auto}
-.sp .top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--surface);border-bottom:1px solid var(--line);margin:0 calc(-1*max(16px,env(safe-area-inset-left,0px))) 0 calc(-1*max(16px,env(safe-area-inset-left,0px)));padding:10px max(16px,env(safe-area-inset-right,0px)) 0 max(16px,env(safe-area-inset-left,0px))}
-.sp .top-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.sp .mark{font-family:var(--f-display);font-weight:700;letter-spacing:.08em;font-size:13px;background:var(--ink);color:var(--accent);padding:5px 8px;border-radius:4px}
-.sp .title h1{font-family:var(--f-display);font-weight:700;font-size:24px;line-height:1;margin:0;letter-spacing:.01em;text-wrap:balance}
-.sp .title p{margin:2px 0 0;color:var(--muted);font-size:12.5px}
+/* The app gives every button a 44px minimum; the planner sizes its own, or rows overlap. */
+.sp button{min-height:0;min-width:0}
+.sp .app{padding-left:16px;padding-right:16px;padding-block:0 40px;max-width:1600px;margin:0 auto}
+/* One slim bar: the four tabs, then save status, undo, redo and saved versions. */
+.sp .top{margin:0 -16px;padding:0 10px 0 16px;border-bottom:1px solid rgba(255,255,255,.08)}
+.sp .top-row{display:flex;align-items:center;gap:2px}
+.sp .mark{display:none}
+.sp .title{min-width:0;padding:4px 0 2px}
+.sp .title h1{font-family:var(--f-display);font-weight:700;font-size:20px;line-height:1.2;margin:0}
+.sp .title p{margin:1px 0 0;color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sp .spacer{flex:1}
-.sp .status{font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
-.sp .status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--faint)}
+.sp .status{font-size:12px;color:var(--muted);display:inline-flex;align-items:center;gap:6px;white-space:nowrap;padding:0 6px}
+.sp .status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
 .sp .status[data-s="saved"]::before{background:var(--good)} .sp .status[data-s="saving"]::before,.sp .status[data-s="dirty"]::before{background:var(--warn)} .sp .status[data-s="error"]::before{background:var(--bad)}
-.sp .btn{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 11px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap}
-.sp .btn:hover{border-color:var(--muted)} .sp .btn:focus-visible,.sp .tab:focus-visible,.sp select:focus-visible,.sp input:focus-visible,.sp textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
-.sp .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+/* Only problems need words; otherwise the dot says it. */
+.sp .status:not([data-s="error"]){font-size:0;gap:0}
+.sp .btn{border:1px solid var(--line);background:var(--surface-2);border-radius:999px;padding:7px 14px;cursor:pointer;font-weight:600;font-size:13px;white-space:nowrap;color:var(--ink)}
+.sp .btn:hover{border-color:var(--faint)} .sp .btn:focus-visible,.sp .tab:focus-visible,.sp select:focus-visible,.sp input:focus-visible,.sp textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.sp .btn.primary{background:#1e88e5;border-color:#1e88e5;color:var(--accent-ink)}
 .sp .btn.ghost{background:transparent}
-.sp .btn.sm{padding:3px 8px;font-size:12px}
+.sp .btn.sm{padding:4px 11px;font-size:12px}
+.sp .btn.icon{border:0;background:transparent;padding:0;width:36px;height:36px;display:inline-grid;place-items:center;color:var(--muted)}
+.sp .btn.icon:hover{color:var(--ink)}
 .sp .btn.danger{color:var(--bad)}
 .sp .btn[data-armed="1"]{background:var(--bad);border-color:var(--bad);color:#fff}
-.sp .btn:disabled{opacity:.45;cursor:default}
-.sp .tabs{display:flex;gap:2px;margin-top:8px;overflow-x:auto}
-.sp .tab{border:0;background:none;padding:8px 12px;font-family:var(--f-display);font-weight:600;font-size:16px;letter-spacing:.02em;color:var(--muted);border-bottom:3px solid transparent;cursor:pointer;white-space:nowrap}
-.sp .tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--accent)}
+.sp .btn:disabled{opacity:.4;cursor:default}
+.sp .tabs{display:flex;gap:4px;margin:4px 0 0 -10px;overflow-x:auto;scrollbar-width:none}
+.sp .tabs::-webkit-scrollbar{display:none}
+.sp .tab{border:0;background:none;padding:12px 10px 10px;font-family:var(--f-body);font-weight:500;font-size:14px;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;white-space:nowrap;flex:none}
+.sp .tab[aria-selected="true"]{color:var(--accent-soft);border-bottom-color:var(--accent-soft)}
 .sp .view{padding-top:14px;display:grid;gap:14px;grid-template-columns:minmax(0,1fr)} .sp .view>*{min-width:0}
-.sp .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
-.sp .label{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.sp .card{background:var(--surface);border:0;border-radius:12px;box-shadow:none}
+.sp .label{font-size:11px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--accent-label)}
 .sp .muted{color:var(--muted)} .sp .small{font-size:12px}
 .sp .mono{font-family:var(--f-data);font-variant-numeric:tabular-nums}
 /* toolbar */
 .sp .toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .sp .toolbar .grow{flex:1;min-width:0}
 .sp .focusbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.sp select.inp,.sp input.inp,.sp textarea.inp{border:1px solid var(--line);background:var(--surface);border-radius:6px;padding:6px 8px;min-width:0;max-width:100%}
+.sp select.inp,.sp input.inp,.sp textarea.inp{border:1px solid #444;background:var(--surface-2);border-radius:8px;padding:7px 10px;min-width:0;max-width:100%}
 .sp textarea.inp{width:100%;resize:vertical;min-height:58px}
 .sp .focus-banner{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 14px;border-left:4px solid var(--b,var(--accent))}
 .sp .focus-banner b{font-family:var(--f-display);font-size:20px;font-weight:700}
@@ -78,9 +82,10 @@
 .sp #ov{width:100%;height:96px;display:block;cursor:pointer}
 /* timeline */
 .sp .timeline{display:flex;overflow:hidden}
-.sp .tl-labels{flex:0 0 172px;border-right:1px solid var(--line);background:var(--surface);position:relative;z-index:2}
+.sp .tl-labels{flex:0 0 172px;min-width:0;overflow:hidden;transition:flex-basis .15s;border-right:1px solid var(--line);background:var(--surface);position:relative;z-index:2}
 .sp .tl-scroll{flex:1;overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.sp #tl{display:block;touch-action:pan-x;user-select:none;-webkit-user-select:none}
+.sp #tl{display:block;touch-action:pan-x pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.sp #tl.dragging{touch-action:none}
 .sp .lab-head{display:flex;align-items:flex-end;justify-content:space-between;padding:0 10px 6px;border-bottom:1px solid var(--line-2)}
 .sp .lab-cal{padding:6px 10px;border-bottom:1px solid var(--line)}
 .sp .lab-lane{position:relative;border-bottom:1px solid var(--line);padding:8px 10px 6px 14px}
@@ -191,7 +196,7 @@
 .sp .goalstar{fill:var(--good);stroke:var(--surface);stroke-width:1} .sp .goalstar.done{fill:var(--faint)}
 .sp .lab-grp{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 10px 0 14px;border-bottom:1px solid var(--line-2);background:var(--surface-2)}
 .sp .grp-tog{border:0;background:none;padding:0;font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);white-space:nowrap}
-.sp .lab-grp span{white-space:nowrap;font-size:11px}
+.sp .lab-grp span{white-space:nowrap;font-size:11px} .sp .grp-tog{overflow:hidden;text-overflow:ellipsis;min-width:0}
 .sp .lab-mini{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 10px 0 22px;border-bottom:1px solid var(--line-2);font-size:12px;color:var(--faint);position:relative}
 .sp .lab-mini button{border:0;background:none;padding:0;cursor:pointer;color:inherit;font:inherit;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .sp .lab-mini button:hover{color:var(--ink);text-decoration:underline}
@@ -200,7 +205,7 @@
 .sp .lab-mini span{flex:none;font-size:10.5px}
 .sp .lab-lane.person{background:var(--surface-2)}
 .sp .acts{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
-.sp .guide{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3}
+.sp .guide{stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3} .sp .tbar{fill:var(--accent);fill-opacity:.55;stroke:var(--accent-soft);stroke-width:1.5;pointer-events:none} .sp #tguide{pointer-events:none}
 /* tooltip */
 .sp #tip{position:fixed;z-index:50;pointer-events:none;background:var(--ink);color:var(--surface);font-size:12px;padding:5px 8px;border-radius:6px;max-width:260px;box-shadow:var(--shadow)}
 /* detail */
@@ -271,10 +276,42 @@
 .sp .vers ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 .sp .vers li{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;border-bottom:1px solid var(--line-2);padding:6px 0}
 @media (max-width:640px){
-  .sp .tl-labels{flex-basis:104px}
+  .sp .tl-labels{flex-basis:150px}
   .sp .lab-name{font-size:15px}
   .sp .lab-rows{display:none}
-  .sp .title h1{font-size:20px}
   .sp .detail{padding:14px}
 }
 @media (prefers-reduced-motion:no-preference){.sp .bcard,.sp .swc,.sp .btn{transition:border-color .15s,opacity .2s}}
+
+/* ---- LaneWatch fit ---- */
+/* Oxanium runs wider than the planner's old condensed font, so the chart's small print steps down a size. */
+.sp .hd-m{font-size:11px} .sp .hd-d{font-size:10.5px}
+.sp .pill-t{font-size:9.5px} .sp .ev-t{font-size:9px}
+.sp .mac-t{font-size:9px;letter-spacing:.05em}
+.sp .mes-t{font-size:10.5px} .sp .mes-s{font-size:9px}
+.sp .code{font-size:9px} .sp .bar-v{font-size:8.5px} .sp .away-t{font-size:9px}
+.sp .swc{border-radius:10px;background:var(--surface-2);border-color:transparent}
+.sp .swc:hover{border-color:var(--line)}
+.sp .bcard{border-top-width:3px}
+.sp .detail{scroll-margin-top:64px}
+.sp #tip{background:#2c2c2c;color:var(--ink);border:1px solid #444;border-radius:10px}
+
+/* Names column: a button in its corner switches between full names and a narrow strip. */
+.sp .lab-head{align-items:center}
+.sp .namesbtn{border:1px solid var(--line);background:transparent;color:var(--accent-soft);border-radius:999px;padding:3px 8px;font-size:11px;font-weight:600;white-space:nowrap;cursor:pointer}
+.sp .lab-mini .short{display:none}
+.sp .lab-mini button{align-self:stretch;display:flex;align-items:center}
+.sp .timeline.slim .tl-labels{flex-basis:64px}
+.sp .timeline.slim .full,
+.sp .timeline.slim .lab-meta,
+.sp .timeline.slim .acts,
+.sp .timeline.slim .lab-rows,
+.sp .timeline.slim .lab-mini>span{display:none}
+.sp .timeline.slim .lab-mini .short{display:inline}
+.sp .timeline.slim .lab-head{justify-content:center;padding:0 4px}
+.sp .timeline.slim .lab-cal{padding:6px 8px}
+.sp .timeline.slim .lab-lane{padding:8px 4px 8px 10px;display:flex;justify-content:center}
+.sp .timeline.slim .lab-name{writing-mode:vertical-rl;transform:rotate(180deg);font-size:14px;max-height:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sp .timeline.slim .lab-grp{padding:0 4px 0 10px}
+.sp .timeline.slim .lab-mini{padding:0 4px 0 12px;font-size:11.5px}
+.sp .timeline.slim .lab-mini.dv::before,.sp .timeline.slim .lab-mini.vis::before{left:5px}
