@@ -267,6 +267,9 @@ export const api = {
   getPlannerVersion: (squad, id) => request('GET', `/season-planner/${encodeURIComponent(squad)}/versions/${id}`),
   deletePlannerVersion: (squad, id) => request('DELETE', `/season-planner/${encodeURIComponent(squad)}/versions/${id}`),
   addPlannerVersion: (squad, v) => request('POST', `/season-planner/${encodeURIComponent(squad)}/versions`, v),
+  getPlanGroups: (squad) => request('GET', `/season-planner/${encodeURIComponent(squad)}/groups`),
+  placeSwimmerInPlan: (squad, swimmerId, group) => request('POST', `/season-planner/${encodeURIComponent(squad)}/swimmers`, { swimmer_id: swimmerId, group }),
+  getSwimmerPlanWeek: (swimmerId) => request('GET', `/season-planner/for-swimmer/${swimmerId}`),
 
   // Staff workbooks
   getWorkbooks: () => request('GET', '/workbooks'),

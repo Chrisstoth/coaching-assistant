@@ -73,6 +73,42 @@ def put_doc(squad: str, key: str, body: DocIn, db: DBSession = Depends(get_db)):
     return {"revision": revision}
 
 
+class Placement(BaseModel):
+    swimmer_id: int
+    group: str = ""          # a group in the plan, or "" for Not planned (uni / visiting)
+
+
+def _swimmer(db, swimmer_id):
+    s = db.query(models.Swimmer).filter(models.Swimmer.id == swimmer_id).first()
+    if not s:
+        raise HTTPException(status_code=404, detail="Swimmer not found")
+    return s
+
+
+@router.get("/for-swimmer/{swimmer_id}")
+def swimmer_plan(swimmer_id: int, db: DBSession = Depends(get_db)):
+    """This week of the plan for one swimmer, and the groups they could be in."""
+    from backend.services import season_planner
+    return season_planner.swimmer_week(db, _swimmer(db, swimmer_id)) or {"squad": None, "on_plan": False, "groups": []}
+
+
+@router.get("/{squad}/groups")
+def plan_groups(squad: str, db: DBSession = Depends(get_db)):
+    from backend.services import season_planner
+    return season_planner.groups_of(db, squad)
+
+
+@router.post("/{squad}/swimmers")
+def place_swimmer(squad: str, body: Placement, db: DBSession = Depends(get_db)):
+    """Put a swimmer into this squad's plan, in a group, from the app (new swimmer, or a group change)."""
+    from backend.services import season_planner
+    try:
+        return season_planner.place_swimmer(db, squad, _swimmer(db, body.swimmer_id), body.group)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+
+
 @router.get("/{squad}/versions")
 def versions(squad: str, limit: int = 40, db: DBSession = Depends(get_db)):
     rows = db.query(models.PlanVersion).filter_by(club=CLUB, squad=squad).order_by(models.PlanVersion.id.desc()).limit(limit).all()

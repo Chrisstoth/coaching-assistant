@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import VoiceInput from '../components/VoiceInput'
@@ -36,6 +36,19 @@ export default function NewSwimmer() {
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
+  // Squad and group come from the season plan, so a new swimmer has a plan straight away.
+  const [squads, setSquads] = useState([])
+  const [squad, setSquad] = useState('')
+  const [groups, setGroups] = useState([])
+  const [group, setGroup] = useState('')
+  useEffect(() => {
+    api.getPlannerSquads().then(list => { setSquads(list || []); if (list?.length === 1) setSquad(list[0]) }).catch(() => setSquads([]))
+  }, [])
+  useEffect(() => {
+    setGroups([]); setGroup('')
+    if (!squad) return
+    api.getPlanGroups(squad).then(list => { setGroups(list || []); if (list?.length) setGroup(list[0].id) }).catch(() => setGroups([]))
+  }, [squad])
 
   const eventKey = (stroke, dist) => `${dist} ${stroke}`
 
@@ -73,8 +86,15 @@ export default function NewSwimmer() {
         gender: form.gender || null,
         swimrankings_id: form.swimrankings_id || null,
         historical_background: form.historical_background || null,
+        squad: squad || null,
+        status: squad && group === '' ? 'occasional' : 'active',
       }
       const swimmer = await api.createSwimmer(payload)
+      if (squad && group !== 'later') {
+        try { await api.placeSwimmerInPlan(squad, swimmer.id, group) } catch (e) {
+          window.alert(`${form.name} was added, but not to the season plan: ${e.message}. You can place them from their page.`)
+        }
+      }
       navigate(`/swimmers/${swimmer.id}`)
     } catch (e) {
       setError(e.message)
@@ -125,6 +145,38 @@ export default function NewSwimmer() {
           onChange={(e) => setForm({ ...form, swimrankings_id: e.target.value })}
           className="w-full bg-pool-800 rounded-xl px-4 py-3 text-sm border border-pool-700 focus:border-accent-500 focus:outline-none"
         />
+      </section>
+
+      {/* Squad and group, from the season plan */}
+      <section className="space-y-3">
+        <h2 className="text-xs font-semibold text-pool-400 uppercase tracking-wide">Squad and group</h2>
+        {squads.length === 0 ? (
+          <p className="text-xs text-pool-400">There's no season plan yet. Once there is, you can put the swimmer in a group here and they'll get its plan straight away.</p>
+        ) : (
+          <>
+            <div className="flex gap-3">
+              <select value={squad} onChange={e => setSquad(e.target.value)} aria-label="Squad"
+                className="flex-1 bg-pool-800 rounded-xl px-4 py-3 text-sm border border-pool-700 focus:border-accent-500 focus:outline-none">
+                <option value="">No squad yet</option>
+                {squads.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              {squad && (
+                <select value={group} onChange={e => setGroup(e.target.value)} aria-label="Group"
+                  className="flex-1 bg-pool-800 rounded-xl px-4 py-3 text-sm border border-pool-700 focus:border-accent-500 focus:outline-none">
+                  {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  <option value="">Not planned (uni / visiting)</option>
+                  <option value="later">Decide later</option>
+                </select>
+              )}
+            </div>
+            <p className="text-xs text-pool-500">
+              {!squad ? 'Pick a squad to put them in a group.'
+                : group === 'later' ? 'They join the squad but not the season plan yet. You can place them later from their page or the planner.'
+                : group === '' ? "They'll be on the register when they come, but the staff won't plan for them."
+                : "They get this group's season plan straight away. You can change group any time from their page or the planner's Squad tab."}
+            </p>
+          </>
+        )}
       </section>
 
       {/* Target events */}

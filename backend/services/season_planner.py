@@ -20,6 +20,7 @@ Red), never by number (decision of 5 Nov 2026).
 
 from __future__ import annotations
 
+import copy
 import math
 from datetime import date, timedelta
 from typing import Optional
@@ -232,13 +233,22 @@ def load(db: DBSession, squad: str) -> Optional[Plan]:
         return None
 
 
+def _app_ref(sid) -> Optional[int]:
+    """A swimmer added to the plan from the app, with no Swim England number, is "app<id>"."""
+    s = str(sid or "")
+    return int(s[3:]) if s.startswith("app") and s[3:].isdigit() else None
+
+
 def app_ids(db: DBSession, plan: Plan) -> dict:
     """Planner swimmer id (swimrankings id) -> app swimmer id."""
     ids = {}
-    by_sr = {s.swimrankings_id: s.id for s in db.query(models.Swimmer).filter(models.Swimmer.swimrankings_id.isnot(None))}
-    by_name = {s.name.lower(): s.id for s in db.query(models.Swimmer)}
+    rows = db.query(models.Swimmer).all()
+    by_sr = {s.swimrankings_id: s.id for s in rows if s.swimrankings_id}
+    by_name = {s.name.lower(): s.id for s in rows}
+    by_id = {s.id for s in rows}
     for sid, sw in plan.swimmers.items():
-        aid = by_sr.get(sid) or by_name.get((sw.get("name") or "").lower())
+        ref = _app_ref(sid)
+        aid = (ref if ref in by_id else None) or by_sr.get(sid) or by_name.get((sw.get("name") or "").lower())
         if aid:
             ids[sid] = aid
     return ids
@@ -361,11 +371,13 @@ def sync_swimmers(db: DBSession, squad: str, before: Optional[dict], after: Opti
     rows = db.query(models.Swimmer).all()
     by_sr = {s.swimrankings_id: s for s in rows if s.swimrankings_id}
     by_name = {s.name.strip().lower(): s for s in rows}
+    by_id = {s.id: s for s in rows}
     plan = load(db, squad)
     branches = set(plan.branches) if plan else set()
 
     def find(sw):
-        return by_sr.get(str(sw.get("id"))) or by_name.get((sw.get("name") or "").strip().lower())
+        return (by_id.get(_app_ref(sw.get("id"))) or by_sr.get(str(sw.get("id")))
+                or by_name.get((sw.get("name") or "").strip().lower()))
 
     was = {str(s.get("id")) for s in (before or {}).get("swimmers", [])}
     added = changed = left = 0
@@ -405,3 +417,84 @@ def sync_swimmers(db: DBSession, squad: str, before: Optional[dict], after: Opti
                 m.date_to = date.today()
     db.commit()
     return {"added": added, "changed": changed, "left": left}
+
+
+# ---------------------------------------------------------------- from the app
+
+STROKES = {"Freestyle": "Free", "Backstroke": "Back", "Breaststroke": "Breast", "Butterfly": "Fly", "Individual Medley": "IM"}
+NOT_PLANNED = ""     # the planner's "Not planned (uni / visiting)"
+
+
+def _blank_event(e: str) -> dict:
+    return {"e": e, "sc": None, "lc": None, "sb": None, "wn": None, "wm": None, "wd": None, "wc": None, "er": None, "em": None}
+
+
+def _planner_event(event: str) -> Optional[str]:
+    d, _, stroke = str(event or "").partition(" ")
+    return f"{d} {STROKES[stroke]}" if d.isdigit() and stroke in STROKES else None
+
+
+def groups_of(db: DBSession, squad: str) -> list:
+    plan = load(db, squad)
+    return [{"id": bid, "name": b.get("name") or bid} for bid, b in plan.branches.items()] if plan else []
+
+
+def place_swimmer(db: DBSession, squad: str, swimmer: models.Swimmer, group: str, on: Optional[date] = None) -> Optional[dict]:
+    """Put an app swimmer into a squad's season plan, in a group (or Not planned).
+
+    A new swimmer joins the group from the start, so they get the group's plan
+    straight away. Someone already on the plan moves from this week, as the
+    planner's own "Group from this week" does, keeping where they were before."""
+    plan = load(db, squad)
+    doc = db.query(models.PlanDoc).filter_by(club=CLUB, squad=squad, key="roster").first()
+    if not plan or not doc:
+        raise ValueError(f"{squad} has no season plan yet")
+    if group and group not in plan.branches:
+        raise ValueError("That group isn't in the season plan")
+    before = doc.data or {}
+    data = copy.deepcopy(before)
+    roster = data.setdefault("swimmers", [])
+    sr = "".join(ch for ch in (swimmer.swimrankings_id or "") if ch.isdigit())
+    rid = sr or f"app{swimmer.id}"
+    name = swimmer.name.strip().lower()
+    sw = next((s for s in roster if str(s.get("id")) == rid or _app_ref(s.get("id")) == swimmer.id
+               or (s.get("name") or "").strip().lower() == name), None)
+    if sw is None:
+        events = [e for e in (_planner_event(t.get("event")) for t in (swimmer.target_events or []) if isinstance(t, dict)) if e]
+        roster.append({"id": rid, "name": swimmer.name.strip(), "g": swimmer.gender or "",
+                       "dob": swimmer.dob.isoformat() if swimmer.dob else "", "tag": squad.replace(" ", "_"), "camp": "",
+                       "branch": group, "moves": [], "note": "", "events": [_blank_event(e) for e in dict.fromkeys(events)]})
+        roster.sort(key=lambda s: (s.get("name") or "").lower())
+    else:
+        now = max(0, min(plan.weeks - 1, plan.week_of(on or date.today())))
+        on_plan = sw.get("branch") in plan.branches
+        if not group or not on_plan or now <= 0:
+            sw["branch"], sw["moves"] = group, []
+        else:
+            sw["moves"] = [m for m in (sw.get("moves") or []) if m.get("w", 0) < now]
+            if plan.group_at(sw, now) != group:
+                sw["moves"].append({"w": now, "to": group})
+    swimmer.squad = squad
+    doc.data, doc.revision = data, (doc.revision or 0) + 1
+    db.commit()
+    sync_swimmers(db, squad, before, data)
+    after_save(db, squad)
+    return swimmer_week(db, swimmer, on)
+
+
+def swimmer_week(db: DBSession, swimmer: models.Swimmer, on: Optional[date] = None) -> Optional[dict]:
+    """This week of the season plan for one swimmer: their group and what it's doing."""
+    if not swimmer.squad:
+        return None
+    w = week(db, swimmer.squad, on or date.today())
+    if not w:
+        return None
+    me = w["swimmers"].get(str(swimmer.id))
+    if not me:
+        return {"squad": swimmer.squad, "on_plan": False, "groups": [{"id": g["id"], "name": g["name"]} for g in w["groups"]]}
+    g = next((g for g in w["groups"] if g["id"] == me["group"]), None)
+    return {"squad": swimmer.squad, "on_plan": bool(g), "week_start": w["week_start"],
+            "group": {"id": me["group"], "name": g["name"]} if g else None,
+            "code": me["code"], "phase": g.get("phase") if g else None, "objective": g.get("objective") if g else None,
+            "load": me["load"], "comps": me["comps"], "camp": bool(me["camp"]), "away": bool(me["away"]),
+            "groups": [{"id": x["id"], "name": x["name"]} for x in w["groups"]]}

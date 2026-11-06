@@ -132,6 +132,38 @@ class PlannerInTheAppTests(unittest.TestCase):
                 self.assertTrue(db.query(models.Swimmer).filter_by(name="Cam Test").one().active, "put back, active again")
                 self.assertEqual(db.query(models.Swimmer).filter_by(name="Cam Test").count(), 1, "never duplicated")
 
+    def test_a_swimmer_added_in_the_app_gets_a_group_and_the_plan(self):
+        http = TestClient(app)
+        with http:
+            h = {"Authorization": f"Bearer {http.post('/auth/login', json={'password': 'test-password'}).json()['token']}"}
+            http.put("/season-planner/Test Squad/docs/plan", headers=h, json={"data": PLAN})
+            http.put("/season-planner/Test Squad/docs/roster", headers=h, json={"data": ROSTER})
+            self.assertEqual([g["name"] for g in http.get("/season-planner/Test Squad/groups", headers=h).json()],
+                             ["Regionals", "Nationals", "Girls group"])
+            new = http.post("/swimmers", headers=h, json={"name": "Eve New", "gender": "F",
+                                                           "target_events": [{"event": "100 Freestyle", "course": "Both"}]}).json()
+            self.assertEqual(http.post("/season-planner/Test Squad/swimmers", headers=h,
+                                       json={"swimmer_id": new["id"], "group": "nope"}).status_code, 422)
+            self.assertEqual(http.post("/season-planner/Nowhere/swimmers", headers=h,
+                                       json={"swimmer_id": new["id"], "group": "core"}).status_code, 422)
+        with SessionLocal() as db:
+            eve = db.get(models.Swimmer, new["id"])
+            wk = SP.place_swimmer(db, "Test Squad", eve, "girls", on=date(2026, 9, 23))
+            self.assertEqual((wk["group"]["name"], wk["code"]), ("Girls group", "1.2.2"), "a base plan straight away")
+            roster = db.query(models.PlanDoc).filter_by(squad="Test Squad", key="roster").one().data
+            mine = next(s for s in roster["swimmers"] if s["name"] == "Eve New")
+            self.assertEqual((mine["id"], mine["branch"], [e["e"] for e in mine["events"]]), (f"app{eve.id}", "girls", ["100 Free"]))
+            self.assertEqual(db.query(models.Swimmer).filter_by(name="Eve New").count(), 1, "the planner's copy is the same swimmer")
+            self.assertEqual((eve.squad, eve.status), ("Test Squad", "active"))
+
+            # a group change from the app moves them from that week, keeping the weeks before
+            wk = SP.place_swimmer(db, "Test Squad", eve, "nats", on=date(2026, 9, 23))
+            self.assertEqual(wk["group"]["name"], "Nationals")
+            self.assertEqual(SP.swimmer_week(db, eve, date(2026, 9, 1))["group"]["name"], "Girls group")
+            SP.place_swimmer(db, "Test Squad", eve, "", on=date(2026, 9, 23))
+            db.refresh(eve)
+            self.assertEqual(eve.status, "occasional", "Not planned: uni / visiting")
+
 
 if __name__ == "__main__":
     unittest.main()

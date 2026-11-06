@@ -9,7 +9,15 @@ import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
 import { groupLine, todayIso } from '../squadGroups'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
-const TABS = ['Overview', 'Plan', 'Racing', 'Observations', 'Attendance', 'Times', 'Analysis', 'Staff', 'Context']
+// Five tabs, each made of the page's sections (shown in page order).
+const TABS = [
+  { name: 'Overview', parts: ['Overview', 'Readiness'] },
+  { name: 'Training', parts: ['Plan', 'TrainingStats', 'Benchmarks', 'Attendance'] },
+  { name: 'Racing', parts: ['Racing', 'Events', 'Performance', 'Taper', 'Times', 'Analysis'] },
+  { name: 'Profile', parts: ['ProfileCore', 'Profiles', 'Context'] },
+  { name: 'Notes', parts: ['Observations', 'Staff'] },
+]
+const PROFILE_DATA_TABS = ['Overview', 'Training', 'Racing', 'Profile']
 
 const VOLUME_COLOURS = {
   aerobic: 'bg-blue-500', threshold: 'bg-yellow-500', vo2: 'bg-orange-500',
@@ -183,6 +191,76 @@ function BlockStatusCard({ status }) {
   )
 }
 
+// This week of the season plan for the swimmer, and their group, changeable here.
+function SeasonPlanCard({ swimmer, onChanged }) {
+  const [week, setWeek] = useState(null)
+  const [squads, setSquads] = useState([])
+  const [squad, setSquad] = useState(swimmer.squad || '')
+  const [groups, setGroups] = useState([])
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState('')
+  const load = () => api.getSwimmerPlanWeek(swimmer.id).then(setWeek).catch(() => setWeek(null))
+  useEffect(() => { load() }, [swimmer.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { api.getPlannerSquads().then(l => setSquads(l || [])).catch(() => setSquads([])) }, [])
+  useEffect(() => {
+    if (!squad) { setGroups([]); return }
+    if (week?.squad === squad && week.groups?.length) { setGroups(week.groups); return }
+    api.getPlanGroups(squad).then(l => setGroups(l || [])).catch(() => setGroups([]))
+  }, [squad, week])
+  if (!week && squads.length === 0) return null
+  const place = async (group) => {
+    if (group === '__') return
+    setBusy(true); setErr('')
+    try { await api.placeSwimmerInPlan(squad, swimmer.id, group); await load(); onChanged?.() }
+    catch (e) { setErr(e.message || 'Could not change the group.') }
+    setBusy(false)
+  }
+  const current = week?.on_plan ? week.group?.id : (swimmer.status === 'occasional' && week?.squad === squad ? '' : '__')
+  const pct = v => `${Math.round((v || 0) * 100)}%`
+  return (
+    <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-pool-100">Season plan this week</h2>
+        <Link to={squad ? `/season/${encodeURIComponent(squad)}` : '/season'} className="text-xs text-accent-400">Open the planner ›</Link>
+      </div>
+      {week?.on_plan ? (
+        <div className="space-y-1">
+          <p className="text-sm text-pool-200">
+            <span className="font-semibold">{week.group?.name}</span>
+            {week.code && <span className="ml-2 text-teal-300 text-xs font-semibold">{week.code}</span>}
+            {week.phase && <span className="ml-2 text-pool-400 text-xs">{week.phase}</span>}
+          </p>
+          {week.objective && <p className="text-xs text-pool-400">{week.objective}</p>}
+          <p className="text-xs text-pool-400">
+            Load {pct(week.load)} · aerobic {pct(week.comps?.aer)} · anaerobic {pct(week.comps?.ana)} · speed {pct(week.comps?.spd)}
+            {week.camp && <span className="ml-2 text-amber-300">on camp</span>}
+            {week.away && <span className="ml-2 text-amber-300">away</span>}
+          </p>
+        </div>
+      ) : (
+        <p className="text-xs text-pool-400">
+          {swimmer.status === 'occasional' ? 'Uni / visiting: on the register when they come, not planned for.' : 'Not on the season plan yet. Put them in a group to give them its plan.'}
+        </p>
+      )}
+      <div className="flex gap-2">
+        <select value={squad} onChange={e => setSquad(e.target.value)} aria-label="Squad" disabled={busy}
+          className="flex-1 bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm text-pool-100">
+          <option value="">Squad…</option>
+          {squads.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={squad === week?.squad ? current : '__'} onChange={e => place(e.target.value)} aria-label="Group from this week" disabled={busy || !squad}
+          className="flex-1 bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm text-pool-100">
+          <option value="__" disabled>Group from this week…</option>
+          {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+          <option value="">Not planned (uni / visiting)</option>
+        </select>
+      </div>
+      {busy && <p className="text-xs text-pool-500">Saving to the season plan…</p>}
+      {err && <p className="text-xs text-red-300">{err}</p>}
+    </section>
+  )
+}
+
 function ProfileProgressCard({ status, physicalProfile, psychologicalProfile, onOpenWizard }) {
   if (!status) return null
   const complete = status.state === 'complete'
@@ -293,6 +371,7 @@ export default function SwimmerDetail() {
   const navigate = useNavigate()
   const [swimmer, setSwimmer] = useState(null)
   const [tab, setTab] = useState('Overview')
+  const show = part => (TABS.find(t => t.name === tab) || TABS[0]).parts.includes(part)
   const [conversation, setConversation] = useState([])
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
@@ -386,14 +465,14 @@ export default function SwimmerDetail() {
   }, [id])
 
   useEffect(() => {
-    if (tab === 'Observations') api.getObservations(id).then(setObservations)
-    if (tab === 'Racing') {
+    if (show('Observations')) api.getObservations(id).then(setObservations)
+    if (show('Racing')) {
       api.getRacingNarrative(id).then(r => { setRacingNarrative(r.narrative || ''); setRacingNarrativeDraft(r.narrative || '') })
       api.getRaceObservations(id).then(setRaceObs)
     }
-    if (tab === 'Times') api.getSwimmerTimes(id).then(setTimes)
-    if (tab === 'Analysis') api.getAnalyses(id).then(setAnalyses)
-    if (tab === 'Overview') {
+    if (show('Times')) api.getSwimmerTimes(id).then(setTimes)
+    if (show('Analysis')) api.getAnalyses(id).then(setAnalyses)
+    if (PROFILE_DATA_TABS.includes(tab)) {
       api.getUnifiedProfile(id).then((r) => {
         setUnifiedVersions(r.versions || [])
         setUnifiedProfile((r.versions || [])[0] || null)
@@ -409,10 +488,10 @@ export default function SwimmerDetail() {
       api.getTargets(id).then(setTargets).catch(() => {})
       api.getBlockStatus(id).then(setBlockStatus).catch(() => {})
     }
-    if (tab === 'Context') {
+    if (show('Context')) {
       api.getSwimmerContext(id).then(setSwimmerContext)
     }
-    if (tab === 'Attendance') {
+    if (show('Attendance')) {
       api.getSwimmerSlots(id).then((slots) => {
         setAllSlots(slots)
         setAttendingIds(new Set(slots.filter((s) => s.attending).map((s) => s.id)))
@@ -535,7 +614,7 @@ export default function SwimmerDetail() {
                 Age {swimmer.age_group}{swimmer.school_year ? ` (Yr ${swimmer.school_year})` : ' (post school)'} · {swimmer.target_events?.map((e) => typeof e === 'object' ? e.event : e).join(', ')}
               </p>
               {groupHistory && (
-                <Link to="/swimmers?view=groups" className="block text-xs text-accent-300 mt-0.5">
+                <Link to="/season" className="block text-xs text-accent-300 mt-0.5">
                   {groupLine(groupHistory, todayIso())} ›
                 </Link>
               )}
@@ -558,7 +637,7 @@ export default function SwimmerDetail() {
 
         {/* Tabs */}
         <div className="flex border-b border-pool-700 -mx-4 px-4 overflow-x-auto scrollbar-none" style={{scrollbarWidth:'none',msOverflowStyle:'none'}}>
-          {TABS.map((t) => (
+          {TABS.map(({ name: t }) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -574,8 +653,13 @@ export default function SwimmerDetail() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-4">
-        {tab === 'Overview' && (
+        {show('Overview') && (
           <div className="space-y-4">
+
+            <SeasonPlanCard swimmer={swimmer} onChanged={() => {
+              api.getSwimmer(id).then(setSwimmer).catch(() => {})
+              api.getGroupHistory(id).then(setGroupHistory).catch(() => {})
+            }} />
 
             <ProfileProgressCard
               status={swimmer.profile_status}
@@ -625,6 +709,12 @@ export default function SwimmerDetail() {
               </div>
             )}
 
+          </div>
+        )}
+
+        {show('Taper') && (
+          <div className="space-y-4">
+
             {/* Taper Planning */}
             {!taperResult && (
               <button
@@ -660,6 +750,12 @@ export default function SwimmerDetail() {
                 </div>
               </div>
             )}
+
+          </div>
+        )}
+
+        {show('TrainingStats') && (
+          <div className="space-y-4">
 
             {/* Skill History */}
             <div className="bg-pool-800 rounded-xl overflow-hidden">
@@ -769,6 +865,12 @@ export default function SwimmerDetail() {
                 )}
               </section>
             )}
+
+          </div>
+        )}
+
+        {show('ProfileCore') && (
+          <div className="space-y-4">
 
             {/* Unified profile — one synthesis across every observed domain.
                 Replaces the four single-domain sections below, which stay
@@ -1031,6 +1133,12 @@ export default function SwimmerDetail() {
 
             </>)}
 
+          </div>
+        )}
+
+        {show('Performance') && (
+          <div className="space-y-4">
+
             {/* Performance Analysis stays separate from the unified profile:
                 it reads race times rather than coach observations. */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
@@ -1192,6 +1300,12 @@ export default function SwimmerDetail() {
               )}
             </section>
 
+          </div>
+        )}
+
+        {show('Readiness') && (
+          <div className="space-y-4">
+
             {/* Readiness / Fatigue Assessment */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
               <div className="flex justify-between items-center">
@@ -1280,6 +1394,12 @@ export default function SwimmerDetail() {
                 </>
               )}
             </section>
+
+          </div>
+        )}
+
+        {show('Benchmarks') && (
+          <div className="space-y-4">
 
             {/* Training Benchmarks & Targets */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
@@ -1463,6 +1583,12 @@ export default function SwimmerDetail() {
               )}
             </section>
 
+          </div>
+        )}
+
+        {show('Events') && (
+          <div className="space-y-4">
+
             {/* Target events + course bias */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
               <div className="flex items-center justify-between">
@@ -1588,6 +1714,12 @@ export default function SwimmerDetail() {
                 </div>
               )}
             </section>
+
+          </div>
+        )}
+
+        {show('Profiles') && (
+          <div className="space-y-4">
 
             {swimmer.physical_profile && (
               <section className="bg-pool-800 rounded-xl p-4 space-y-2">
@@ -1761,7 +1893,7 @@ export default function SwimmerDetail() {
           </div>
         )}
 
-        {tab === 'Racing' && (
+        {show('Racing') && (
           <div className="space-y-5">
             {/* Racing Story */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
@@ -1891,7 +2023,7 @@ export default function SwimmerDetail() {
           </div>
         )}
 
-        {tab === 'Observations' && (
+        {show('Observations') && (
           <ObservationsTab
             swimmerId={id}
             swimmer={swimmer}
@@ -1904,7 +2036,7 @@ export default function SwimmerDetail() {
           />
         )}
 
-        {tab === 'Attendance' && (
+        {show('Attendance') && (
           <div className="space-y-5">
             {/* Session slots */}
             <section className="space-y-3">
@@ -2140,7 +2272,7 @@ export default function SwimmerDetail() {
           </div>
         )}
 
-        {tab === 'Times' && (
+        {show('Times') && (
           <div className="space-y-2">
             {times.length === 0 ? (
               <p className="text-pool-400 text-sm">No times imported yet.</p>
@@ -2161,7 +2293,7 @@ export default function SwimmerDetail() {
           </div>
         )}
 
-        {tab === 'Analysis' && (
+        {show('Analysis') && (
           <div className="space-y-3">
             {analyses.length === 0 ? (
               <p className="text-pool-400 text-sm">No analyses yet.</p>
@@ -2181,11 +2313,11 @@ export default function SwimmerDetail() {
           </div>
         )}
 
-        {tab === 'Plan' && swimmer && (
+        {show('Plan') && swimmer && (
           <SwimmerPlanPanel swimmer={swimmer} />
         )}
 
-        {tab === 'Staff' && swimmer && (
+        {show('Staff') && swimmer && (
           <AskTheStaff
             subject={{ swimmer_ids: [swimmer.id] }}
             subjectLabel={swimmer.name}
@@ -2194,7 +2326,7 @@ export default function SwimmerDetail() {
           />
         )}
 
-        {tab === 'Context' && (
+        {show('Context') && (
           <div className="space-y-4">
             {!swimmerContext ? (
               <p className="text-pool-400 text-sm text-center py-8">Loading context...</p>
