@@ -1,21 +1,22 @@
-/* Session Builder styles: the builder artifact's own layout, scoped to .sb and
-   recoloured to the app's dark theme (pool greys, LaneWatch blue). Converted
-   from the artifact with postcss; only the colour variables below are new. */
+/* Session Builder styles, scoped to .sb: the builder's layout dressed in the
+   LaneWatch look the rest of the app uses (Oxanium, the pool greys, rounded
+   cards, pill buttons and the family blue). The Barlow fonts stay declared for
+   the PDF. */
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Italic.ttf') format('truetype'); font-weight: 400; font-style: italic; font-display: swap; }
 
 .sb {
-  --bg:#121212; --surface:#1e1e1e; --surface-2:#242424; --ink:#e9ebed; --muted:#aeb3b9; --faint:#7f858c; --line:#383838;
+  --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --ink:#e9ebed; --muted:#aeb3b9; --faint:#7f858c; --line:#333333;
   --accent:#2196f3; --accent-text:#64b5f6; --accent-soft:#0b2c4a; --on-accent:#ffffff;
   --rope-b:#d0d4d8;
-  --bar:#000000; --bar-ink:#f3f3f4; --bar-muted:#aeb3b9; --bar-line:#2c2c2c; --bar-ok:#5fc08a; --bar-bad:#f2786d;
+  --bar:#2c2c2c; --bar-ink:#f3f3f4; --bar-muted:#aeb3b9; --bar-line:#444444; --bar-ok:#5fc08a; --bar-bad:#f2786d;
   --ok:#5fc08a; --ok-soft:#173022; --warn:#f2a845; --warn-soft:#352610; --bad:#f2786d; --bad-soft:#3a1a17;
   --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 20px rgba(0,0,0,.25);
-  --f-display:"BarlowSC","Barlow Condensed","Arial Narrow",system-ui,sans-serif;
-  --f-body:"BarlowSC",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-  --f-data:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --f-display:"Oxanium",system-ui,sans-serif;
+  --f-body:"Oxanium",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --f-data:"Oxanium",system-ui,sans-serif;
   color-scheme: dark;
   background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.45;
   min-height: 100%;
@@ -389,3 +390,56 @@
 .sb .sc-pin .acts{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
 .sb .sc-pin .acts button{border:1px solid var(--line);background:transparent;border-radius:6px;padding:2px 8px;font-size:12px;color:var(--muted)}
 .sb .sc-pin .acts button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent-text)}
+
+/* ---- LaneWatch fit ---- */
+.sb{background:transparent;font-variant-numeric:tabular-nums}
+/* The app gives every button a 44px minimum; the builder sizes its own, or every set row doubles in height. */
+.sb button{min-height:0;min-width:0}
+/* Top bar: the app's page header rather than a black band. */
+.sb .bar{position:static;background:transparent;color:var(--ink);border-bottom:1px solid rgba(255,255,255,.08)}
+.sb .bar-in{gap:6px 10px;padding-block:6px 10px}
+.sb .brand{text-transform:none;letter-spacing:0}
+.sb .brand .bname{font-size:20px;font-weight:700}
+.sb .bar-title{flex:1 1 120px;font-size:12px}
+.sb .status:not([data-s="error"]){font-size:0;gap:0}
+.sb .status i{width:8px;height:8px}
+.sb .bar-actions{gap:6px}
+.sb .bbtn{border-radius:999px;background:var(--surface-2);border-color:var(--line);padding:6px 12px;font-size:13px;font-weight:600}
+.sb .seg{border-radius:999px;background:var(--surface-2);border-color:var(--line);padding:2px}
+.sb .seg button{font-family:var(--f-body);text-transform:none;letter-spacing:0;border-radius:999px;padding:5px 14px;font-size:13px}
+.sb .seg button[aria-pressed="true"]{background:#1e88e5}
+/* Cards like the app's: no outline or shadow. */
+.sb .panel,.sb .block{border-color:transparent;box-shadow:none}
+.sb .notesblock{border-color:var(--line)}
+.sb .field{border-color:#444;border-radius:8px;padding:7px 10px}
+.sb .btn{border-radius:999px;background:var(--surface-2);border-color:var(--line)}
+.sb .btn.primary{background:#1e88e5;border-color:#1e88e5}
+.sb .btn.quiet{background:transparent;border-color:transparent}
+/* Headings in normal case; only the small labels stay in capitals. */
+.sb .title-input,.sb .bname,.sb .gname,.sb .loading b,.sb .times,.sb .dhead h2,.sb .modal-card h3,.sb .imp-head b,
+.sb .phead h1,.sb .pbh h2,.sb .pchip,.sb .prl,.sb .selbar button.hot{text-transform:none;letter-spacing:0}
+.sb .meta-grid label,.sb .glabel,.sb .gpick span.lab,.sb .bgroup span{color:#90caf9;letter-spacing:.1em}
+.sb .gname{font-size:16px}
+.sb .gtabs{position:static}
+.sb .gtabs button{padding:6px 14px;font-size:13px}
+.sb .gtabs button[aria-pressed="true"]{background:#1e88e5;color:#fff;border-color:#1e88e5}
+.sb .gchip input{width:auto;max-width:22ch}
+.sb .gchip button{width:26px;height:26px}
+.sb .grip{height:34px}
+.sb .kebab{width:34px;height:34px}
+.sb .mic{flex-basis:34px;width:34px;height:34px}
+/* The tips fold away; the keyboard shortcuts only show where there's a keyboard. */
+.sb .tipsbox{font-size:13px;color:var(--muted);padding:0 2px}
+.sb .tipsbox>summary,.sb .scales summary{cursor:pointer;font-weight:600;color:var(--ink)}
+.sb .tipsbox .tips{margin-top:8px}
+@media (hover:none){.sb .tips .keys{display:none}}
+/* The multi-select bar and messages sit above the app's bottom menu. */
+.sb .dock{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+.sb .selbar,.sb .toast{border:1px solid #444;border-radius:16px}
+@media (max-width:700px){
+  /* the block's metres and time get room instead of being cut off at the edge */
+  .sb .bhead{grid-template-columns:26px minmax(0,1fr) 34px;grid-template-areas:"g n k" "g p p" "g t t"}
+  .sb .bhead .grip{grid-area:g}
+  .sb .btot{white-space:normal;text-align:left;padding-left:6px}
+  .sb .line{grid-template-columns:22px 38px 12px 54px minmax(0,1fr) 34px}
+}

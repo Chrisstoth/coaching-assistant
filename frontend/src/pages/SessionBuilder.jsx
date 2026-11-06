@@ -296,10 +296,10 @@ function Builder({ id }) {
       )}
       {payload && (
         <div className="flex items-center gap-2 flex-wrap px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
-          <button onClick={() => askStaff(false)} disabled={reading} className="rounded-lg bg-pool-700 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
+          <button onClick={() => askStaff(false)} disabled={reading} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
             {reading ? 'The staff are reading…' : 'Ask the staff'}
           </button>
-          <button onClick={() => setJess(j => !j)} className="rounded-lg bg-pool-700 px-3 py-1.5 font-semibold text-pool-100">Draft with Jess</button>
+          <button onClick={() => setJess(j => !j)} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Draft with Jess</button>
           <label className="flex items-center gap-1.5 text-pool-400 ml-auto">
             <input type="checkbox" checked={live} onChange={toggleLive} /> Comment as I write
           </label>

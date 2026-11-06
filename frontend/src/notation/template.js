@@ -48,7 +48,7 @@ export const BUILDER_TEMPLATE = `
       </section>
       <nav class="gtabs" id="gtabs" aria-label="Groups" hidden></nav>
       <section class="summary" id="summary" aria-label="Session totals"></section>
-      <div class="tips" id="tips">
+      <details class="tipsbox"><summary>Tips for writing sets</summary><div class="tips" id="tips">
         <span><b>Rounds:</b> swipe down the dots beside your sets (or tap them, Shift-click for a run), then press a number or tap 2×, 3×, 4×. Hold the dots to drag.</span>
         <span><b>Numbered lines:</b> press <kbd>Shift</kbd>+<kbd>Enter</kbd> on a set to add 1), 2), 3)… under it, or type <span class="mono">4x100 1) Kick 2) Drill</span>.</span>
         <span><b>Notes:</b> <b>Add notes</b> at the bottom, or from a block’s ⋯ menu, then drag the dots to move them. A line with only words, like <span class="mono">Fins on</span>, prints as a note too.</span>
@@ -59,8 +59,8 @@ export const BUILDER_TEMPLATE = `
         <span><b>Different turnaround per line:</b> give a numbered line its own, like <span class="mono">2) Build @4:45</span> or <span class="mono">3) Fast r30</span>. Lines without one, and reps with no line, go on line 1’s.</span>
         <span><b>Two lanes:</b> <span class="mono">4x100 off 1:30/1:40</span> gives the second lane its own send-off and session time.</span>
         <span><b>Fast entry:</b> <span class="mono">2 x (4 x 50 off 60, 2 x 100)</span> in an add box makes a 2× round of both. <span class="mono">3x</span> on its own starts an empty round you then fill.</span>
-        <span><kbd>Enter</kbd> next empty cell, then a new set · <kbd>Shift</kbd>+<kbd>Enter</kbd> numbered line · <kbd>Ctrl</kbd>+<kbd>]</kbd> / <kbd>[</kbd> in or out of a round · <kbd>Alt</kbd>+<kbd>↑↓</kbd> move</span>
-      </div>
+        <span class="keys"><kbd>Enter</kbd> next empty cell, then a new set · <kbd>Shift</kbd>+<kbd>Enter</kbd> numbered line · <kbd>Ctrl</kbd>+<kbd>]</kbd> / <kbd>[</kbd> in or out of a round · <kbd>Alt</kbd>+<kbd>↑↓</kbd> move</span>
+      </div></details>
       <details class="scales"><summary>How the intensity scales line up</summary><div class="chart" id="scaleChart"></div>
         <p>Every value is stored on one common scale, so switching scale only changes the labels. The line-up is approximate because the systems are defined by different markers (heart rate, lactate, pace). It follows Sweetenham’s and the BPSC HR colours’ heart-rate bands and how Effort /20 is used alongside them. Editing a set in a coarser scale snaps it to the middle of that zone.</p></details>
       <div id="blocks"></div>
