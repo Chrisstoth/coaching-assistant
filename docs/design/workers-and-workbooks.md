@@ -41,7 +41,7 @@ Rules:
 - Standing instructions still go through the coach's **Remember** button (coach guidance). Workbooks are working notes, not rules.
 - Job descriptions move out of code ([staff_room.py](../../backend/services/staff_room.py) `ROSTER`) into `job.md` pages.
 - **A job description has two parts.** The **fixed part** (set by the app): how the worker operates, its safety rules, what counts as evidence, what it may write and where. The **editable part** (the coach's): focus, priorities, tone. The coach can't accidentally break how a worker operates.
-- **Every job description spells out:** what counts as evidence for this worker; what it predicts, in a checkable form ("Sophie 200 free under 2:10 at County"); its safety flags; when to stay quiet; what it may write and where.
+- **Every job description spells out:** what counts as evidence for this worker; what it predicts, in a checkable form ("Alex 200 free under 2:10 at County"); its safety flags; when to stay quiet; what it may write and where.
 - **Preferences vs safety flags.** The coach can teach a worker to drop a preference ("don't flag mixed-stroke warm-ups"). Safety flags (a load spike, a swimmer returning from injury, hard days stacked) can be acknowledged but never switched off. A worker must not learn to stay quiet just because the coach dismisses things.
 
 ### Where each kind of information goes
@@ -79,7 +79,7 @@ Not a library of textbook science: the model already knows that. The reference p
 
 ```markdown
 ---
-title: Sophie B – training response
+title: Alex T – training response
 kind: case                 # job / index / philosophy / case / journal
 swimmers: [14]
 confidence: hypothesis     # hypothesis / seen-once / pattern
@@ -205,7 +205,7 @@ From now on, sessions are written in an in-app version of the Session Builder. T
 
 - **Speaking a session to Jess:** the coach talks the session through naturally and Jess fills in the builder live, in the shared notation. The parser checks each line she writes. This reuses the voice set-up from the profile interview.
 - **When they look:** when a block is finished or the coach pauses, never on every keystroke.
-- **Where comments appear:** as small notes pinned to the line they're about, for example "3rd threshold set this week for Group 2" (physio), or "no 200 race pace for Sophie before County" (analyst).
+- **Where comments appear:** as small notes pinned to the line they're about, for example "3rd threshold set this week for Group 2" (physio), or "no 200 race pace for Alex before County" (analyst).
 - **Who speaks:** only the worker that owns the topic. Staying quiet is normal.
 - **What the coach does:** accept, dismiss, or dismiss with a reason. Reasons go into the worker's workbook, so it learns which **preferences** the coach doesn't want flagged. Safety flags can't be silenced (section 3).
 - **How workers are judged:** by "was this useful?" taps and by how often their predictions come true, **not** by how often the coach agrees. A worker who is right but unwelcome is still worth having.
