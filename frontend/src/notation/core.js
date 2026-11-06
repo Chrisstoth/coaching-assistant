@@ -76,28 +76,35 @@ const EFF_SYSTEMS = {
     Z('SP1', 18.5, 19.25, 19, { note: 'lactate tolerance' }), Z('SP2', 19.25, 20.5, 20, { note: 'lactate production' }), Z('SP3', 20.5, 99, 21, { note: 'power' }) ] }
 };
 const EFF_ORDER = ['effort20', 'rpe', 'bpsc', 'urbanchek', 'sweetenham', 'maglischo'];
+/* The app: every club gets the standard scales; anything else is the club's own (BPSC's HR colours are BPSC's).
+   A club's scales sit beside these without changing them; one that keeps a standard key shows instead of it. */
+const STANDARD_SCALES = ['effort20', 'rpe', 'urbanchek', 'sweetenham', 'maglischo'];
+const CUSTOM_SCALES = {};
+const sysDef = k => CUSTOM_SCALES[k] || EFF_SYSTEMS[k];
+function useScales(custom){ for (const k of Object.keys(CUSTOM_SCALES)) delete CUSTOM_SCALES[k]; for (const s of custom || []) if (s && s.key) CUSTOM_SCALES[s.key] = s; }
+const showsNumbers = sys => sys === 'effort20' || !(sysDef(sys) || {}).zones;
 let EFF_SYS = 'effort20';
-const setEffSys = k => { EFF_SYS = EFF_SYSTEMS[k] ? k : 'effort20'; };
-const effSys = () => EFF_SYSTEMS[EFF_SYS] || EFF_SYSTEMS.effort20;
-function zoneFor(v, sys){ const zs = (EFF_SYSTEMS[sys] || {}).zones; if (!zs) return null; return zs.find(z => v >= z.lo && v < z.hi) || (v < zs[0].lo ? zs[0] : zs[zs.length - 1]); }
+const setEffSys = k => { EFF_SYS = sysDef(k) ? k : 'effort20'; };
+const effSys = () => sysDef(EFF_SYS) || EFF_SYSTEMS.effort20;
+function zoneFor(v, sys){ const zs = (sysDef(sys) || {}).zones; if (!zs) return null; return zs.find(z => v >= z.lo && v < z.hi) || (v < zs[0].lo ? zs[0] : zs[zs.length - 1]); }
 // stored (common scale) → what the chosen system shows
 function effFromCanon(text, sys = EFF_SYS){
   if (!text) return text || '';
-  if (sys === 'effort20') return String(text).replace(/\d+\.\d+/g, m => String(Math.round(+m)));
+  if (showsNumbers(sys)) return String(text).replace(/\d+\.\d+/g, m => String(Math.round(+m)));
   return String(text).replace(/\d+(?:\.\d+)?/g, m => zoneFor(+m, sys).label);
 }
 // what was typed (any system's labels, or numbers in the chosen system) → stored common scale
 function canonOf(tok, sys){
   if (/^\d/.test(tok)) { if (sys === 'rpe') { const z = EFF_SYSTEMS.rpe.zones.find(q => q.label === String(Math.min(10, Math.max(1, Math.round(+tok))))); return z ? z.c : null; } return +tok; }
   const t = tok.toLowerCase();
-  for (const k of [sys, 'bpsc', 'sweetenham', 'maglischo', 'urbanchek']) { const S = EFF_SYSTEMS[k]; if (!S || !S.zones || k === 'rpe') continue; const z = S.zones.find(q => q.label.toLowerCase() === t || (q.alias || []).includes(t)); if (z) return z.c; }
+  for (const k of [sys, 'bpsc', 'sweetenham', 'maglischo', 'urbanchek', ...Object.keys(CUSTOM_SCALES)]) { const S = sysDef(k); if (!S || !S.zones || k === 'rpe') continue; const z = S.zones.find(q => q.label.toLowerCase() === t || (q.alias || []).includes(t)); if (z) return z.c; }
   return null;
 }
 function effToCanon(text, sys = EFF_SYS){
   if (!text) return '';
   return String(text).replace(/[A-Za-z][A-Za-z0-9]*|\d+(?:\.\d+)?/g, tok => { const v = canonOf(tok, sys); return v == null ? tok : String(v); });
 }
-function effAvgText(a){ if (a == null) return ''; if (EFF_SYS === 'effort20') return `${a.toFixed(1)}/20`; return zoneFor(a, EFF_SYS).label; }
+function effAvgText(a){ if (a == null) return ''; if (showsNumbers(EFF_SYS)) return `${a.toFixed(1)}/20`; return zoneFor(a, EFF_SYS).label; }
 const hexRgb = h => { const x = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(x.slice(i, i + 2), 16)); };
 const lumOf = rgb => (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
 
@@ -555,4 +562,4 @@ function normalizeDictation(raw, speech){
   return t.replace(/\s{2,}/g, ' ').replace(/[\s.]+$/, '').trim();
 }
 
-export { DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor }
+export { CUSTOM_SCALES, STANDARD_SCALES, sysDef, useScales, DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor }

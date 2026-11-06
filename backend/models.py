@@ -929,6 +929,8 @@ class SessionPresentationSettings(Base):
     logo_data_url = Column(Text, nullable=True)
     effort_scale = Column(String, nullable=True)   # the coach's usual intensity scale (session notation key)
     import_roots = Column(JSON, nullable=True)     # the folders the coach's old session files are in (Maggie's import)
+    custom_scales = Column(JSON, nullable=True)    # the club's own intensity scales (session_builder.clean_scale)
+    hidden_scales = Column(JSON, nullable=True)    # standard scales the club doesn't use
     terminology_name = Column(String, nullable=False, default="LaneWatch energy zones")
     terminology_levels = Column(JSON, nullable=False, default=list)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

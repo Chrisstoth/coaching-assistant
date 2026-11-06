@@ -287,6 +287,7 @@ export const api = {
   runWeeklyReview: () => request('POST', '/workbooks/review/run'),
   markPrediction: (id, outcome) => request('POST', `/workbooks/predictions/${id}`, { outcome }),
   setBuilderScale: (effortScale) => request('PUT', '/session-builder/settings', { effort_scale: effortScale }),
+  saveIntensityScales: (body) => request('PUT', '/session-builder/settings', body),
   createSession: (data) => request('POST', '/sessions', data),
   deleteSession: (id) => request('DELETE', `/sessions/${id}`),
   deleteTimes: (swimmerId = null) => request('DELETE', `/times${swimmerId ? `?swimmer_id=${swimmerId}` : ''}`),

@@ -54,19 +54,23 @@ def put_doc(squad: str, key: str, body: DocIn, db: DBSession = Depends(get_db)):
     d = _doc(db, squad, key)
     if d and body.revision is not None and body.revision != d.revision:
         raise HTTPException(status_code=409, detail="The plan was changed on another device; it has been reloaded.")
+    before = d.data if d else None
     if not d:
         d = models.PlanDoc(club=CLUB, squad=squad, key=key, data=body.data, revision=1)
         db.add(d)
     else:
         d.data, d.revision = body.data, d.revision + 1
     db.commit()
-    if key == "plan":
-        try:
-            from backend.services import season_planner
-            season_planner.after_save(db, squad)
-        except Exception:  # noqa: BLE001 - the plan is saved even if working out the weeks fails
-            pass
-    return {"revision": d.revision}
+    revision = d.revision
+    # The swimmers and their groups live in the roster; the groups themselves in the plan.
+    from backend.services import season_planner
+    try:
+        if key == "roster":
+            season_planner.sync_swimmers(db, squad, before, body.data)
+        season_planner.after_save(db, squad)
+    except Exception:  # noqa: BLE001 - the plan is saved even if following it in the app fails
+        db.rollback()
+    return {"revision": revision}
 
 
 @router.get("/{squad}/versions")

@@ -19,6 +19,7 @@ is moved in the register.
 from __future__ import annotations
 
 import copy
+import re
 from datetime import date, timedelta
 from typing import Optional
 
@@ -40,22 +41,139 @@ def presentation(db: DBSession) -> Optional[models.SessionPresentationSettings]:
         return None
 
 
-def usual_scale(db: DBSession) -> str:
-    s = presentation(db)
-    key = (s.effort_scale if s else None) or N.DEFAULT_SYS
-    return key if key in N.EFF_SYSTEMS else N.DEFAULT_SYS
-
-
-def set_usual_scale(db: DBSession, key: str) -> str:
-    if key not in N.EFF_SYSTEMS:
-        raise ValueError("Unknown intensity scale")
+def _settings_row(db: DBSession) -> models.SessionPresentationSettings:
     s = presentation(db)
     if not s:
         s = models.SessionPresentationSettings(id=1)
         db.add(s)
-    s.effort_scale = key
+    return s
+
+
+def load_scales(db: DBSession) -> dict:
+    """The club's own intensity scales and the standard ones it has hidden.
+
+    Loaded into the notation before anything is shown, so a session written in
+    a club scale reads the same in the builder, the PDF and the staff's notes."""
+    s = presentation(db)
+    custom = list((s.custom_scales if s else None) or [])
+    hidden = list((s.hidden_scales if s else None) or [])
+    N.use_scales(custom)
+    return {"custom": custom, "hidden": hidden}
+
+
+def scale_choices(db: DBSession, include: Optional[str] = None) -> list:
+    """The scales the coach can pick: the standard ones they haven't hidden, then their own."""
+    sc = load_scales(db)
+    out = [{"key": k, "name": N.EFF_SYSTEMS[k]["name"], "kind": "standard"} for k in N.STANDARD if k not in sc["hidden"]]
+    out += [{"key": c["key"], "name": c["name"], "kind": "custom"} for c in sc["custom"]]
+    if include and include not in {o["key"] for o in out} and N.system(include):
+        out.append({"key": include, "name": N.system(include)["name"], "kind": "custom" if include in N.CUSTOM else "standard"})
+    return out
+
+
+def usual_scale(db: DBSession) -> str:
+    s = presentation(db)
+    key = (s.effort_scale if s else None) or N.DEFAULT_SYS
+    return key if key in {c["key"] for c in scale_choices(db)} else N.DEFAULT_SYS
+
+
+def set_usual_scale(db: DBSession, key: str) -> str:
+    if key not in {c["key"] for c in scale_choices(db)}:
+        raise ValueError("Unknown intensity scale")
+    _settings_row(db).effort_scale = key
     db.commit()
     return key
+
+
+_LABEL = re.compile(r"^[A-Za-z][A-Za-z0-9]{0,13}$")
+_HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
+_KEY = re.compile(r"^[a-z0-9_-]{2,40}$")
+
+
+def _num(v, what: str) -> float:
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"{what} needs a number on the Effort /20 line")
+    return int(x) if x == int(x) else round(x, 2)
+
+
+def clean_scale(raw: dict) -> dict:
+    """Check a club scale and put it in the notation's shape.
+
+    Each level has a name (one word, so it can be typed in a set), where it
+    starts and where it sits on the common Effort /20 line. A level runs up to
+    where the next one starts; the first starts at 0, the last runs to the top."""
+    key = str(raw.get("key") or "").strip()
+    if not _KEY.match(key):
+        raise ValueError("The scale needs a short id (letters, numbers, - or _)")
+    if key in N.STANDARD:
+        raise ValueError("A standard scale can't be changed. Save your copy as a new scale.")
+    name = str(raw.get("name") or "").strip()[:40]
+    if not name:
+        raise ValueError("Give the scale a name")
+    levels = list(raw.get("zones") or [])
+    if not 2 <= len(levels) <= 12:
+        raise ValueError("A scale needs between 2 and 12 levels")
+    zones, seen = [], set()
+    for i, z in enumerate(levels):
+        label = str(z.get("label") or "").strip()
+        n = i + 1
+        if not _LABEL.match(label):
+            raise ValueError(f"Level {n}: the name must be one word of letters and numbers, starting with a letter (e.g. Red, A3)")
+        if label.lower() in seen:
+            raise ValueError(f"Two levels are called {label}")
+        seen.add(label.lower())
+        lo = 0 if i == 0 else _num(z.get("lo"), f"Level {n} ({label}) start")
+        c = _num(z.get("c"), f"Level {n} ({label})")
+        out = {"label": label, "lo": lo, "hi": 99, "c": c}
+        color = str(z.get("color") or "").strip()
+        if color:
+            if not _HEX.match(color):
+                raise ValueError(f"Level {n} ({label}): the colour should look like #D62839")
+            out["color"] = color.upper()
+        note = str(z.get("note") or "").strip()[:60]
+        if note:
+            out["note"] = note
+        alias = [a.strip().lower() for a in (z.get("alias") or []) if _LABEL.match(str(a).strip())]
+        if alias:
+            out["alias"] = alias
+        zones.append(out)
+    for i in range(len(zones) - 1):
+        zones[i]["hi"] = zones[i + 1]["lo"]
+    for i, z in enumerate(zones):
+        if z["hi"] <= z["lo"]:
+            raise ValueError(f"{z['label']} must start above {zones[i - 1]['label']}")
+        if not z["lo"] <= z["c"] < z["hi"] or z["c"] > 25:
+            raise ValueError(f"{z['label']} sits at {z['c']}, outside its own range ({z['lo']} to {z['hi'] if z['hi'] < 99 else 'top'})")
+    coloured = [z for z in zones if z.get("color")]
+    if coloured and len(coloured) != len(zones):
+        raise ValueError("Give every level a colour, or none")
+    mid = zones[len(zones) // 2]["label"]
+    out = {"key": key, "name": name, "short": (str(raw.get("short") or "").strip() or name)[:14],
+           "hint": f"{mid}…", "zones": zones}
+    if coloured:
+        out["colored"] = True
+    if raw.get("based_on") and N.system(raw["based_on"]):
+        out["based_on"] = raw["based_on"]
+    return out
+
+
+def save_scales(db: DBSession, custom: Optional[list] = None, hidden: Optional[list] = None) -> dict:
+    s = _settings_row(db)
+    if custom is not None:
+        cleaned = [clean_scale(c) for c in custom]
+        keys = [c["key"] for c in cleaned]
+        if len(set(keys)) != len(keys):
+            raise ValueError("Two scales share an id")
+        s.custom_scales = cleaned
+    if hidden is not None:
+        s.hidden_scales = [k for k in hidden if k in N.STANDARD and k != N.DEFAULT_SYS]
+    db.commit()
+    if s.effort_scale and s.effort_scale not in {c["key"] for c in scale_choices(db)}:
+        s.effort_scale = N.DEFAULT_SYS      # their usual scale was deleted or hidden
+        db.commit()
+    return load_scales(db)
 
 
 # ---------------------------------------------------------------- building blocks
@@ -206,9 +324,11 @@ def payload(db: DBSession, session: models.Session) -> dict:
     s = presentation(db)
     slot = session.pool_slot
     micro = session.microcycle
+    built = builder_for(db, session)
+    scales = load_scales(db)
     return {
         "id": session.id,
-        "session": builder_for(db, session),
+        "session": built,
         "squad": session.squad,
         "status": session.status,
         "cycle_code": session.cycle_code,
@@ -218,7 +338,8 @@ def payload(db: DBSession, session: models.Session) -> dict:
         "register_taken": any(e.attended is not None for e in session.entries or []),
         "club": {"name": s.club_name if s else None, "logo": s.logo_data_url if s else None},
         "effort_scale": usual_scale(db),
-        "scales": [{"key": k, "name": N.EFF_SYSTEMS[k]["name"]} for k in N.EFF_ORDER],
+        "scales": scale_choices(db, include=built.get("effSys")),
+        "custom_scales": scales["custom"],
         "staff_notes": _staff_notes(db),
     }
 

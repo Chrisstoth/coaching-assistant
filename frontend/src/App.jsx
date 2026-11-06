@@ -32,6 +32,8 @@ import SessionPresentationSettings from './pages/SessionPresentationSettings'
 import CoachCheckIns from './pages/CoachCheckIns'
 import CoachCheckIn from './pages/CoachCheckIn'
 import AIOperations from './pages/AIOperations'
+import IntensityScales from './pages/IntensityScales'
+import HelpGuide from './pages/HelpGuide'
 import SessionDebrief from './pages/SessionDebrief'
 import { LaneWatchAIButton, LaneWatchWordmark } from './components/LaneWatchBrand'
 import { SessionPresentationProvider } from './components/SessionPresentationProvider'
@@ -283,6 +285,8 @@ export default function App() {
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/ai-operations" element={<AIOperations />} />
                 <Route path="/settings/session-presentation" element={<SessionPresentationSettings />} />
+                <Route path="/settings/intensity-scales" element={<IntensityScales />} />
+                <Route path="/help" element={<HelpGuide />} />
               </Routes>
             </main>
             <BottomNav />

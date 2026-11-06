@@ -10,7 +10,7 @@
 */
 import Sortable from 'sortablejs'
 import { jsPDF } from 'jspdf'
-import { DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor } from './core.js'
+import { sysDef, useScales, DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor } from './core.js'
 import { buildSessionPdf, exportFileName, hslRgb } from './pdf.js'
 import { BUILDER_TEMPLATE } from './template.js'
 
@@ -35,6 +35,13 @@ export function mountBuilder(root, opts){
   const window = track(globalThis.window)
   root.classList.add('sb')
   root.innerHTML = BUILDER_TEMPLATE
+
+  // the club's intensity scales: its own beside the standard ones it hasn't hidden
+  useScales(opts.customScales)
+  const scaleList = (opts.scales && opts.scales.length ? opts.scales.slice() : EFF_ORDER.map(k => ({ key: k, name: EFF_SYSTEMS[k].name })))
+    .filter(s => sysDef(s.key))
+  for (const k of [opts.session && opts.session.effSys, opts.effSys]) if (k && sysDef(k) && !scaleList.some(s => s.key === k)) scaleList.push({ key: k, name: sysDef(k).name })
+  { const pick = root.querySelector('#m-effsys'); if (pick) pick.innerHTML = scaleList.map(s => `<option value="${esc(s.key)}">${esc(s.name)}</option>`).join('') }
 
   let cur = { id: null, session: null, loadedAt: 0 }
   let dirty = false, saving = false, saveTimer = null, retries = 0
@@ -335,14 +342,14 @@ function legendHTML(){
 function scaleChartHTML(){
   const lo = 6, hi = 22, span = hi - lo;
   const row = k => {
-    const S = EFF_SYSTEMS[k];
+    const S = sysDef(k);
     const zs = S.zones || Array.from({ length: 16 }, (_, i) => Z(String(6 + i), 6 + i - 0.5, 6 + i + 0.5, 6 + i));
     const cells = zs.map(z => { const a = Math.max(lo, z.lo), b = Math.min(hi, z.hi); if (b <= a) return ''; const bg = z.color || (() => { const [h, s2, l] = effHSL(z.c); return `hsl(${h.toFixed(0)} ${s2.toFixed(0)}% ${l.toFixed(0)}%)`; })();
       const ink = lumOf(z.color ? hexRgb(z.color) : hslRgb(...effHSL(z.c))) < 0.55 ? '#fff' : '#15171A';
       return `<span style="flex:${b - a} 0 0;background:${bg};color:${ink}" title="${esc(z.label + (z.note ? ' · ' + z.note : ''))}">${S.zones || (6 + zs.indexOf(z)) % 2 === 0 ? esc(z.label) : ''}</span>`; }).join('');
     return `<div class="srow${k === EFF_SYS ? ' on' : ''}"><span class="sname">${esc(S.name)}</span><div class="sbar">${cells}</div></div>`;
   };
-  return EFF_ORDER.map(row).join('');
+  return scaleList.map(s => row(s.key)).join('');
 }
 function refreshTotals(){
   const s = S(); const starts = blockStarts(s);

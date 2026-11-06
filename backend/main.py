@@ -246,6 +246,17 @@ def _ensure_register_uniqueness():
 
 
 @asynccontextmanager
+def _load_club_scales():
+    """The club's own intensity scales, so the staff's notes show sets in them."""
+    from backend.database import SessionLocal
+    from backend.services.session_builder import load_scales
+    try:
+        with SessionLocal() as db:
+            load_scales(db)
+    except Exception:  # noqa: BLE001 - the standard scales still work
+        pass
+
+
 async def lifespan(app: FastAPI):
     init_db()
     _migrate_season_blocks()
@@ -257,6 +268,7 @@ async def lifespan(app: FastAPI):
     _backfill_cycle_coordinates()
     _seed_training_groups()
     _ensure_register_uniqueness()
+    _load_club_scales()
     operation_worker = None
     if os.getenv("AI_OPERATION_WORKER_ENABLED", "true").lower() not in {"0", "false", "no"}:
         recover_interrupted_operations()

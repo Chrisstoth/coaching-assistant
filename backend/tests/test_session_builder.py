@@ -144,10 +144,56 @@ class SessionBuilderTests(unittest.TestCase):
         http, h = self.client()
         with http:
             self.assertEqual(http.get("/session-builder/settings", headers=h).json()["effort_scale"], "effort20")
-            self.assertEqual(http.put("/session-builder/settings", headers=h, json={"effort_scale": "bpsc"}).status_code, 200)
+            self.assertEqual(http.put("/session-builder/settings", headers=h, json={"effort_scale": "sweetenham"}).status_code, 200)
             self.assertEqual(http.put("/session-builder/settings", headers=h, json={"effort_scale": "nope"}).status_code, 422)
+            self.assertEqual(http.put("/session-builder/settings", headers=h, json={"effort_scale": "bpsc"}).status_code, 422,
+                             "BPSC's colours are BPSC's own scale, not a standard one")
             s = http.post("/session-builder/sessions", headers=h, json={"date": MONDAY.isoformat()}).json()["session"]
-            self.assertEqual(s["effSys"], "bpsc")
+            self.assertEqual(s["effSys"], "sweetenham")
+
+    def test_a_club_keeps_its_own_intensity_scales(self):
+        import copy
+        http, h = self.client()
+        try:
+            with http:
+                st = http.get("/session-builder/settings", headers=h).json()
+                self.assertEqual([s["key"] for s in st["standard"]], ["effort20", "rpe", "urbanchek", "sweetenham", "maglischo"])
+                self.assertEqual(st["custom"], [])
+                bpsc = {"key": "bpsc", "name": "BPSC HR colours", "short": "HR colour",
+                        "zones": copy.deepcopy(N.EFF_SYSTEMS["bpsc"]["zones"])}
+                r = http.put("/session-builder/settings", headers=h, json={"custom_scales": [bpsc], "effort_scale": "bpsc"})
+                self.assertEqual(r.status_code, 200, r.text)
+                self.assertEqual(r.json()["effort_scale"], "bpsc")
+                self.assertEqual([z["hi"] for z in r.json()["custom"][0]["zones"]], [z["hi"] for z in N.EFF_SYSTEMS["bpsc"]["zones"]],
+                                 "a copy keeps the same levels")
+
+                # a version of their own, changed without touching the standard scale
+                mine = copy.deepcopy(bpsc)
+                mine.update(key="c-test", name="Silver 1 colours")
+                mine["zones"][3].update(label="Crimson", note="HR 29-31")
+                r = http.put("/session-builder/settings", headers=h, json={"custom_scales": [bpsc, mine], "hidden_scales": ["rpe", "maglischo"]})
+                self.assertEqual([s["key"] for s in r.json()["scales"]], ["effort20", "urbanchek", "sweetenham", "bpsc", "c-test"])
+                self.assertEqual(N.EFF_SYSTEMS["bpsc"]["zones"][3]["label"], "Red", "the standard definition is untouched")
+                self.assertEqual(N.eff_from_canon("17", "c-test"), "Crimson")
+                self.assertEqual(N.eff_to_canon("crimson", "c-test"), "17", "typed in the club's own words")
+                self.assertIn("4x100 Free [Crimson]",
+                              N.session_text({"blocks": [{"name": "Main", "groups": [], "items": N.parse_text("4x100 Free [17]")}]}, "c-test"))
+
+                bad = copy.deepcopy(mine)
+                bad["zones"][2]["label"] = "Pink fast"
+                self.assertIn("one word", http.put("/session-builder/settings", headers=h, json={"custom_scales": [bad]}).json()["detail"])
+                bad = copy.deepcopy(mine)
+                bad["zones"][1]["color"] = ""
+                self.assertIn("every level a colour", http.put("/session-builder/settings", headers=h, json={"custom_scales": [bad]}).json()["detail"])
+                self.assertEqual(http.put("/session-builder/settings", headers=h, json={"custom_scales": [dict(bpsc, key="sweetenham")]}).status_code, 422,
+                                 "a standard scale can't be overwritten")
+
+                # deleting the usual scale goes back to Effort /20; sessions keep their numbers
+                r = http.put("/session-builder/settings", headers=h, json={"custom_scales": [mine]}).json()
+                self.assertEqual(r["effort_scale"], "effort20")
+                self.assertEqual(N.eff_from_canon("17.5", "gone"), "18", "an unknown scale shows the numbers")
+        finally:
+            N.use_scales([])
 
     def test_typed_or_spoken_sets_are_read_like_the_builder(self):
         http, h = self.client()

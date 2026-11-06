@@ -137,6 +137,8 @@ function SessionBuilderSettings() {
           {settings.scales.map(s => <option key={s.key} value={s.key}>{s.name}</option>)}
         </select>
         {saved && <p className="text-xs text-green-400">Saved</p>}
+        <Link to="/settings/intensity-scales" className="block text-sm text-accent-400">Manage your intensity scales ›</Link>
+        <p className="text-xs text-pool-500">Add your own, change a copy of a standard one, or hide the ones you don't use.</p>
         <p className="text-xs text-pool-500">The club name and logo on session PDFs are set in <Link to="/settings/session-presentation" className="text-accent-400">Session Print &amp; Terminology</Link>.</p>
       </div>
     </section>
@@ -245,6 +247,14 @@ export default function Settings() {
           {checkInError && <p className="text-xs text-red-300 mt-3">Could not update check-ins: {checkInError}</p>}
         </div>
       </section>
+
+      <Link to="/help" className="flex items-center justify-between bg-accent-600/15 border border-accent-600/40 rounded-xl p-4">
+        <div>
+          <p className="font-semibold text-sm text-pool-100">How the app works</p>
+          <p className="text-xs text-pool-400 mt-0.5">The staff, what each one does, and how their work joins up.</p>
+        </div>
+        <span className="text-pool-400 text-lg ml-2">›</span>
+      </Link>
 
       <SessionBuilderSettings />
 

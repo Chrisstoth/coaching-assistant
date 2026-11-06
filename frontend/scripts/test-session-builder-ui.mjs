@@ -122,5 +122,19 @@ assert.match(pdfText, /SILVER 1 · SESSION PLAN|SILVER 1 \267 SESSION PLAN|SILVE
 assert.match(pdfText, /BPSC Session Builder/)
 assert.match(pdfText, /WARM UP/)
 
+// a club's own scale: listed in the picker beside the standard ones it hasn't hidden, and shown in its own words
+const { EFF_SYSTEMS, effFromCanon, useScales } = await import('../src/notation/core.js')
+const mine = { key: 'c-test', name: 'Silver 1 colours', short: 'Colour', colored: true,
+  zones: EFF_SYSTEMS.bpsc.zones.map((z, i) => i === 3 ? { ...z, label: 'Crimson' } : z) }
+const root2 = window.document.createElement('div'); window.document.body.appendChild(root2)
+const b2 = mountBuilder(root2, { id: 43, session: { ...sample, effSys: 'c-test' }, effSys: 'effort20', save: async () => ({ ok: true }),
+  scales: [{ key: 'effort20', name: 'Effort /20' }, { key: 'sweetenham', name: 'Sweetenham' }, { key: 'c-test', name: 'Silver 1 colours' }],
+  customScales: [mine] })
+assert.deepEqual([...root2.querySelectorAll('#m-effsys option')].map(o => o.value), ['effort20', 'sweetenham', 'c-test'])
+assert.equal(effFromCanon('17', 'c-test'), 'Crimson')
+assert.equal(EFF_SYSTEMS.bpsc.zones[3].label, 'Red', 'the standard scale is untouched')
+assert.ok(root2.querySelector('#scaleChart').textContent.includes('Silver 1 colours'))
+b2.destroy(); useScales([])
+
 console.log('Session builder screen checks passed')
 process.exit(0)

@@ -541,9 +541,9 @@ export default function SwimmerDetail() {
               )}
               {swimmer.status && swimmer.status !== 'active' && (
                 <p className={`text-xs mt-1 font-semibold capitalize ${
-                  swimmer.status === 'sabbatical' ? 'text-yellow-400' : 'text-red-400'
+                  swimmer.status === 'sabbatical' ? 'text-yellow-400' : swimmer.status === 'occasional' ? 'text-sky-300' : 'text-red-400'
                 }`}>
-                  {swimmer.status === 'sabbatical' ? 'On Sabbatical' : 'Long-term Injury'}
+                  {({ sabbatical: 'On Sabbatical', occasional: 'Uni / visiting · comes out of term, not planned for' })[swimmer.status] || 'Long-term Injury'}
                 </p>
               )}
             </div>
@@ -2342,7 +2342,9 @@ export default function SwimmerDetail() {
                 <option value="active">Active</option>
                 <option value="sabbatical">Sabbatical</option>
                 <option value="injury">Long-term Injury</option>
+                <option value="occasional">Uni / visiting (not planned for)</option>
               </select>
+              <p className="text-[11px] text-pool-500 mt-1">Groups, and who is planned for, are set on the Season Planner's Squad tab; the app follows it.</p>
             </div>
 
             <div className="space-y-3 pt-3 border-t border-pool-700">

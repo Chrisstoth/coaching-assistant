@@ -177,7 +177,8 @@ export default function Swimmers() {
             const statusColor = {
               'active': 'text-green-300 bg-green-900',
               'sabbatical': 'text-yellow-300 bg-yellow-900',
-              'injury': 'text-red-300 bg-red-900'
+              'injury': 'text-red-300 bg-red-900',
+              'occasional': 'text-sky-300 bg-sky-900'
             }[s.status] || 'text-pool-400 bg-pool-700'
 
             const isSelected = selected.has(s.id)
@@ -205,7 +206,7 @@ export default function Swimmers() {
                   </div>
                   {s.status && s.status !== 'active' && (
                     <span className={`text-xs rounded-full px-2 py-0.5 shrink-0 ${statusColor}`}>
-                      {s.status === 'sabbatical' ? 'Sabbatical' : 'Injury'}
+                      {({ sabbatical: 'Sabbatical', occasional: 'Uni / visiting' })[s.status] || 'Injury'}
                     </span>
                   )}
                 </div>
@@ -228,7 +229,7 @@ export default function Swimmers() {
                 <div className="flex items-center gap-2 ml-2 shrink-0">
                   {s.status && s.status !== 'active' && (
                     <span className={`text-xs rounded-full px-2 py-0.5 capitalize ${statusColor}`}>
-                      {s.status === 'sabbatical' ? 'Sabbatical' : 'Injury'}
+                      {({ sabbatical: 'Sabbatical', occasional: 'Uni / visiting' })[s.status] || 'Injury'}
                     </span>
                   )}
                   {/* A complete profile can still be well behind the record,

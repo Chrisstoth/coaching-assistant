@@ -97,6 +97,41 @@ class PlannerInTheAppTests(unittest.TestCase):
             ctx = staff_room.role_context("planner", db, staff_room.Subject(session_date=date(2026, 9, 23), squad="Test Squad"))
             self.assertIn("THE SEASON PLAN, week of 2026-09-21 (Test Squad)", ctx, "the staff read the coach's plan")
 
+    def test_the_app_follows_the_planner_squad_tab(self):
+        import copy
+        http = TestClient(app)
+        with http:
+            h = {"Authorization": f"Bearer {http.post('/auth/login', json={'password': 'test-password'}).json()['token']}"}
+            http.put("/season-planner/Test Squad/docs/plan", headers=h, json={"data": PLAN})
+            http.put("/season-planner/Test Squad/docs/roster", headers=h, json={"data": ROSTER})
+            with SessionLocal() as db:
+                cam = db.query(models.Swimmer).filter_by(name="Cam Test").one()
+                dee = db.query(models.Swimmer).filter_by(name="Dee Test").one()
+                self.assertEqual((cam.squad, cam.status, cam.swimrankings_id, cam.gender), ("Test Squad", "active", None, "F"),
+                                 "added in the planner, added to the app")
+                self.assertEqual((dee.status, dee.active), ("occasional", True), "not planned (uni): on the register, not planned for")
+                self.assertEqual(db.query(models.GroupMembership).filter_by(swimmer_id=cam.id).count(), 1)
+
+            r2 = copy.deepcopy(ROSTER)
+            r2["swimmers"] = [s for s in r2["swimmers"] if s["name"] != "Cam Test"]
+            next(s for s in r2["swimmers"] if s["name"] == "Dee Test")["branch"] = "core"
+            next(s for s in r2["swimmers"] if s["name"] == "Alex Test")["branch"] = ""
+            with SessionLocal() as db:
+                db.query(models.Swimmer).filter_by(id=self.bo).update({"status": "injury"})
+                db.commit()
+            http.put("/season-planner/Test Squad/docs/roster", headers=h, json={"data": r2})
+            with SessionLocal() as db:
+                s = {x.name: x for x in db.query(models.Swimmer)}
+                self.assertEqual((s["Cam Test"].active, s["Dee Test"].status, s["Alex Test"].status, s["Bo Test"].status),
+                                 (False, "active", "occasional", "injury"),
+                                 "removed is kept but inactive; groups follow; the coach's injury status stays")
+                self.assertIsNotNone(db.query(models.GroupMembership).filter_by(swimmer_id=s["Cam Test"].id).one().date_to)
+
+            http.put("/season-planner/Test Squad/docs/roster", headers=h, json={"data": ROSTER})
+            with SessionLocal() as db:
+                self.assertTrue(db.query(models.Swimmer).filter_by(name="Cam Test").one().active, "put back, active again")
+                self.assertEqual(db.query(models.Swimmer).filter_by(name="Cam Test").count(), 1, "never duplicated")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -279,7 +279,12 @@ def draft(db: DBSession, session: models.Session, current: dict, brief: str, ask
     parts.append("THE SESSION'S GROUPS: " + (", ".join(groups) or "one group (everyone)"))
     if current.get("start") and current.get("end"):
         parts.append(f"POOL TIME: {current['start']}-{current['end']}")
-    scale = N.EFF_SYSTEMS.get(current.get("effSys") or N.DEFAULT_SYS, {}).get("name", "Effort /20")
+    from backend.services.session_builder import load_scales
+    load_scales(db)
+    sys_def = N.system(current.get("effSys") or N.DEFAULT_SYS) or N.EFF_SYSTEMS[N.DEFAULT_SYS]
+    scale = sys_def.get("name", "Effort /20")
+    if sys_def.get("zones"):
+        scale += " - levels, easiest first: " + ", ".join(z["label"] for z in sys_def["zones"])
     system = _DRAFT.format(scale=scale, context="\n\n".join(p for p in parts if p))
     out = ask(system, f"THE COACH'S BRIEF:\n{brief.strip()}", "builder_draft", max_tokens=2500)
     by_name = {(g.get("name") or "").lower(): g["id"] for g in current.get("groups") or []}

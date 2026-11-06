@@ -334,3 +334,74 @@ def after_save(db: DBSession, squad: str) -> dict:
                 moved += 1
     db.commit()
     return {"groups": len(groups), "memberships": moved}
+
+
+OCCASIONAL = "occasional"   # uni / visiting: on the register when they come, not planned for
+
+
+def _dob(v):
+    try:
+        return date.fromisoformat(str(v)[:10]) if v else None
+    except ValueError:
+        return None
+
+
+def sync_swimmers(db: DBSession, squad: str, before: Optional[dict], after: Optional[dict]) -> dict:
+    """Make the app's swimmer list follow the planner's Squad tab.
+
+    - A swimmer added in the planner is added to the app.
+    - "Not planned" (uni / visiting) swimmers are marked occasional: they stay on
+      the register but the staff don't plan for them. Put back on a group, they
+      are active again. Sabbatical and injury are the coach's call and are kept.
+    - A swimmer removed from the planner is set inactive in the app, never
+      deleted, so their history stays.
+    """
+    if not after:
+        return {}
+    rows = db.query(models.Swimmer).all()
+    by_sr = {s.swimrankings_id: s for s in rows if s.swimrankings_id}
+    by_name = {s.name.strip().lower(): s for s in rows}
+    plan = load(db, squad)
+    branches = set(plan.branches) if plan else set()
+
+    def find(sw):
+        return by_sr.get(str(sw.get("id"))) or by_name.get((sw.get("name") or "").strip().lower())
+
+    was = {str(s.get("id")) for s in (before or {}).get("swimmers", [])}
+    added = changed = left = 0
+    now = {str(s.get("id")) for s in after.get("swimmers", [])}
+    for sw in after.get("swimmers", []):
+        planned = bool(sw.get("branch")) and (not branches or sw.get("branch") in branches)
+        a = find(sw)
+        if not a:
+            sid = str(sw.get("id") or "")
+            a = models.Swimmer(name=(sw.get("name") or "").strip(), squad=squad, active=True,
+                               status="active" if planned else OCCASIONAL,
+                               swimrankings_id=sid if sid.isdigit() else None,
+                               dob=_dob(sw.get("dob")), gender=(sw.get("g") or None) if sw.get("g") in ("M", "F") else None)
+            if a.name:
+                db.add(a)
+                added += 1
+            continue
+        before_state = (a.squad, a.status, a.active)
+        if not a.squad:
+            a.squad = squad
+        if planned and a.status == OCCASIONAL:
+            a.status = "active"
+        elif not planned and (a.status or "active") == "active":
+            a.status = OCCASIONAL
+        if str(sw.get("id")) not in was and before is not None and not a.active:
+            a.active = True                      # put back on the planner's list
+        if (a.squad, a.status, a.active) != before_state:
+            changed += 1
+    for sid in was - now:
+        old = next((s for s in before.get("swimmers", []) if str(s.get("id")) == sid), None)
+        a = find(old) if old else None
+        if a and a.active:
+            a.active = False
+            left += 1
+            for m in db.query(models.GroupMembership).filter(models.GroupMembership.swimmer_id == a.id,
+                                                             models.GroupMembership.date_to.is_(None)):
+                m.date_to = date.today()
+    db.commit()
+    return {"added": added, "changed": changed, "left": left}

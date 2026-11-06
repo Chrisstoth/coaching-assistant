@@ -920,7 +920,7 @@ def _legacy_write_capable_tools() -> list:
                 "type": "object",
                 "properties": {
                     "swimmer_name": {"type": "string", "description": "Full or partial name of the swimmer"},
-                    "status": {"type": "string", "enum": ["active", "sabbatical", "injury"], "description": "New status"}
+                    "status": {"type": "string", "enum": ["active", "sabbatical", "injury", "occasional"], "description": "New status (occasional = uni / visiting, comes out of term, not planned for)"}
                 },
                 "required": ["swimmer_name", "status"]
             }

@@ -216,6 +216,8 @@ function Builder({ id }) {
       id: payload.id,
       session: payload.session,
       effSys: payload.effort_scale,
+      scales: payload.scales,
+      customScales: payload.custom_scales,
       view: params.get('view') === 'pool' ? 'pool' : 'edit',
       brand: club.name || 'Session Builder',
       logo: club.logo || null,

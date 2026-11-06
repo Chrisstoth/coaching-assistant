@@ -29,8 +29,10 @@ class SaveSession(BaseModel):
     audience: Optional[dict] = None
 
 
-class ScaleChoice(BaseModel):
-    effort_scale: str
+class ScaleSettings(BaseModel):
+    effort_scale: Optional[str] = None
+    custom_scales: Optional[list[dict]] = None
+    hidden_scales: Optional[list[str]] = None
 
 
 class Audience(BaseModel):
@@ -52,18 +54,30 @@ def _get(db: DBSession, session_id: int) -> models.Session:
     return s
 
 
+def _settings_out(db: DBSession) -> dict:
+    sc = B.load_scales(db)
+    return {"effort_scale": B.usual_scale(db), "scales": B.scale_choices(db),
+            "standard": [{"key": k, **N.EFF_SYSTEMS[k], "hidden": k in sc["hidden"]} for k in N.STANDARD],
+            "custom": sc["custom"]}
+
+
 @router.get("/settings")
 def get_settings(db: DBSession = Depends(get_db)):
-    return {"effort_scale": B.usual_scale(db),
-            "scales": [{"key": k, "name": N.EFF_SYSTEMS[k]["name"]} for k in N.EFF_ORDER]}
+    return _settings_out(db)
 
 
 @router.put("/settings")
-def put_settings(body: ScaleChoice, db: DBSession = Depends(get_db)):
+def put_settings(body: ScaleSettings, db: DBSession = Depends(get_db)):
+    """The usual scale, the club's own scales (the whole list), and which standard ones to hide."""
     try:
-        return {"effort_scale": B.set_usual_scale(db, body.effort_scale)}
+        if body.custom_scales is not None or body.hidden_scales is not None:
+            B.save_scales(db, body.custom_scales, body.hidden_scales)
+        if body.effort_scale:
+            B.set_usual_scale(db, body.effort_scale)
     except ValueError as e:
+        db.rollback()
         raise HTTPException(status_code=422, detail=str(e))
+    return _settings_out(db)
 
 
 @router.post("/sessions", status_code=201)

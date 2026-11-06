@@ -159,9 +159,31 @@ EFF_SYSTEMS = {
 EFF_ORDER = ["effort20", "rpe", "bpsc", "urbanchek", "sweetenham", "maglischo"]
 DEFAULT_SYS = "effort20"
 
+# Every club is offered the standard scales; anything else is the club's own
+# (BPSC's HR colours are BPSC's own). A club's scales are club data
+# (session_builder.load_scales) and sit beside these without changing them:
+# a copy that keeps a standard key (e.g. "bpsc") shows instead of it.
+STANDARD = ["effort20", "rpe", "urbanchek", "sweetenham", "maglischo"]
+CUSTOM: dict = {}
+
+
+def system(key):
+    return CUSTOM.get(key) or EFF_SYSTEMS.get(key)
+
+
+def use_scales(custom) -> None:
+    CUSTOM.clear()
+    for s in custom or []:
+        if s.get("key"):
+            CUSTOM[s["key"]] = s
+
+
+def _shows_numbers(sys) -> bool:
+    return sys == "effort20" or not (system(sys) or {}).get("zones")
+
 
 def zone_for(v, sys):
-    zs = (EFF_SYSTEMS.get(sys) or {}).get("zones")
+    zs = (system(sys) or {}).get("zones")
     if not zs:
         return None
     for z in zs:
@@ -174,7 +196,7 @@ def eff_from_canon(text, sys=DEFAULT_SYS) -> str:
     """Stored (common scale) -> what the chosen system shows."""
     if not text:
         return text or ""
-    if sys == "effort20":
+    if _shows_numbers(sys):
         return re.sub(r"\d+\.\d+", lambda m: js_str(js_round(float(m.group(0)))), str(text))
     return re.sub(r"\d+(?:\.\d+)?", lambda m: zone_for(_num(m.group(0)), sys)["label"], str(text))
 
@@ -187,8 +209,8 @@ def canon_of(tok: str, sys):
             return z["c"] if z else None
         return _num(tok)
     t = tok.lower()
-    for k in (sys, "bpsc", "sweetenham", "maglischo", "urbanchek"):
-        S = EFF_SYSTEMS.get(k)
+    for k in (sys, "bpsc", "sweetenham", "maglischo", "urbanchek", *CUSTOM):
+        S = system(k)
         if not S or not S.get("zones") or k == "rpe":
             continue
         for q in S["zones"]:
@@ -212,7 +234,7 @@ def eff_to_canon(text, sys=DEFAULT_SYS) -> str:
 def eff_avg_text(a, sys=DEFAULT_SYS) -> str:
     if a is None:
         return ""
-    if sys == "effort20":
+    if _shows_numbers(sys):
         return f"{a:.1f}/20"
     return zone_for(a, sys)["label"]
 
