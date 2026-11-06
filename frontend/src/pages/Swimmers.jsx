@@ -96,7 +96,13 @@ export default function Swimmers() {
         ))}
       </div>
 
-      {view === 'groups' ? <SquadGroups /> : (<>
+      {view === 'groups' ? (<>
+        <Link to="/season" className="block mb-3 rounded-xl border border-accent-600/40 bg-accent-600/10 px-4 py-3">
+          <p className="text-sm font-semibold text-pool-100">Groups are set in the Season Planner ›</p>
+          <p className="text-xs text-pool-400 mt-0.5">Add swimmers, change groups or move someone from a set week on its Squad tab. This list follows it, so changes made here are replaced the next time the plan is saved.</p>
+        </Link>
+        <SquadGroups />
+      </>) : (<>
       <input
         type="search"
         value={search}

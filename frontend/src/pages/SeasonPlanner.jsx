@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
+import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { mountPlanner } from '../planner/plannerApp'
 import '../planner/planner.css'
@@ -41,6 +42,7 @@ export default function SeasonPlanner() {
         <span className="text-pool-500 truncate">
           {squads && squads.length > 1 && squads.map(s => <Link key={s} to={`/season/${encodeURIComponent(s)}`} className={`ml-2 ${s === squad ? 'text-pool-100 font-semibold' : 'text-accent-400'}`}>{s}</Link>)}
           <Link to="/season/classic" className="ml-3 text-pool-500 underline">Older season planning</Link>
+          <HelpLink topic="swimmers" label="Swimmers, groups and the plan" className="ml-3 align-middle" />
         </span>
       </div>
       {!squads && <p className="p-4 text-sm text-pool-400">Opening the season plan…</p>}

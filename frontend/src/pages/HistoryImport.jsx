@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 
 const card = 'bg-pool-800 rounded-xl'
@@ -74,7 +75,7 @@ export default function HistoryImport() {
     <div className="p-4 space-y-6 pb-10">
       <header>
         <Link to="/settings" className="text-pool-400 text-sm">‹ Settings</Link>
-        <h1 className="text-xl font-bold mt-1">Your old sessions</h1>
+        <h1 className="text-xl font-bold mt-1 flex items-center justify-between">Your old sessions <HelpLink topic="maggie" /></h1>
         <p className="text-pool-400 text-sm mt-0.5">Maggie, the Records Officer, reads your session files into the app. Clean ones go straight in; anything she's unsure of waits here for you. Your files are only ever read.</p>
       </header>
 

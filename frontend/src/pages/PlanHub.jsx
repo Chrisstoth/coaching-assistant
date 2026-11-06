@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
+import HelpLink from '../components/HelpLink'
 
 const ENERGY_COLOURS = {
   aerobic: 'text-blue-400',
@@ -36,7 +37,7 @@ function WriteIcon() {
 
 function SeasonIcon() {
   return (
-    <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+    <svg className="w-5 h-5"fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
       <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
     </svg>
   )
@@ -89,111 +90,32 @@ export default function PlanHub() {
   return (
     <div className="px-4 pt-4 pb-6 space-y-5">
 
-      {/* Season Planning */}
-      <Link
-        to="/planning"
-        className="block w-full text-left bg-teal-900/40 border border-teal-700/50 rounded-2xl p-4 active:bg-teal-900/60 transition-colors"
-      >
-        <div className="flex items-start gap-3">
-          <span className="p-2 bg-teal-800/50 rounded-xl text-teal-300 shrink-0">
-            <SeasonIcon />
-          </span>
-          <div className="flex-1 min-w-0">
-            <p className="font-semibold text-teal-200">Plan your season</p>
-            <p className="text-sm text-teal-400/80 mt-0.5">
-              Outline the year around your meets, then plan each block and week, with the timeline building as you go.
-            </p>
-          </div>
-          <svg className="w-5 h-5 text-teal-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-          </svg>
-        </div>
-      </Link>
-
-      <Link
-        to="/coach-checkins"
-        className="flex items-start gap-3 rounded-2xl border border-pool-700 bg-pool-800 p-4 active:bg-pool-700 transition-colors"
-      >
-        <span className="p-2 bg-pool-700 rounded-xl text-teal-300 shrink-0">
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6V6a6 6 0 0 0-12 0v6.75a6 6 0 0 0 6 6Zm0 0v3m-3 0h6" />
-          </svg>
-        </span>
-        <div className="flex-1 min-w-0">
-          <p className="font-semibold text-pool-100">Coach check-in</p>
-          <p className="text-sm text-pool-400 mt-0.5">Talk through a thought, worry or change in your coaching—whenever it is useful.</p>
-        </div>
-        <svg className="w-5 h-5 text-pool-500 shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-        </svg>
-      </Link>
-
-      {/* Quick actions */}
-      <div className="grid grid-cols-2 gap-3">
-        <Link
-          to="/calendar"
-          className="bg-pool-800 rounded-2xl p-4 flex flex-col gap-2 active:bg-pool-700 transition-colors"
-        >
-          <span className="p-2 bg-pool-700 rounded-xl text-accent-400 self-start">
-            <CalendarIcon />
-          </span>
-          <div>
-            <p className="font-medium text-sm text-pool-100">Calendar</p>
-            <p className="text-xs text-pool-400 mt-0.5">View the weekly timetable</p>
-          </div>
-        </Link>
-
-        <Link
-          to="/builder/new"
-          className="bg-pool-800 rounded-2xl p-4 flex flex-col gap-2 active:bg-pool-700 transition-colors"
-        >
-          <span className="p-2 bg-pool-700 rounded-xl text-accent-400 self-start">
-            <WriteIcon />
-          </span>
-          <div>
-            <p className="font-medium text-sm text-pool-100">Write Session</p>
-            <p className="text-xs text-pool-400 mt-0.5">Write, preview and save</p>
-          </div>
-        </Link>
+      <div className="flex items-center justify-between">
+        <h1 className="text-lg font-bold tracking-tight">Plan</h1>
+        <HelpLink topic="loop" />
       </div>
 
-      <Link
-        to="/sessions"
-        className="flex items-center gap-3 bg-pool-800 rounded-xl px-4 py-3 active:bg-pool-700 transition-colors"
-      >
-        <span className="p-2 bg-pool-700 rounded-lg text-pool-300"><ListIcon /></span>
-        <div className="flex-1">
-          <p className="text-sm font-medium text-pool-200">Session Log</p>
-          <p className="text-xs text-pool-500">Browse previous and saved sessions</p>
-        </div>
-        <svg className="w-4 h-4 text-pool-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-        </svg>
-      </Link>
+      {/* One door for each job */}
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { to: '/season', icon: <SeasonIcon />, title: 'Season Planner', text: 'Groups, phases, loads and meets' },
+          { to: '/builder/new', icon: <WriteIcon />, title: 'Write a session', text: 'With the staff alongside' },
+          { to: '/sessions', icon: <ListIcon />, title: 'Sessions', text: 'Past and planned, registers' },
+          { to: '/calendar', icon: <CalendarIcon />, title: 'Calendar', text: 'The weekly timetable' },
+        ].map(d => (
+          <Link key={d.to} to={d.to} className="bg-pool-800 rounded-2xl p-4 flex flex-col gap-2 active:bg-pool-700 transition-colors">
+            <span className="p-2 bg-pool-700 rounded-xl text-accent-400 self-start">{d.icon}</span>
+            <div>
+              <p className="font-medium text-sm text-pool-100">{d.title}</p>
+              <p className="text-xs text-pool-400 mt-0.5">{d.text}</p>
+            </div>
+          </Link>
+        ))}
+      </div>
 
-      {/* Season overview link */}
-      <Link
-        to="/season"
-        className="flex items-center justify-between bg-pool-800 rounded-xl px-4 py-3 active:bg-pool-700 transition-colors"
-      >
-        <span className="text-sm font-medium text-pool-200">Season overview & macros</span>
-        <svg className="w-4 h-4 text-pool-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-        </svg>
-      </Link>
-
-      {/* Groups: who trains together. Pathways - what each swimmer aims at - live in season planning. */}
-      <Link to="/swimmers?view=groups"
-        className="flex items-center gap-3 bg-pool-800 rounded-xl px-4 py-3 active:bg-pool-700 transition-colors">
-        <div className="flex-1">
-          <p className="text-sm font-medium text-pool-200">Training groups</p>
-          <p className="text-xs text-pool-500">
-            Who trains together. What each swimmer is aiming at is their pathway, set when you plan the season.
-          </p>
-        </div>
-        <svg className="w-4 h-4 text-pool-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-        </svg>
+      <Link to="/coach-checkins" className="flex items-center justify-between text-sm text-pool-300 px-1">
+        <span>Coach check-in: talk through a thought or a change</span>
+        <span className="text-pool-500">›</span>
       </Link>
 
       {/* Recent sessions */}

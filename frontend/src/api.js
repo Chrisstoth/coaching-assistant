@@ -270,6 +270,9 @@ export const api = {
   getPlanGroups: (squad) => request('GET', `/season-planner/${encodeURIComponent(squad)}/groups`),
   placeSwimmerInPlan: (squad, swimmerId, group) => request('POST', `/season-planner/${encodeURIComponent(squad)}/swimmers`, { swimmer_id: swimmerId, group }),
   getSwimmerPlanWeek: (swimmerId) => request('GET', `/season-planner/for-swimmer/${swimmerId}`),
+  getPlanWeek: (squad) => request('GET', `/season-planner/${encodeURIComponent(squad)}/week`),
+  getStaffAsks: () => request('GET', '/workbooks/review/asks'),
+  getSetupChecklist: () => request('GET', '/setup/checklist'),
 
   // Staff workbooks
   getWorkbooks: () => request('GET', '/workbooks'),

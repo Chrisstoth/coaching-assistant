@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
+import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { splitHeader, markdownToHtml, lineDiff, headingsOf, AUTHOR_LABEL } from '../workbookText'
 
@@ -101,7 +102,7 @@ function StaffList() {
     <div className="p-4 space-y-5 pb-8">
       <header>
         <Back to="/settings" label="Settings" />
-        <h1 className="text-xl font-bold mt-1">Staff workbooks</h1>
+        <h1 className="text-xl font-bold mt-1 flex items-center justify-between">Staff workbooks <HelpLink topic="workbooks" /></h1>
         <p className="text-pool-400 text-sm mt-0.5">What each member of staff has written down. Every change is kept; you can edit, compare and restore.</p>
       </header>
       <ThisWeek />

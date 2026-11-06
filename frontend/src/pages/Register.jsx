@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api } from '../api'
 import VoiceInput from '../components/VoiceInput'
 import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
+import HelpLink from '../components/HelpLink'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 // One tap on the register: how a swimmer went, for the staff to learn from.
@@ -119,6 +120,7 @@ export default function Register() {
   const [loaded, setLoaded] = useState(false)
   const [draftDirty, setDraftDirty] = useState(false)
   const [draftRevision, setDraftRevision] = useState(null)
+  const [prefilled, setPrefilled] = useState(false)
 
   const draftKey = `lanewatch_register_draft:${id}`
 
@@ -134,11 +136,17 @@ export default function Register() {
         sess.groups?.length || Object.keys(sess.planned_content || {}).length || null
       )
       setGroupCount(inferredGroupCount)
+      // A register not taken yet starts with everyone expected marked in:
+      // the coach only taps the ones who aren't there.
+      const fresh = reg.length > 0 && reg.every(r => r.attended == null)
+      const expectedOf = r => Boolean(r.usual_for_slot || r.group_planned != null)
+      setPrefilled(fresh)
       const serverEntries = reg.map((r) => ({
         swimmer_id: r.swimmer_id,
         swimmer_name: r.swimmer_name,
         squad: r.squad,
-        attended: r.attended ?? false,
+        expected: expectedOf(r),
+        attended: r.attended ?? (fresh && expectedOf(r) && !r.exception_reason),
         normally_attends: r.usual_for_slot ?? false,
         exception_reason: r.exception_reason ?? null,
         availability: r.availability ?? null,
@@ -400,6 +408,7 @@ export default function Register() {
           >
             All present
           </button>
+          <HelpLink topic="loop" label="Why the register matters" />
         </div>
       </div>
 
@@ -443,10 +452,23 @@ export default function Register() {
 
       <SessionWatchpoints notes={sessionNotes} />
 
-      {/* Entries */}
-      <div className="flex-1 divide-y divide-pool-700">
-        {entries.map((entry) => (
-          <div key={entry.swimmer_id} className="px-3 py-2">
+      {prefilled && (
+        <p className="mx-3 mt-3 rounded-lg bg-teal-900/30 border border-teal-700/40 px-3 py-2 text-xs text-teal-200">
+          Everyone expected is marked in. Tap anyone who isn't here, and anyone else who came.
+        </p>
+      )}
+
+      {/* Entries: who's expected first, then the rest of the squad */}
+      <div className="flex-1">
+        {(entries.some(e => e.expected) && entries.some(e => !e.expected)
+          ? [['Expected', entries.filter(e => e.expected)], ['Not expected today', entries.filter(e => !e.expected)]]
+          : [['', entries]]
+        ).map(([title, list]) => (
+          <div key={title || 'all'}>
+            {title && <p className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wide font-semibold text-pool-500">{title} · {list.length}</p>}
+            <div className="divide-y divide-pool-700">
+        {list.map((entry) => (
+          <div key={entry.swimmer_id} className="px-3 py-2.5">
             {/* Row: name + attended toggle */}
             <div className="flex items-center justify-between gap-2">
               <button
@@ -481,7 +503,8 @@ export default function Register() {
 
               <button
                 onClick={() => toggleAttendance(entry)}
-                className={`min-w-14 rounded-lg px-3 py-2 text-xs font-semibold transition-colors ${
+                aria-pressed={entry.attended}
+                className={`min-w-16 min-h-11 rounded-lg px-4 py-2.5 text-sm font-semibold transition-colors ${
                   entry.attended
                     ? 'bg-green-600 text-white'
                     : 'bg-pool-700 text-pool-400'
@@ -562,6 +585,9 @@ export default function Register() {
                 <AssessmentCard assessment={entry.ai_characterisation} />
               </div>
             )}
+          </div>
+        ))}
+            </div>
           </div>
         ))}
       </div>

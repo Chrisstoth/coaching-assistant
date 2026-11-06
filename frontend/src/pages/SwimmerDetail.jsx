@@ -6,6 +6,7 @@ import VoiceInput from '../components/VoiceInput'
 import ObservationsTab from '../components/ObservationsTab'
 import AskTheStaff from '../components/AskTheStaff'
 import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
+import HelpLink from '../components/HelpLink'
 import { groupLine, todayIso } from '../squadGroups'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
@@ -627,6 +628,7 @@ export default function SwimmerDetail() {
               )}
             </div>
           </div>
+          <HelpLink topic="swimmers" label="Swimmers and groups" />
           <button
             onClick={() => setShowEditModal(true)}
             className="text-pool-400 hover:text-accent-400 px-3 py-1.5 text-sm"

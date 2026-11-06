@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { isSessionNear, localDateKey, weekStartKey, weeklySessionQueue } from '../sessionProximity'
+import { isSessionNear, localDateKey, sessionEnded, weekStartKey, weeklySessionQueue } from '../sessionProximity'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
+import HelpLink from '../components/HelpLink'
 
 function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, error, onRetry }) {
   if (sessions.length === 0) {
@@ -44,6 +45,8 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, error
           const key = `${session.date}-${session.session_id || `slot-${session.slot_id}`}`
           const groups = session.groups || []
           const mods = Object.entries(session.individual_mods || {})
+          const written = Boolean(session.session_id && (groups.some(g => g.sets) || session.coach_intent))
+          const finished = sessionEnded(session)
           return (
             <article key={key} className={`rounded-2xl border p-3.5 ${current ? 'bg-accent-900/30 border-accent-600/50' : 'bg-pool-800 border-pool-700'}`}>
               <div className="flex items-start justify-between gap-3">
@@ -87,24 +90,120 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, error
                 <p className="text-xs text-pool-500 mt-3 border-t border-pool-700/70 pt-2.5">No session plan attached yet.</p>
               )}
 
+              {finished && !session.registered && (
+                <p className="text-xs text-amber-200 mt-3">Finished. Take the register while it's fresh: it's what the staff learn from.</p>
+              )}
               <div className="grid grid-cols-3 gap-2 mt-3">
                 <button onClick={() => onRegister(session)} disabled={busyKey === key}
-                  className="bg-accent-600 disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold">
+                  className={`${finished && !session.registered ? 'bg-amber-600' : 'bg-accent-600'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
                   {busyKey === key ? 'Opening…' : session.registered ? 'Continue register' : 'Take register'}
                 </button>
-                <Link to={`/import?tab=excel&date=${session.date}&slot=${session.slot_id || ''}&session=${session.session_id || ''}`}
+                <Link to={session.session_id ? `/builder/${session.session_id}` : `/builder/new?date=${session.date}&slot=${session.slot_id || ''}`}
                   className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
-                  Import plan
+                  {written ? 'Open session' : 'Write it'}
                 </Link>
-                <Link to={`/today-session?${query}`}
+                <Link to={session.session_id && written ? `/builder/${session.session_id}?view=pool` : `/today-session?${query}`}
                   className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-300">
-                  Open dash
+                  Poolside
                 </Link>
               </div>
             </article>
           )
         })}
       </div>
+    </section>
+  )
+}
+
+// What the staff need from the coach, in one list.
+const ASK_STYLE = {
+  safety: 'border-red-700/60 bg-red-900/20 text-red-200',
+  prediction: 'border-pool-700 bg-pool-800 text-pool-200',
+  review: 'border-pool-700 bg-pool-800 text-pool-200',
+  question: 'border-pool-700 bg-pool-800 text-pool-200',
+}
+function StaffAsksCard() {
+  const [asks, setAsks] = useState(null)
+  useEffect(() => { api.getStaffAsks().then(setAsks).catch(() => setAsks(null)) }, [])
+  if (!asks || asks.count === 0) return null
+  return (
+    <section className="space-y-2">
+      <div className="flex items-center justify-between px-0.5">
+        <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">The staff need you</p>
+        <span className="text-[11px] font-bold text-white bg-accent-600 rounded-full px-2 py-0.5">{asks.count}</span>
+      </div>
+      {asks.items.slice(0, 6).map((a, i) => (
+        <Link key={i} to={a.link} className={`block rounded-xl border px-3.5 py-2.5 ${ASK_STYLE[a.kind] || ASK_STYLE.review}`}>
+          <p className="text-[11px] text-pool-400">{a.kind === 'safety' ? `Safety flag · ${a.who}` : a.who}</p>
+          <p className="text-sm line-clamp-2">{a.text}</p>
+        </Link>
+      ))}
+      {asks.count > 6 && <Link to="/workbooks" className="block text-xs text-accent-400 px-0.5">{asks.count - 6} more ›</Link>}
+    </section>
+  )
+}
+
+// Getting started: shown until every step is done, or the coach hides it.
+function SetupChecklist() {
+  const [list, setList] = useState(null)
+  const [hidden, setHidden] = useState(() => { try { return localStorage.getItem('setup.hidden') === '1' } catch { return false } })
+  useEffect(() => { if (!hidden) api.getSetupChecklist().then(setList).catch(() => setList(null)) }, [hidden])
+  if (hidden || !list || list.done === list.total) return null
+  const hide = () => { setHidden(true); try { localStorage.setItem('setup.hidden', '1') } catch { /* fine */ } }
+  const next = list.steps.find(s => !s.done)
+  return (
+    <section className="bg-pool-800 border border-accent-600/40 rounded-2xl p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Getting started</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">{list.done} of {list.total} done</p>
+        </div>
+        <button type="button" onClick={hide} className="text-[11px] text-pool-500">Hide</button>
+      </div>
+      <div className="h-1.5 bg-pool-700 rounded-full overflow-hidden"><div className="h-full bg-accent-500" style={{ width: `${(list.done / list.total) * 100}%` }} /></div>
+      <ol className="space-y-1.5">
+        {list.steps.map(s => (
+          <li key={s.key}>
+            <Link to={s.link} className={`flex items-start gap-2.5 rounded-lg px-2 py-1.5 ${s === next ? 'bg-accent-600/15' : ''}`}>
+              <span className={`mt-0.5 w-4 h-4 rounded-full border grid place-items-center text-[10px] shrink-0 ${s.done ? 'bg-teal-600 border-teal-500 text-white' : 'border-pool-500'}`}>{s.done ? '✓' : ''}</span>
+              <span className="min-w-0">
+                <span className={`block text-sm ${s.done ? 'text-pool-500 line-through' : 'text-pool-100'}`}>{s.label}</span>
+                {s === next && <span className="block text-xs text-pool-400">{s.detail}</span>}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+      <Link to="/help" className="block text-xs text-accent-400">How the app works ›</Link>
+    </section>
+  )
+}
+
+// This week of the coach's season plan, group by group.
+function PlanWeekCard({ squads }) {
+  const [weeks, setWeeks] = useState([])
+  useEffect(() => {
+    Promise.all(squads.map(s => api.getPlanWeek(s).catch(() => null))).then(list => setWeeks(list.filter(Boolean)))
+  }, [squads.join('|')]) // eslint-disable-line react-hooks/exhaustive-deps
+  if (!weeks.length) return null
+  return (
+    <section className="space-y-2">
+      {weeks.map(w => (
+        <Link key={w.squad} to={`/season/${encodeURIComponent(w.squad)}`} className="block bg-pool-800 border border-pool-700 rounded-2xl p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-teal-300 uppercase tracking-wider">{w.squad} · this week</p>
+            <span className="text-xs text-pool-500">Season Planner ›</span>
+          </div>
+          {w.groups.map(g => (
+            <div key={g.id} className="flex items-baseline gap-2 text-sm">
+              <span className="font-medium text-pool-100 shrink-0">{g.name}</span>
+              {g.code && <span className="text-[11px] font-semibold text-teal-300 shrink-0">{g.code}</span>}
+              <span className="text-xs text-pool-400 truncate">{[g.phase, g.objective].filter(Boolean).join(' · ')}</span>
+            </div>
+          ))}
+          {w.away > 0 && <p className="text-xs text-amber-300">{w.away} swimmer{w.away === 1 ? '' : 's'} on camp or away</p>}
+        </Link>
+      ))}
     </section>
   )
 }
@@ -695,6 +794,8 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [calendar, setCalendar] = useState([])
   const [pulse, setPulse] = useState([])
+  const [plannerSquads, setPlannerSquads] = useState([])
+  useEffect(() => { api.getPlannerSquads().then(l => setPlannerSquads(l || [])).catch(() => setPlannerSquads([])) }, [])
   const [loading, setLoading] = useState(true)
   const [coachingNotes, setCoachingNotes] = useState([])
   const [coachingProfile, setCoachingProfile] = useState(null)
@@ -898,10 +999,15 @@ export default function Dashboard() {
         <p className="text-pool-400 text-sm">
           {today.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}
         </p>
-        <h1 className="text-xl font-bold tracking-tight mt-0.5">
-          {today.getHours() < 12 ? 'Morning' : today.getHours() < 17 ? 'Afternoon' : 'Evening'}
-        </h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold tracking-tight mt-0.5">
+            {today.getHours() < 12 ? 'Morning' : today.getHours() < 17 ? 'Afternoon' : 'Evening'}
+          </h1>
+          <HelpLink topic="loop" label="How the app works" />
+        </div>
       </div>
+
+      <SetupChecklist />
 
       {!loading && (
         <SessionDesk
@@ -934,7 +1040,10 @@ export default function Dashboard() {
         />
       )}
 
-      {!loading && !activeSeason && <SeasonStartCard onStarted={handleSeasonStarted} />}
+      <StaffAsksCard />
+
+      {plannerSquads.length > 0 && <PlanWeekCard squads={plannerSquads} />}
+      {!loading && !activeSeason && plannerSquads.length === 0 && <SeasonStartCard onStarted={handleSeasonStarted} />}
       {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} notice={seasonNotice} />}
 
       {!loading && <AvailabilityCard report={availability} />}

@@ -7,8 +7,10 @@ const app = await read('../src/App.jsx')
 assert.match(app, /path="\/planning"/, 'The planning workspace needs a route.')
 assert.match(app, /import PlanningWorkspace from '\.\/pages\/PlanningWorkspace'/)
 
+// The Season Planner replaced this workspace as the way in; it stays reachable at its address.
 const hub = await read('../src/pages/PlanHub.jsx')
-assert.match(hub, /to="\/planning"/, 'Plan hub must lead to the planning workspace.')
+assert.match(hub, /to: '\/season'[^}]*title: 'Season Planner'/, 'Plan hub leads to the Season Planner.')
+assert.doesNotMatch(hub, /to="\/planning"/, 'One way in to season planning: the Season Planner.')
 
 const workspace = await read('../src/pages/PlanningWorkspace.jsx')
 // The conversation and the picture must sit together on a wide screen, and the
@@ -105,6 +107,6 @@ console.log('Planning workspace checks passed')
   assert.match(workspaceSource, /<SeasonStarter onAsk=\{ask\}/, 'An empty plan opens on the season set-up.')
   assert.match(workspaceSource, /<NextStepCard/, 'Once there is an outline, the next step is always shown.')
   const hub = await readFile(new URL('../src/pages/PlanHub.jsx', import.meta.url), 'utf8')
-  assert.equal((hub.match(/to="\/planning"/g) || []).length, 1, 'One way in to season planning.')
+  assert.equal((hub.match(/to: '\/season'/g) || []).length, 1, 'One way in to season planning.')
   console.log('Planning start checks passed')
 }

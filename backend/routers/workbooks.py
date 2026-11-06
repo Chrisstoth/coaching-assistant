@@ -164,6 +164,13 @@ class Outcome(BaseModel):
     outcome: str
 
 
+@router.get("/review/asks")
+def review_asks(db: DBSession = Depends(get_db)):
+    """What the staff need from the coach, in one list (the Home screen)."""
+    from backend.services import staff_asks
+    return staff_asks.asks(db)
+
+
 @router.get("/review/week")
 def review_week(db: DBSession = Depends(get_db)):
     """The coach's one short list: what changed this week, gaps, predictions and track records."""

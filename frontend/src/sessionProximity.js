@@ -23,6 +23,18 @@ export function sessionDaypart(session) {
   return null
 }
 
+// The session's end time has passed (an earlier day, or later today).
+export function sessionEnded(session, now = new Date()) {
+  if (!session || ['cancelled', 'dismissed'].includes(session.status)) return false
+  const today = localDateKey(now)
+  if (session.date < today) return true
+  if (session.date > today) return false
+  const start = minutesFromTime(session.time || session.start_time)
+  let end = minutesFromTime(session.end_time)
+  if (end === null) end = start === null ? null : start + 90
+  return end !== null && now.getHours() * 60 + now.getMinutes() >= end
+}
+
 export function isSessionNear(session, now = new Date()) {
   if (!session || ['cancelled', 'completed', 'dismissed'].includes(session.status)) return false
   if (session.date !== localDateKey(now)) return false

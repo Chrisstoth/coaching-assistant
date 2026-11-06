@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
+import HelpLink from '../components/HelpLink'
 
 // The coach's intensity scales. Every intensity is stored on one common line
 // (Effort /20), so adding, changing or switching a scale never changes a
@@ -137,7 +138,10 @@ export default function IntensityScales() {
     <div className="p-4 space-y-6 pb-10 max-w-2xl">
       <header className="pt-2 space-y-1">
         <Link to="/settings" className="text-xs text-accent-400">‹ Settings</Link>
-        <h1 className="text-xl font-bold tracking-tight">Intensity scales</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-bold tracking-tight">Intensity scales</h1>
+          <HelpLink topic="scales" />
+        </div>
         <p className="text-pool-400 text-sm leading-relaxed">
           Every intensity is stored on one common line (Effort /20). Adding, changing or switching a scale never changes a session; only how it is shown and typed.
         </p>

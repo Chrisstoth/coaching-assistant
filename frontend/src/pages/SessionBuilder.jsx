@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { mountBuilder } from '../notation/builderUi'
 import VoiceInput from '../components/VoiceInput'
@@ -107,12 +108,19 @@ function NewSession() {
       setBusy(false)
     }
   }
+  // opened from Home for a timetable slot: go straight to that session
+  const auto = useRef(false)
+  useEffect(() => {
+    const slot = Number(params.get('slot'))
+    if (slot && !auto.current) { auto.current = true; start({ slot_id: slot }) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="p-4 space-y-4 max-w-xl mx-auto">
       <div className="flex items-center gap-3">
         <Link to="/plan" className="text-pool-400 text-2xl" aria-label="Back">‹</Link>
-        <h1 className="text-lg font-semibold">Write a session</h1>
+        <h1 className="text-lg font-semibold flex-1">Write a session</h1>
+        <HelpLink topic="builder" />
       </div>
       <label className="block text-xs text-pool-400">Date
         <input type="date" value={date} onChange={e => setDate(e.target.value)}
@@ -138,6 +146,16 @@ function NewSession() {
       <p className="text-xs text-pool-500">Once it's open, "Draft with Jess" writes it from a brief, and the staff comment as you go.</p>
     </div>
   )
+}
+
+// On a phone, today's written session opens poolside (big text, screen kept awake);
+// Edit is one tap away. ?view=edit or ?view=pool always wins.
+function openInPool(asked, session) {
+  if (asked === 'pool') return true
+  if (asked === 'edit') return false
+  const phone = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 640px)').matches
+  const written = (session?.blocks || []).some(b => (b.items || []).length)
+  return Boolean(phone && written && session?.date === toIso(new Date()))
 }
 
 /* The Session Builder itself, mounted from the builder's own screen code. */
@@ -218,7 +236,7 @@ function Builder({ id }) {
       effSys: payload.effort_scale,
       scales: payload.scales,
       customScales: payload.custom_scales,
-      view: params.get('view') === 'pool' ? 'pool' : 'edit',
+      view: openInPool(params.get('view'), payload.session) ? 'pool' : 'edit',
       brand: club.name || 'Session Builder',
       logo: club.logo || null,
       pdfHeader: `${squad ? squad + ' · ' : ''}Session plan`,

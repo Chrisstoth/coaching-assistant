@@ -1,4 +1,5 @@
-import { Link } from 'react-router-dom'
+import { useEffect, useRef } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 
 // How the app works, for a coach opening it for the first time: the staff,
 // what each one does, and how their work joins up around the coach.
@@ -61,9 +62,13 @@ const LOOP = [
     text: 'When you run it, Graham, Fiona, Tom and Jess each look back over the week: gaps (work not done for a while), links between training and performance, and how their predictions turned out. You get one short list.' },
 ]
 
-function Section({ title, children, open = false }) {
+function Section({ id, title, children, open = false }) {
+  const { hash } = useLocation()
+  const wanted = hash === `#${id}`
+  const ref = useRef(null)
+  useEffect(() => { if (wanted && ref.current) ref.current.scrollIntoView({ block: 'start' }) }, [wanted])
   return (
-    <details open={open} className="bg-pool-800 border border-pool-700 rounded-xl group">
+    <details ref={ref} id={id} open={open || wanted} className="bg-pool-800 border border-pool-700 rounded-xl group scroll-mt-4">
       <summary className="cursor-pointer list-none px-4 py-3 flex items-center justify-between text-sm font-semibold text-pool-100">
         {title}<span className="text-pool-500 group-open:rotate-90 transition-transform">›</span>
       </summary>
@@ -84,13 +89,13 @@ export default function HelpGuide() {
         </p>
       </header>
 
-      <Section title="The idea in one minute" open>
+      <Section id="idea" title="The idea in one minute" open>
         <p>Each member of staff has one job and a <b>workbook</b>: plain notes they write about the swimmers, the squad and their own area. Because they write things down, they remember from week to week, and you can see exactly what they think and why.</p>
         <p>They all read the same records: the <b>season plan</b>, the <b>sessions</b> you write, the <b>register</b> and <b>race results</b>. Numbers such as metres per training zone are worked out by the app, not guessed by the staff.</p>
         <p>They stay quiet when nothing would change a decision. When they do speak, a <b>safety flag</b> (for example a big jump in load) is kept until you acknowledge it. A <b>preference</b> you dismiss is remembered, so it isn't raised again.</p>
       </Section>
 
-      <Section title="Meet the staff">
+      <Section id="staff" title="Meet the staff">
         <div className="space-y-3">
           {STAFF.map(s => (
             <div key={s.name} className="bg-pool-900/40 rounded-lg p-3 space-y-1">
@@ -104,7 +109,7 @@ export default function HelpGuide() {
         </div>
       </Section>
 
-      <Section title="How they work together: the weekly loop">
+      <Section id="loop" title="How they work together: the weekly loop">
         <ol className="space-y-3">
           {LOOP.map((l, i) => (
             <li key={l.step} className="flex gap-3">
@@ -128,38 +133,38 @@ export default function HelpGuide() {
         </div>
       </Section>
 
-      <Section title="Writing a session with the staff">
+      <Section id="builder" title="Writing a session with the staff">
         <p><b>Ask the staff</b> gets a read from Graham, Fiona, Tom and Erin on the session as it stands. With <b>Comment as I write</b> on, they also take a look after you pause for a while. Their comments sit under the line they're about.</p>
         <p><b>Draft with Jess</b>: type or say a short brief ("aerobic Tuesday, 4,000, kick focus") and she writes it in your notation and your current style, using this week of the plan. Undo takes her draft out again.</p>
         <p>At the top of the builder, <b>staff notes from last time</b> shows what they wrote after recent sessions.</p>
       </Section>
 
-      <Section title="Workbooks: what the staff write down">
+      <Section id="workbooks" title="Workbooks: what the staff write down">
         <p>Each workbook is a set of pages: one per swimmer, the squad, their own area, a watch list and a journal. Every note says how sure they are: a <b>hypothesis</b>, <b>seen once</b>, or a <b>pattern</b>.</p>
         <p>You can read and edit any page. Your edits win: if a member of staff and you change the same page, yours stands. You can <b>lock</b> a section so they can't change it, compare any two versions, restore an old one, or undo everything one update did.</p>
         <p>Each member of staff writes only in their own workbook. If a swimmer is deleted from the app, they're removed from every workbook as well.</p>
         <Link to="/workbooks" className="text-xs text-accent-400">Open the staff workbooks ›</Link>
       </Section>
 
-      <Section title="Swimmers and groups">
+      <Section id="swimmers" title="Swimmers and groups">
         <p>Groups, and who is in each, are set on the <b>Squad tab of the Season Planner</b>: add or remove swimmers, change groups, or move someone between groups from a set week. The rest of the app follows it.</p>
         <p>Swimmers under <b>Not planned</b> (uni or visiting swimmers who come out of term) stay on the register so you can mark them in, but the staff don't plan for them. A swimmer removed from the planner is kept in the app as inactive, with their history.</p>
         <Link to="/season" className="text-xs text-accent-400">Open the Season Planner ›</Link>
       </Section>
 
-      <Section title="Intensity scales">
+      <Section id="scales" title="Intensity scales">
         <p>Every intensity is stored on one common line (Effort /20). Your scale (colours, Sweetenham bands, RPE and so on) only changes how it's shown and typed, so you can switch scale or change one without changing any session.</p>
         <p>Pick your usual scale, make your own, or copy a standard one and change your copy. A single session can use a different scale.</p>
         <Link to="/settings/intensity-scales" className="text-xs text-accent-400">Manage intensity scales ›</Link>
       </Section>
 
-      <Section title="Your old sessions (Maggie)">
+      <Section id="maggie" title="Your old sessions (Maggie)">
         <p>Point Maggie at the folders your old sessions are in. She reads them in batches, checks totals where the file has them, and puts anything she's unsure of on your list rather than guessing.</p>
         <p>When she meets shorthand she doesn't know, she asks you once and adds it to her glossary. Jess then compares the years so you can tell her what you've <b>moved on from</b> and what's still your <b>current style</b>.</p>
         <Link to="/history-import" className="text-xs text-accent-400">Open Maggie's desk ›</Link>
       </Section>
 
-      <Section title="What stays in your hands">
+      <Section id="control" title="What stays in your hands">
         <p>The staff never change your plan, your sessions or your groups. They comment, suggest and keep notes. Group moves, plan changes and anything about a swimmer's status are yours.</p>
         <p>Each club has its own staff and workbooks. What one club's staff learn stays with that club.</p>
         <p>AI costs are tracked in <Link to="/settings" className="text-accent-400">Settings</Link>.</p>
