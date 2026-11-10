@@ -48,7 +48,7 @@ function AudiencePicker({ payload, onSaved, onClose }) {
 
   const field = 'w-full bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-xs text-pool-100'
   return (
-    <div className="px-4 py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
+    <div className="builder-gut py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
       <div className="flex gap-1.5 flex-wrap">
         {[['squad', 'Whole squad'], ['group', 'A group'], ['camp', 'A camp'], ['swimmer', 'One swimmer']].map(([k, t]) => (
           <button key={k} onClick={() => setKind(k)}
@@ -269,7 +269,7 @@ function Builder({ id }) {
   return (
     <div className="min-h-full">
       {payload && (
-        <div className="flex items-center justify-between gap-3 px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
+        <div className="flex items-center justify-between gap-3 builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <div className="flex items-center gap-3 min-w-0">
             <Link to={`/sessions/${payload.id}`} className="text-pool-400 text-xl leading-none" aria-label="Back to the session">‹</Link>
             <span className="truncate text-pool-300">
@@ -282,7 +282,7 @@ function Builder({ id }) {
         </div>
       )}
       {payload && payload.staff_notes?.length > 0 && (
-        <details className="px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
+        <details className="builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <summary className="cursor-pointer text-pool-300">From the staff since last time ({payload.staff_notes.length})</summary>
           <ul className="mt-1.5 space-y-1">
             {payload.staff_notes.map((n, i) => (
@@ -295,7 +295,7 @@ function Builder({ id }) {
         </details>
       )}
       {payload && (
-        <div className="flex items-center gap-2 flex-wrap px-4 py-2 bg-pool-900 border-b border-pool-800 text-xs">
+        <div className="flex items-center gap-2 flex-wrap builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <button onClick={() => askStaff(false)} disabled={reading} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
             {reading ? 'The staff are reading…' : 'Ask the staff'}
           </button>
@@ -313,7 +313,7 @@ function Builder({ id }) {
         </div>
       )}
       {payload && jess && (
-        <div className="px-4 py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
+        <div className="builder-gut py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
           <p className="text-pool-300">Tell Jess what the session is for: the aim, the groups, anything you want in it. She writes it in your current style; you edit from there.</p>
           <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={3} placeholder="e.g. Aerobic Monday. Girls threshold 3 rounds, boys pull with paddles, finish with some fast 25s off the blocks."
             className="w-full bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm text-pool-100" />

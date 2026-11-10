@@ -258,3 +258,10 @@
     break-inside: avoid;
   }
 }
+
+/* The Session Builder's own bars line up with its writing column (1120px wide,
+   16px inside) on a big screen; on a phone this is plain 16px either side. */
+.builder-gut {
+  padding-left: max(1rem, calc((100% - 1120px) / 2 + 1rem));
+  padding-right: max(1rem, calc((100% - 1120px) / 2 + 1rem));
+}

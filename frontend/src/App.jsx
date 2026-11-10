@@ -156,13 +156,22 @@ function useHideNav() {
     || loc.pathname.startsWith('/swimmers/') && loc.pathname !== '/swimmers'
 }
 
-function AppHeader() {
+// The planning pages are worked on at a desk as well as poolside, so on a big
+// screen they use its full width. Everything else keeps the phone column.
+const WIDE_PATHS = ['/plan', '/season', '/builder/', '/planning']
+
+function useWidePage() {
+  const { pathname } = useLocation()
+  return WIDE_PATHS.some(p => pathname === p || pathname.startsWith(p.endsWith('/') ? p : p + '/'))
+}
+
+function AppHeader({ wide }) {
   const location = useLocation()
   const isSettings = location.pathname === '/settings'
   const isInbox = location.pathname === '/assistant'
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-pool-900/95 backdrop-blur border-b border-white/10">
-      <div className="flex items-center justify-between max-w-lg mx-auto px-4 h-12">
+      <div className={`flex items-center justify-between ${wide ? 'max-w-[1600px]' : 'max-w-lg'} mx-auto px-4 h-12`}>
         <Link to="/" className="flex items-center" aria-label="LaneWatch AI home">
           <LaneWatchWordmark />
         </Link>
@@ -235,16 +244,17 @@ function BottomNav() {
 export default function App() {
   const backendStatus = useBackendStatus()
   const offlineSync = useOfflineSync()
+  const wide = useWidePage()
   return (
     <SessionPresentationProvider>
-    <div className="flex flex-col min-h-screen max-w-lg mx-auto">
+    <div className={`flex flex-col min-h-screen mx-auto ${wide ? 'w-full' : 'max-w-lg'}`}>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/sessions/:id/print" element={<RequireAuth><SessionPrint /></RequireAuth>} />
         <Route path="/swimmer-plans/:planId/print" element={<RequireAuth><SwimmerPlanPrint /></RequireAuth>} />
         <Route path="*" element={
           <RequireAuth>
-            <AppHeader />
+            <AppHeader wide={wide} />
             <StartupBanner status={backendStatus} />
             <OfflineSyncBanner state={offlineSync} />
             <main className="flex-1 overflow-y-auto pb-20 pt-12">

@@ -37,7 +37,7 @@ export default function SeasonPlanner() {
 
   return (
     <div className="min-h-full">
-      <div className="px-4 pt-2 space-y-2">
+      <div className="px-4 pt-2 space-y-2 max-w-[1600px] mx-auto">
         <div className="flex items-center justify-between gap-3">
           <Link to="/plan" className="inline-flex items-center text-xs text-pool-400 hover:text-pool-200">‹ Plan</Link>
           <HelpLink topic="swimmers" label="Swimmers, groups and the plan" />
@@ -55,7 +55,7 @@ export default function SeasonPlanner() {
       </div>
       {!squads && <p className="p-4 text-sm text-pool-400">Opening the season plan…</p>}
       <div ref={host} />
-      <p className="px-4 pb-6 text-xs text-pool-500">
+      <p className="px-4 pb-6 text-xs text-pool-500 max-w-[1600px] mx-auto">
         <Link to="/season/classic" className="underline" style={{ minHeight: 0 }}>Older season planning</Link>
       </p>
     </div>

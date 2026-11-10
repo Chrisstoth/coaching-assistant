@@ -88,7 +88,7 @@ export default function PlanHub() {
   }, [])
 
   return (
-    <div className="px-4 pt-4 pb-6 space-y-5">
+    <div className="px-4 pt-4 pb-6 space-y-5 max-w-4xl mx-auto">
 
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-bold tracking-tight">Plan</h1>
@@ -96,7 +96,7 @@ export default function PlanHub() {
       </div>
 
       {/* One door for each job */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { to: '/season', icon: <SeasonIcon />, title: 'Season Planner', text: 'Groups, phases, loads and meets' },
           { to: '/builder/new', icon: <WriteIcon />, title: 'Write a session', text: 'With the staff alongside' },
