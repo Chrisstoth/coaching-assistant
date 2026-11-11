@@ -726,6 +726,33 @@ class SwimmerTarget(Base):
     swimmer = relationship("Swimmer", back_populates="targets")
 
 
+class TargetSet(Base):
+    """
+    A coach's recipe for training target times worked out from race PBs, e.g.
+    "100 PB ÷ 4 for each 25, then +0.5 and +1.0". The times themselves are
+    never stored: they're worked out from each swimmer's current PBs whenever
+    the set is opened, so they move on as the swimmer gets faster.
+    """
+    __tablename__ = "target_sets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    squad = Column(String, nullable=True)            # None = every active swimmer
+
+    # Which PB to start from. None = each target event's own distance.
+    base_distance = Column(Integer, nullable=True)
+    rep_distance = Column(Integer, nullable=False, default=25)
+    # Seconds added to PB pace for each rep, e.g. [0, 0.5, 1.0]
+    offsets = Column(JSON, default=list)
+    course = Column(String(3), default="SCM")         # SCM / LCM
+    # e.g. ["Backstroke", "Freestyle"]. None = each swimmer's target-event strokes.
+    strokes = Column(JSON, nullable=True)
+    decimals = Column(Integer, default=1)              # 1 → 16.1, 2 → 16.08
+
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+
+
 class AIAnalysis(Base):
     __tablename__ = "ai_analyses"
 

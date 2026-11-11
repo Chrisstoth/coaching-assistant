@@ -165,7 +165,10 @@ export default function TodaySession() {
     setStarting(true)
     setError('')
     try {
-      const created = await api.startCalendarSession({ pool_slot_id: session.slot_id, date: session.date || today })
+      const created = await api.startCalendarSession(
+        { pool_slot_id: session.slot_id, date: session.date || today },
+        { onWaking: () => setError('Waking the server. This can take up to a minute…') },
+      )
       navigate(`/sessions/${created.id}/register`)
     } catch (err) {
       setError(err.message || 'Could not start the session')

@@ -23,7 +23,10 @@ export default defineConfig({
         globPatterns: ['**/*.{js,css,html,json,png,svg,ttf,webmanifest,woff2}'],
         runtimeCaching: [
           {
-            urlPattern: ({ request, url }) => request.method === 'GET' && url.pathname.startsWith('/api/'),
+            // Never the health check: a cached answer would say a sleeping
+            // server is awake.
+            urlPattern: ({ request, url }) => request.method === 'GET'
+              && url.pathname.startsWith('/api/') && url.pathname !== '/api/health',
             handler: 'NetworkFirst',
             options: {
               cacheName: 'lanewatch-ai-api-reads',

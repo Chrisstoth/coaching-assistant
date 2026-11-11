@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import SquadGroups from '../components/SquadGroups'
+import TargetTimes from '../components/TargetTimes'
 
 function profileStatusFor(swimmer) {
   return swimmer.profile_status || {
@@ -23,8 +24,8 @@ export default function Swimmers() {
   const [showNoProfile, setShowNoProfile] = useState(true)
   const navigate = useNavigate()
   const [params, setParams] = useSearchParams()
-  const view = params.get('view') === 'groups' ? 'groups' : 'swimmers'
-  const setView = (next) => setParams(next === 'groups' ? { view: 'groups' } : {}, { replace: true })
+  const view = ['groups', 'targets'].includes(params.get('view')) ? params.get('view') : 'swimmers'
+  const setView = (next) => setParams(next === 'swimmers' ? {} : { view: next }, { replace: true })
 
   useEffect(() => {
     api.getSwimmers({ active_only: false }).then(sw => {
@@ -64,7 +65,7 @@ export default function Swimmers() {
     <div className="p-4 space-y-4">
       <div className="flex justify-between items-center pt-2">
         <h1 className="text-xl font-bold">Squad</h1>
-        {view === 'groups' ? null : selecting ? (
+        {view !== 'swimmers' ? null : selecting ? (
           <button onClick={clearSelect} className="text-pool-400 text-sm font-medium">
             Cancel
           </button>
@@ -87,7 +88,7 @@ export default function Swimmers() {
       </div>
 
       <div className="flex bg-pool-800 rounded-xl p-1 text-sm" role="tablist">
-        {[['swimmers', 'Swimmers'], ['groups', 'Groups']].map(([key, label]) => (
+        {[['swimmers', 'Swimmers'], ['groups', 'Groups'], ['targets', 'Targets']].map(([key, label]) => (
           <button key={key} role="tab" aria-selected={view === key} onClick={() => { clearSelect(); setView(key) }}
             className={`flex-1 rounded-lg py-1.5 font-medium transition-colors ${
               view === key ? 'bg-pool-600 text-pool-100' : 'text-pool-400'}`}>
@@ -96,7 +97,7 @@ export default function Swimmers() {
         ))}
       </div>
 
-      {view === 'groups' ? (<>
+      {view === 'targets' ? <TargetTimes /> : view === 'groups' ? (<>
         <Link to="/season" className="block mb-3 rounded-xl border border-accent-600/40 bg-accent-600/10 px-4 py-3">
           <p className="text-sm font-semibold text-pool-100">Groups are set in the Season Planner ›</p>
           <p className="text-xs text-pool-400 mt-0.5">Add swimmers, change groups or move someone from a set week on its Squad tab. This list follows it, so changes made here are replaced the next time the plan is saved.</p>

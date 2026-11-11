@@ -7,13 +7,14 @@ import ObservationsTab from '../components/ObservationsTab'
 import AskTheStaff from '../components/AskTheStaff'
 import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
 import HelpLink from '../components/HelpLink'
+import TargetTable from '../components/TargetTable'
 import { groupLine, todayIso } from '../squadGroups'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 
 // Five tabs, each made of the page's sections (shown in page order).
 const TABS = [
   { name: 'Overview', parts: ['Overview', 'Readiness'] },
-  { name: 'Training', parts: ['Plan', 'TrainingStats', 'Benchmarks', 'Attendance'] },
+  { name: 'Training', parts: ['Plan', 'TrainingStats', 'Benchmarks', 'TargetTimes', 'Attendance'] },
   { name: 'Racing', parts: ['Racing', 'Events', 'Performance', 'Taper', 'Times', 'Analysis'] },
   { name: 'Profile', parts: ['ProfileCore', 'Profiles', 'Context'] },
   { name: 'Notes', parts: ['Observations', 'Staff'] },
@@ -435,6 +436,7 @@ export default function SwimmerDetail() {
   const [addingMeetObs, setAddingMeetObs] = useState(false)
   const [benchmarks, setBenchmarks] = useState([])
   const [targets, setTargets] = useState([])
+  const [targetTimes, setTargetTimes] = useState(null)
   const [blockStatus, setBlockStatus] = useState(null)
   const [adaptationReview, setAdaptationReview] = useState(null)
   const [reviewLoading, setReviewLoading] = useState(false)
@@ -472,6 +474,7 @@ export default function SwimmerDetail() {
       api.getRaceObservations(id).then(setRaceObs)
     }
     if (show('Times')) api.getSwimmerTimes(id).then(setTimes)
+    if (show('TargetTimes')) api.getSwimmerTargetTimes(id).then(setTargetTimes).catch(() => setTargetTimes([]))
     if (show('Analysis')) api.getAnalyses(id).then(setAnalyses)
     if (PROFILE_DATA_TABS.includes(tab)) {
       api.getUnifiedProfile(id).then((r) => {
@@ -1586,6 +1589,30 @@ export default function SwimmerDetail() {
             </section>
 
           </div>
+        )}
+
+        {show('TargetTimes') && targetTimes && (
+          <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+            <div className="flex justify-between items-center gap-2">
+              <h3 className="font-semibold text-sm text-accent-400">Target times</h3>
+              <Link to="/swimmers?view=targets" className="text-xs text-pool-400 hover:text-pool-200">
+                {targetTimes.length ? 'Target sets ›' : '+ target set'}
+              </Link>
+            </div>
+            {targetTimes.length === 0 ? (
+              <p className="text-xs text-pool-500">
+                No target sets yet. Make one on the Squad page's Targets tab, e.g. 100 PB ÷ 4 for each 25, then +0.5 and +1.0.
+              </p>
+            ) : targetTimes.map(ts => (
+              <div key={ts.set_id} className="space-y-1">
+                <p className="text-sm font-medium text-pool-100">{ts.name}</p>
+                <p className="text-[11px] text-pool-500">{ts.summary}</p>
+                {ts.note
+                  ? <p className="text-xs text-pool-500 italic">{ts.note}. Add them on the Racing tab.</p>
+                  : <TargetTable columns={ts.columns} swimmers={[{ id: Number(id), name: '', rows: ts.rows }]} single />}
+              </div>
+            ))}
+          </section>
         )}
 
         {show('Events') && (

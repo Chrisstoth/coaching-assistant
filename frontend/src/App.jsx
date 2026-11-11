@@ -1,6 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import { Routes, Route, NavLink, Link, Navigate, useLocation } from 'react-router-dom'
-import { api, getToken } from './api'
+import { api, getToken, wakeServer } from './api'
 import { getOfflineSaveCount, subscribeToOfflineQueue } from './offlineQueue'
 import Dashboard from './pages/Dashboard'
 import Swimmers from './pages/Swimmers'
@@ -24,6 +24,7 @@ import SeasonPlan from './pages/SeasonPlan'
 import PlanningWorkspace from './pages/PlanningWorkspace'
 import SessionPrint from './pages/SessionPrint'
 import SwimmerPlanPrint from './pages/SwimmerPlanPrint'
+import TargetSetPrint from './pages/TargetSetPrint'
 import Login from './pages/Login'
 import ProfileWizard from './pages/ProfileWizard'
 import AssistantInbox from './pages/AssistantInbox'
@@ -49,12 +50,26 @@ function RequireAuth({ children }) {
 function useBackendStatus() {
   const [status, setStatus] = useState('checking') // checking | online | slow
 
+  // Check (and wake) the server when the app opens and every time it comes
+  // back to the front, e.g. unlocking the phone at the pool, so it is already
+  // waking before the register is tapped.
   useEffect(() => {
-    const slow = setTimeout(() => setStatus('slow'), 2000)
-    fetch('/api/health')
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(() => { clearTimeout(slow); setStatus('online') })
-      .catch(() => { clearTimeout(slow); setStatus('slow') })
+    let slow
+    const check = () => {
+      clearTimeout(slow)
+      slow = setTimeout(() => setStatus('slow'), 2000)
+      wakeServer().then(awake => {
+        clearTimeout(slow)
+        setStatus(awake ? 'online' : 'unreachable')
+      })
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') check() }
+    check()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      clearTimeout(slow)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   return status
@@ -71,7 +86,7 @@ function StartupBanner({ status }) {
         </svg>
         <div>
           <p className="text-xs font-medium text-pool-200">Starting up…</p>
-          <p className="text-[11px] text-pool-500">Server wakes from sleep — takes ~30 seconds</p>
+          <p className="text-[11px] text-pool-500">Server wakes from sleep. This can take up to a minute.</p>
         </div>
       </div>
     </div>
@@ -252,6 +267,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route path="/sessions/:id/print" element={<RequireAuth><SessionPrint /></RequireAuth>} />
         <Route path="/swimmer-plans/:planId/print" element={<RequireAuth><SwimmerPlanPrint /></RequireAuth>} />
+        <Route path="/targets/:id/print" element={<RequireAuth><TargetSetPrint /></RequireAuth>} />
         <Route path="*" element={
           <RequireAuth>
             <AppHeader wide={wide} />

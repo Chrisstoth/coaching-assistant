@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { api } from '../api'
+import { api, whenAwake } from '../api'
 import VoiceInput from '../components/VoiceInput'
 import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
 import HelpLink from '../components/HelpLink'
@@ -121,15 +121,20 @@ export default function Register() {
   const [draftDirty, setDraftDirty] = useState(false)
   const [draftRevision, setDraftRevision] = useState(null)
   const [prefilled, setPrefilled] = useState(false)
+  const [loadState, setLoadState] = useState('loading') // loading | waking | failed
+  const [loadAttempt, setLoadAttempt] = useState(0)
 
   const draftKey = `lanewatch_register_draft:${id}`
 
   useEffect(() => {
-    Promise.all([
+    let cancelled = false
+    setLoadState('loading')
+    whenAwake(() => Promise.all([
       api.getSession(id),
       api.getRegister(id),
       api.getCoachingNotes().catch(() => []),
-    ]).then(([sess, reg, notes]) => {
+    ]), { onWaking: () => { if (!cancelled) setLoadState('waking') } }).then(([sess, reg, notes]) => {
+      if (cancelled) return
       setSession(sess)
       setSessionNotes(notes.filter(note => note.date_from <= sess.date && note.date_to >= sess.date))
       const inferredGroupCount = sess.register_group_count ?? (
@@ -188,8 +193,11 @@ export default function Register() {
         setEntries(serverEntries)
       }
       setLoaded(true)
+    }).catch(() => {
+      if (!cancelled) setLoadState('failed')
     })
-  }, [draftKey, id])
+    return () => { cancelled = true }
+  }, [draftKey, id, loadAttempt])
 
   useEffect(() => {
     if (!loaded || !draftDirty) return
@@ -363,8 +371,27 @@ export default function Register() {
         : Array.from({ length: groupCount }, (_, index) => index + 1))
     : []
 
-  if (!session || entries.length === 0) {
-    return <div className="p-4 text-pool-400">Loading register...</div>
+  if (loaded && entries.length === 0) {
+    return <div className="p-4 text-pool-400">No swimmers are on this session's register yet.</div>
+  }
+  if (!loaded || !session) {
+    if (loadState === 'failed') {
+      return (
+        <div className="p-4 space-y-3">
+          <p className="text-sm text-pool-200">Couldn't reach the server to open this register.</p>
+          <p className="text-xs text-pool-500">Check you have signal, then try again.</p>
+          <button type="button" onClick={() => setLoadAttempt(value => value + 1)}
+            className="bg-accent-600 rounded-xl px-4 py-2.5 text-sm font-semibold">
+            Try again
+          </button>
+        </div>
+      )
+    }
+    return (
+      <div className="p-4 text-pool-400">
+        {loadState === 'waking' ? 'Waking the server. This can take up to a minute…' : 'Loading register...'}
+      </div>
+    )
   }
 
   return (

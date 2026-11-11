@@ -5,7 +5,7 @@ import { isSessionNear, localDateKey, sessionEnded, weekStartKey, weeklySessionQ
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import HelpLink from '../components/HelpLink'
 
-function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, error, onRetry }) {
+function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, busyLabel = 'Opening…', error, onRetry }) {
   if (sessions.length === 0) {
     return (
       <section className="bg-pool-800/70 border border-pool-700 rounded-2xl p-4">
@@ -96,7 +96,7 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, error
               <div className="grid grid-cols-3 gap-2 mt-3">
                 <button onClick={() => onRegister(session)} disabled={busyKey === key}
                   className={`${finished && !session.registered ? 'bg-amber-600' : 'bg-accent-600'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
-                  {busyKey === key ? 'Opening…' : session.registered ? 'Continue register' : 'Take register'}
+                  {busyKey === key ? busyLabel : session.registered ? 'Continue register' : 'Take register'}
                 </button>
                 <Link to={session.session_id ? `/builder/${session.session_id}` : `/builder/new?date=${session.date}&slot=${session.slot_id || ''}`}
                   className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
@@ -805,6 +805,7 @@ export default function Dashboard() {
   const [availability, setAvailability] = useState({ items: [], current_count: 0, upcoming_count: 0 })
   const [seasonNotice, setSeasonNotice] = useState('')
   const [busySessionKey, setBusySessionKey] = useState('')
+  const [sessionWaking, setSessionWaking] = useState(false)
   const [cancelTarget, setCancelTarget] = useState(null)
   const [dueCheckIns, setDueCheckIns] = useState([])
   const [busyCheckInKey, setBusyCheckInKey] = useState('')
@@ -935,16 +936,21 @@ export default function Dashboard() {
   const openRegister = async (item) => {
     const key = `${item.date}-${item.session_id || `slot-${item.slot_id}`}`
     setBusySessionKey(key)
+    setSessionWaking(false)
     try {
       if (item.session_id) {
         navigate(`/sessions/${item.session_id}/register`)
         return
       }
-      const created = await api.startCalendarSession({ pool_slot_id: item.slot_id, date: item.date })
+      const created = await api.startCalendarSession(
+        { pool_slot_id: item.slot_id, date: item.date },
+        { onWaking: () => setSessionWaking(true) },
+      )
       navigate(`/sessions/${created.id}/register`)
     } catch (error) {
-      alert(`Could not open register: ${error.message}`)
+      alert(`Could not open register: ${error.message}. Check you have signal and try again.`)
       setBusySessionKey('')
+      setSessionWaking(false)
     }
   }
 
@@ -1016,6 +1022,7 @@ export default function Dashboard() {
           onDismiss={dismissSession}
           onCancel={setCancelTarget}
           busyKey={busySessionKey}
+          busyLabel={sessionWaking ? 'Waking server…' : 'Opening…'}
           error={calendarError}
           onRetry={() => setReload(value => value + 1)}
         />

@@ -297,6 +297,8 @@ export default function Calendar() {
     try {
       const session = await api.startCalendarSession({ pool_slot_id: item.slot_id, date: item.date || todayIso })
       navigate(`/sessions/${session.id}`)
+    } catch (error) {
+      alert(`Could not open the session: ${error.message}. Check you have signal and try again.`)
     } finally {
       setStarting(null)
     }

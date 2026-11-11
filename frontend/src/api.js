@@ -69,6 +69,64 @@ async function request(method, path, body = null, isFormData = false, options = 
   return res.json()
 }
 
+function timeoutSignal(ms) {
+  return typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? { signal: AbortSignal.timeout(ms) } : {}
+}
+
+function isOffline() {
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+}
+
+// No answer, or the proxy in front of the API gave up waiting for one.
+function isServerUnreachable(error) {
+  return error instanceof TypeError
+    || error?.name === 'AbortError'
+    || error?.name === 'TimeoutError'
+    || [408, 425, 429].includes(error?.status)
+    || error?.status >= 500
+}
+
+// The API sleeps after a quiet spell and can take up to a minute to wake. The
+// proxy in front of it gives up sooner than that, so a tap made while it is
+// asleep fails even though the server is on its way up. This keeps asking
+// until it answers (or `timeoutMs` passes); callers share one wait.
+let waking = null
+export function wakeServer(timeoutMs = 90000) {
+  if (!waking) {
+    waking = (async () => {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        if (!isOffline()) {
+          try {
+            const res = await fetch(`${BASE}/health`, { cache: 'no-store', ...timeoutSignal(15000) })
+            if (res.ok) return true
+          } catch {
+            // Still asleep.
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 2000))
+      }
+      return false
+    })().finally(() => { waking = null })
+  }
+  return waking
+}
+
+// Runs a call that is safe to repeat. If the server is asleep it waits for it
+// to wake and tries again, instead of failing on the first tap. `onWaking`
+// hears when it starts waiting, so the screen can say so.
+export async function whenAwake(call, { onWaking, attempts = 3 } = {}) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call()
+    } catch (error) {
+      if (attempt >= attempts || isOffline() || !isServerUnreachable(error)) throw error
+      onWaking?.()
+      if (!(await wakeServer())) throw error
+    }
+  }
+}
+
 // Live conversation (replies streamed as they are written, and the staff's
 // voices) goes straight to the API server when its address is set at build
 // time: a proxy in between can hold a streamed reply back until it is
@@ -132,12 +190,7 @@ async function profileWizardChatLive(swimmerId, messages, { retry = false, spoke
 }
 
 function isRetryableRegisterFailure(error) {
-  return (typeof navigator !== 'undefined' && !navigator.onLine)
-    || error instanceof TypeError
-    || error?.name === 'AbortError'
-    || error?.name === 'TimeoutError'
-    || [408, 425, 429].includes(error?.status)
-    || error?.status >= 500
+  return isOffline() || isServerUnreachable(error)
 }
 
 async function saveRegisterWithOfflineFallback(sessionId, data) {
@@ -239,6 +292,8 @@ export const api = {
   getBuilderSession: (id) => request('GET', `/session-builder/sessions/${id}`),
   saveBuilderSession: (id, session, audience) => request('PUT', `/session-builder/sessions/${id}`, audience === undefined ? { session } : { session, audience }),
   copyBuilderSessionToNextWeek: (id) => request('POST', `/session-builder/sessions/${id}/copy-next-week`),
+  getBuilderSwimmers: (id) => request('GET', `/session-builder/sessions/${id}/swimmers`),
+  saveBuilderGroupSwimmers: (id, session) => request('PUT', `/session-builder/sessions/${id}/group-swimmers`, { session }),
   setBuilderAudience: (id, audience) => request('PUT', `/session-builder/sessions/${id}/audience`, audience),
   getPlanGroups: (on, squad) => request('GET', `/session-builder/plan-groups?on=${on}${squad ? `&squad=${encodeURIComponent(squad)}` : ''}`),
   getBuilderSettings: () => request('GET', '/session-builder/settings'),
@@ -309,7 +364,9 @@ export const api = {
     const qs = weekStart ? `?week_start=${weekStart}` : ''
     return request('GET', `/sessions/calendar${qs}`)
   },
-  startCalendarSession: (data) => request('POST', '/sessions/calendar/start', data),
+  // Safe to repeat: it returns the session if an earlier try already made it.
+  startCalendarSession: (data, { onWaking } = {}) =>
+    whenAwake(() => request('POST', '/sessions/calendar/start', data), { onWaking }),
   cancelCalendarSession: (data) => request('POST', '/sessions/calendar/cancel', data),
   dismissCalendarSession: (data) => request('POST', '/sessions/calendar/dismiss', data),
 
@@ -509,6 +566,15 @@ export const api = {
   getTargets: (swimmerId) => request('GET', `/benchmarks/targets/${swimmerId}`),
   updateTarget: (id, data) => request('PATCH', `/benchmarks/targets/${id}`, data),
   deleteTarget: (id) => request('DELETE', `/benchmarks/targets/${id}`),
+
+  // Target sets: training target times worked out from PBs
+  getTargetSets: () => request('GET', '/target-sets'),
+  createTargetSet: (data) => request('POST', '/target-sets', data),
+  updateTargetSet: (id, data) => request('PUT', `/target-sets/${id}`, data),
+  deleteTargetSet: (id) => request('DELETE', `/target-sets/${id}`),
+  previewTargetSet: (data) => request('POST', '/target-sets/preview', data),
+  getTargetSetTable: (id, squad) => request('GET', `/target-sets/${id}/table${squad != null ? '?squad=' + encodeURIComponent(squad) : ''}`),
+  getSwimmerTargetTimes: (swimmerId) => request('GET', `/target-sets/swimmer/${swimmerId}`),
 
   // Coaching context
   getCoachingProfiles: () => request('GET', '/coaching-context/profiles'),

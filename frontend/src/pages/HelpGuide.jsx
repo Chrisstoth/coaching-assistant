@@ -137,6 +137,7 @@ export default function HelpGuide() {
         <p><b>Ask the staff</b> gets a read from Graham, Fiona, Tom and Erin on the session as it stands. With <b>Comment as I write</b> on, they also take a look after you pause for a while. Their comments sit under the line they're about.</p>
         <p><b>Draft with Jess</b>: type or say a short brief ("aerobic Tuesday, 4,000, kick focus") and she writes it in your notation and your current style, using this week of the plan. Undo takes her draft out again.</p>
         <p>At the top of the builder, <b>staff notes from last time</b> shows what they wrote after recent sessions.</p>
+        <p><b>Who swims each group</b>: tap the swimmer count on a group (or the button at the top) and tap a group for each swimmer, or fill a group from one of the plan's training groups. If the register is already taken, this is who swam what, and saving moves each swimmer who came into their group on the register too. <b>For…</b> at the very top is who the whole session is for: the squad, one training group, a camp or one swimmer.</p>
       </Section>
 
       <Section id="workbooks" title="Workbooks: what the staff write down">
@@ -150,6 +151,13 @@ export default function HelpGuide() {
         <p>Groups, and who is in each, are set on the <b>Squad tab of the Season Planner</b>: add or remove swimmers, change groups, or move someone between groups from a set week. The rest of the app follows it.</p>
         <p>Swimmers under <b>Not planned</b> (uni or visiting swimmers who come out of term) stay on the register so you can mark them in, but the staff don't plan for them. A swimmer removed from the planner is kept in the app as inactive, with their history.</p>
         <Link to="/season" className="text-xs text-accent-400">Open the Season Planner ›</Link>
+      </Section>
+
+      <Section id="targets" title="Target times from PBs">
+        <p>A <b>target set</b> is your recipe for training target times, worked out from each swimmer's race PBs. For example: their <b>100 PB ÷ 4 for each 25</b>, then <b>+0.5</b> and <b>+1.0</b>, which gives three times per event.</p>
+        <p>Pick which PB to start from (or each target event's own PB), the rep distance, the times to show (seconds added to PB pace, e.g. 0, 0.5, 1.0), the strokes (each swimmer's target events from their profile, or the strokes you choose), 25m or 50m pool PBs, and which squad.</p>
+        <p>Nothing is copied: the times are worked out from the current PBs each time you open them, so they move on when new times are imported. A swimmer without a PB in that event shows "No time yet" rather than a guess.</p>
+        <Link to="/swimmers?view=targets" className="text-xs text-accent-400">Open target sets ›</Link>
       </Section>
 
       <Section id="scales" title="Intensity scales">
