@@ -130,6 +130,9 @@
 .sb .gchip button{border:0;background:transparent;color:var(--faint);border-radius:999px;width:22px;height:22px;font-size:15px;line-height:1}
 .sb .gchip button:hover{color:var(--bad);background:var(--bad-soft)}
 .sb .ghint{font-size:13px;color:var(--faint)}
+.sb .gchip button.gwho{width:auto;height:22px;padding:0 8px;font-size:12px;font-weight:600;color:var(--muted);background:var(--surface)}
+.sb .gchip button.gwho.none{color:var(--warn);background:var(--warn-soft)}
+.sb .gchip button.gwho:hover{color:var(--ink);background:var(--surface)}
 .sb .gtabs{display:flex;flex-wrap:wrap;gap:6px;position:sticky;top:calc(env(safe-area-inset-top,0px) + 58px);z-index:5;background:var(--bg);padding-block:6px}
 .sb .gtabs button{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px;font-weight:600;font-size:14px}
 .sb .gtabs button i{width:9px;height:9px;border-radius:50%;background:var(--gc)}

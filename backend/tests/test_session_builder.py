@@ -229,6 +229,64 @@ class SessionBuilderTests(unittest.TestCase):
             self.assertEqual(detail["as_swum"], {"status": "changed", "note": "Main set cut to 3 rounds"})
             self.assertTrue(detail["builder"])
 
+    def test_who_swims_each_group_after_the_register_was_taken_first(self):
+        """The register taken before the session was written, then the session split in
+        two groups by hand: the coach says who swam which, and the register follows."""
+        http, h = self.client()
+        ruby, ava, leo = self.swimmers["Ruby"], self.swimmers["Ava"], self.swimmers["Leo"]
+        with http:
+            sid = http.post("/session-builder/sessions", headers=h, json={"date": MONDAY.isoformat()}).json()["id"]
+            http.put(f"/sessions/{sid}/register", headers=h, json={
+                "entries": [{"swimmer_id": ruby, "attended": True, "group_done": 1},
+                            {"swimmer_id": leo, "attended": True, "group_done": 1},
+                            {"swimmer_id": ava, "attended": False}],
+                "run_ai": False, "session_complete": False, "register_group_count": 1})
+            session = http.get(f"/session-builder/sessions/{sid}", headers=h).json()["session"]
+            session["groups"] = [{"id": "ga", "name": "Sprint"}, {"id": "gb", "name": "Distance"}]
+            http.put(f"/session-builder/sessions/{sid}", headers=h, json={"session": session})
+
+            got = http.get(f"/session-builder/sessions/{sid}/swimmers", headers=h).json()
+            self.assertTrue(got["register_taken"])
+            by_id = {s["id"]: s for s in got["swimmers"]}
+            self.assertTrue(by_id[ruby]["attended"])
+            self.assertEqual(by_id[leo]["training_group"], "Boys")
+            self.assertEqual({p["name"] for p in got["plan_groups"]}, {"Girls", "Boys"})
+
+            session["groups"][0]["swimmer_ids"] = [leo]
+            session["groups"][1]["swimmer_ids"] = [ruby, ava, leo]   # Leo twice: the first group wins
+            r = http.put(f"/session-builder/sessions/{sid}/group-swimmers", headers=h, json={"session": session})
+            self.assertEqual(r.status_code, 200, r.text)
+            out = r.json()
+            self.assertEqual([g["swimmer_ids"] for g in out["builder_groups"]], [[leo], [ruby, ava]])
+            self.assertEqual(out["register_moved"], 1, "Ruby moves to Distance; Leo was already in group 1")
+
+            reg = {e["swimmer_id"]: e for e in http.get(f"/sessions/{sid}/register", headers=h).json()}
+            self.assertEqual(reg[ruby]["group_done"], 2)
+            self.assertEqual(reg[leo]["group_done"], 1)
+            self.assertFalse(reg[ava]["attended"], "attendance is never changed from the builder")
+            self.assertIsNone(reg[ava]["group_done"])
+            with SessionLocal() as db:
+                s = db.get(models.Session, sid)
+                self.assertEqual(s.register_group_count, 2)
+                groups = sorted(s.groups, key=lambda g: g.group_number)
+                self.assertEqual([g.target_swimmer_ids for g in groups], [[leo], [ruby, ava]])
+
+            # a group holding exactly a training group's swimmers stays linked to it
+            session["groups"][0]["swimmer_ids"] = [leo]
+            session["groups"][1]["swimmer_ids"] = [ava, ruby]
+            out = http.put(f"/session-builder/sessions/{sid}/group-swimmers", headers=h, json={"session": session}).json()
+            self.assertEqual(out["builder_groups"][0].get("training_group_id"), self.boys_id)
+            self.assertEqual(out["builder_groups"][1].get("training_group_id"), self.girls_id)
+
+    def test_who_swims_each_group_needs_groups(self):
+        http, h = self.client()
+        with http:
+            sid = http.post("/session-builder/sessions", headers=h, json={"date": MONDAY.isoformat()}).json()["id"]
+            session = http.get(f"/session-builder/sessions/{sid}", headers=h).json()["session"]
+            session["groups"] = []
+            r = http.put(f"/session-builder/sessions/{sid}/group-swimmers", headers=h, json={"session": session})
+            self.assertEqual(r.status_code, 422)
+
 
     def test_a_session_can_be_for_one_swimmer_or_a_camp(self):
         http, h = self.client()

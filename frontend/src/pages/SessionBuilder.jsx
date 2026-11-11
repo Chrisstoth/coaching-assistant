@@ -4,6 +4,7 @@ import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { mountBuilder } from '../notation/builderUi'
 import VoiceInput from '../components/VoiceInput'
+import GroupSwimmers from '../components/GroupSwimmers'
 import '../notation/builder.css'
 
 const toIso = d => d.toISOString().slice(0, 10)
@@ -20,7 +21,7 @@ function audienceText(payload) {
 /* Who the session was for: the whole squad, one of the plan's groups, a camp, or one
    swimmer (e.g. their own sessions on a national or para camp). The staff only count a
    session for the swimmers it was for; the register confirms who actually swam it. */
-function AudiencePicker({ payload, onSaved, onClose }) {
+function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
   const a = payload.audience || { kind: 'squad' }
   const [kind, setKind] = useState(a.kind || 'squad')
   const [label, setLabel] = useState(a.label || '')
@@ -49,8 +50,10 @@ function AudiencePicker({ payload, onSaved, onClose }) {
   const field = 'w-full bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-xs text-pool-100'
   return (
     <div className="builder-gut py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
+      <p className="text-pool-400">Who the whole session is for.{hasGroups && <> To say who swims each of its groups, use{' '}
+        <button type="button" onClick={onWho} className="text-accent-400 font-semibold">Who swims each group</button>.</>}</p>
       <div className="flex gap-1.5 flex-wrap">
-        {[['squad', 'Whole squad'], ['group', 'A group'], ['camp', 'A camp'], ['swimmer', 'One swimmer']].map(([k, t]) => (
+        {[['squad', 'Whole squad'], ['group', 'One training group'], ['camp', 'A camp'], ['swimmer', 'One swimmer']].map(([k, t]) => (
           <button key={k} onClick={() => setKind(k)}
             className={`rounded-lg px-3 py-1.5 font-semibold ${kind === k ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-300'}`}>{t}</button>
         ))}
@@ -166,6 +169,12 @@ function Builder({ id }) {
   const [payload, setPayload] = useState(null)
   const [error, setError] = useState('')
   const [picking, setPicking] = useState(false)
+  // who swims each of the session's groups: null, or the group tapped to open it ('' from the toolbar)
+  const [who, setWho] = useState(null)
+  const [whoNote, setWhoNote] = useState('')
+  const [groupCount, setGroupCount] = useState(0)
+  const top = useRef(null)
+  const openWho = gid => { setPicking(false); setJess(false); setWhoNote(''); setWho(gid || ''); top.current?.scrollIntoView({ block: 'start', behavior: 'smooth' }) }
   // The staff reading along: comments pinned to lines, and Jess drafting from a brief.
   const builderRef = useRef(null)
   const [comments, setComments] = useState([])
@@ -192,6 +201,7 @@ function Builder({ id }) {
     finally { setReading(false) }
   }
   const onChange = () => {
+    setGroupCount(builderRef.current ? builderRef.current.groups().length : 0)
     clearTimeout(idle.current)
     if (live) idle.current = setTimeout(() => askStaff(true), 30000)   // after a pause, never on every keystroke
   }
@@ -245,6 +255,7 @@ function Builder({ id }) {
       onChange: () => onChangeRef.current(),
       onComment: (c, action) => onCommentRef.current(c, action),
       onLooseComments: setLoose,
+      onWho: gid => onWhoRef.current(gid),
       copyNextWeek: async () => {
         try {
           const next = await api.copyBuilderSessionToNextWeek(payload.id)
@@ -253,6 +264,7 @@ function Builder({ id }) {
       },
     })
     builderRef.current = builder
+    setGroupCount(builder.groups().length)
     api.getBuilderComments(payload.id).then(r => showComments(r.comments)).catch(() => {})
     return () => { builderRef.current = null; builder.destroy() }
     // Mount once per session: later payload changes (e.g. who it's for) must not
@@ -262,12 +274,13 @@ function Builder({ id }) {
   // the builder keeps the first callbacks it was given, so route them through refs
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange
   const onCommentRef = useRef(onComment); onCommentRef.current = onComment
+  const onWhoRef = useRef(openWho); onWhoRef.current = openWho
   const toggleLive = () => { const v = !live; setLive(v); try { localStorage.setItem('sb.liveComments', v ? 'on' : 'off') } catch { /* fine */ } }
   const openCount = comments.filter(c => c.status === 'open').length
 
   if (error) return <div className="p-4 text-sm text-red-400">{error} <Link className="underline" to="/sessions">Back to sessions</Link></div>
   return (
-    <div className="min-h-full">
+    <div className="min-h-full" ref={top}>
       {payload && (
         <div className="flex items-center justify-between gap-3 builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <div className="flex items-center gap-3 min-w-0">
@@ -300,6 +313,9 @@ function Builder({ id }) {
             {reading ? 'The staff are reading…' : 'Ask the staff'}
           </button>
           <button onClick={() => setJess(j => !j)} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Draft with Jess</button>
+          {groupCount > 0 && (
+            <button onClick={() => (who === null ? openWho('') : setWho(null))} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Who swims each group</button>
+          )}
           <label className="flex items-center gap-1.5 text-pool-400 ml-auto">
             <input type="checkbox" checked={live} onChange={toggleLive} /> Comment as I write
           </label>
@@ -310,6 +326,7 @@ function Builder({ id }) {
               <button onClick={() => onComment(c, 'dismiss')} className="text-pool-400">{c.flag === 'safety' ? 'Acknowledge' : 'Dismiss'}</button></span>
           ))}
           {drafting && !jess && <span className="w-full text-pool-300">Jess: {drafting}</span>}
+          {whoNote && who === null && <span className="w-full text-teal-300">{whoNote}</span>}
         </div>
       )}
       {payload && jess && (
@@ -326,8 +343,18 @@ function Builder({ id }) {
         </div>
       )}
       {payload && picking && (
-        <AudiencePicker payload={payload} onClose={() => setPicking(false)}
+        <AudiencePicker payload={payload} hasGroups={groupCount > 0} onWho={() => openWho('')} onClose={() => setPicking(false)}
           onSaved={audience => { setPicking(false); setPayload(p => ({ ...p, audience })) }} />
+      )}
+      {payload && who !== null && builderRef.current && (
+        <GroupSwimmers builder={builderRef.current} sessionId={payload.id} focusGroup={who}
+          onClose={() => setWho(null)}
+          onSaved={res => {
+            setWho(null)
+            setWhoNote(res.register_moved
+              ? `Saved. ${res.register_moved} swimmer${res.register_moved === 1 ? '' : 's'} moved into their group on the register.`
+              : 'Saved who swims each group.')
+          }} />
       )}
       {!payload && <p className="p-4 text-sm text-pool-400">Opening the session…</p>}
       <div ref={host} />

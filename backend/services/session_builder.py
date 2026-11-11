@@ -320,6 +320,71 @@ def apply_builder(db: DBSession, session: models.Session, builder: dict) -> dict
     return {"groups": summary}
 
 
+# ---------------------------------------------------------------- who swims each group
+
+def swimmers_for(db: DBSession, session: models.Session) -> dict:
+    """Everyone the coach can put in the session's groups, with what the register says.
+
+    The register's group numbers follow the order of the session's groups, so the
+    builder can show who swam which group once the register is taken."""
+    entries = {e.swimmer_id: e for e in session.entries or []}
+    plan = group_service.groups_on(db, session.date, session.squad)
+    training = {sid: name for name, g in plan.items() for sid in g["swimmer_ids"]}
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == "active").order_by(models.Swimmer.name).all()
+    return {
+        "register_taken": any(e.attended is not None for e in entries.values()),
+        "swimmers": [{
+            "id": s.id, "name": s.name, "training_group": training.get(s.id),
+            "attended": entries[s.id].attended if s.id in entries else None,
+            "group_done": entries[s.id].group_done if s.id in entries else None,
+        } for s in swimmers],
+        "plan_groups": [{"training_group_id": g["group_id"], "name": name, "swimmer_ids": list(g["swimmer_ids"])}
+                        for name, g in plan.items()],
+    }
+
+
+def set_group_swimmers(db: DBSession, session: models.Session, builder: dict) -> dict:
+    """Save who swims each group, and carry it to the register if it has been taken.
+
+    A group that holds exactly a training group's swimmers stays linked to it, so a
+    copy to next week takes that week's members; a hand-picked group keeps its list.
+    Each swimmer who came is put in their group on the register: after the session,
+    who swims a group is who swam it. Nobody's attendance changes."""
+    b = N.normalize_session(copy.deepcopy(builder))
+    groups = b.get("groups") or []
+    if not groups:
+        raise ValueError("This session has no groups yet: everyone swims the same sets.")
+    plan = {frozenset(p["swimmer_ids"]): p["training_group_id"]
+            for p in plan_groups(db, session.date, session.squad) if p["swimmer_ids"]}
+    seen = set()
+    for g in groups:
+        ids = []
+        for sid in g.get("swimmer_ids") or []:
+            if isinstance(sid, int) and sid not in seen:
+                seen.add(sid)
+                ids.append(sid)
+        g["swimmer_ids"] = ids
+        linked = plan.get(frozenset(ids))
+        if linked:
+            g["training_group_id"] = linked
+        else:
+            g.pop("training_group_id", None)
+    result = apply_builder(db, session, b)
+    number = {sid: i for i, g in enumerate(groups, start=1) for sid in g["swimmer_ids"]}
+    moved = 0
+    for e in session.entries or []:
+        n = number.get(e.swimmer_id)
+        if n is None:
+            continue
+        e.group_planned = n
+        if e.attended and e.group_done != n:
+            e.group_done = n
+            e.sub_group_done = None
+            moved += 1
+    db.commit()
+    return {**result, "builder_groups": groups, "register_moved": moved}
+
+
 def payload(db: DBSession, session: models.Session) -> dict:
     s = presentation(db)
     slot = session.pool_slot

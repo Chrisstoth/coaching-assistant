@@ -29,6 +29,10 @@ class SaveSession(BaseModel):
     audience: Optional[dict] = None
 
 
+class SessionIn(BaseModel):
+    session: dict
+
+
 class ScaleSettings(BaseModel):
     effort_scale: Optional[str] = None
     custom_scales: Optional[list[dict]] = None
@@ -131,6 +135,25 @@ def set_audience(session_id: int, body: Audience, db: DBSession = Depends(get_db
     s.audience = None if body.kind == "squad" and not body.label else body.model_dump()
     db.commit()
     return {"audience": s.audience}
+
+
+@router.get("/sessions/{session_id}/swimmers")
+def session_swimmers(session_id: int, db: DBSession = Depends(get_db)):
+    """Everyone who can be put in the session's groups, with the register so far."""
+    return B.swimmers_for(db, _get(db, session_id))
+
+
+@router.put("/sessions/{session_id}/group-swimmers")
+def save_group_swimmers(session_id: int, body: SessionIn, db: DBSession = Depends(get_db)):
+    """Who swims each of the session's groups (the session as the builder holds it, with
+    each group's swimmers). Once the register is taken, those who came move with it."""
+    s = _get(db, session_id)
+    if s.status == "cancelled":
+        raise HTTPException(status_code=409, detail="A cancelled session can't be edited.")
+    try:
+        return B.set_group_swimmers(db, s, body.session)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.post("/sessions/{session_id}/copy-next-week", status_code=201)

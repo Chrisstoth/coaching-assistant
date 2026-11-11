@@ -262,7 +262,13 @@ function gpickHTML(b){
 const visibleBlocks = () => S().blocks.filter(b => !curGroup || appliesTo(b, curGroup));
 function renderGroupsEdit(){
   const s = S();
-  $('#groupsEdit').innerHTML = (s.groups || []).map(g => `<span class="gchip" style="--gc:${groupColor(s, g.id)}"><i></i><input id="g-${g.id}" data-gname="${g.id}" value="${esc(g.name)}" aria-label="Group name" autocomplete="off" size="${Math.max(5, g.name.length + 1)}"><button type="button" data-act="del-group" data-gid="${g.id}" aria-label="Remove ${esc(g.name)}">×</button></span>`).join('') +
+  // who swims each group is chosen by the app around the builder, when it offers that
+  const who = g => {
+    if (!opts.onWho) return '';
+    const n = (g.swimmer_ids || []).length;
+    return `<button type="button" class="gwho${n ? '' : ' none'}" data-act="who" data-gid="${g.id}" aria-label="Who swims ${esc(g.name)}: ${n} swimmer${n === 1 ? '' : 's'}">${n ? `${n} swimmer${n === 1 ? '' : 's'}` : 'Who?'}</button>`;
+  };
+  $('#groupsEdit').innerHTML = (s.groups || []).map(g => `<span class="gchip" style="--gc:${groupColor(s, g.id)}"><i></i><input id="g-${g.id}" data-gname="${g.id}" value="${esc(g.name)}" aria-label="Group name" autocomplete="off" size="${Math.max(5, g.name.length + 1)}">${who(g)}<button type="button" data-act="del-group" data-gid="${g.id}" aria-label="Remove ${esc(g.name)}">×</button></span>`).join('') +
     `<button class="btn quiet" type="button" data-act="add-group">+ Add group</button>` +
     ((s.groups || []).length ? '' : `<span class="ghint">One group swims everything. Add groups to give each its own sets.</span>`);
 }
@@ -856,6 +862,7 @@ document.addEventListener('click', e => {
   if (act === 'tab') { curGroup = b.dataset.gid || ''; sel.clear(); renderBlocks(); refreshTotals(); if (view === 'pool') renderPool(); return; }
   if (act === 'add-group') return addGroup();
   if (act === 'del-group') return deleteGroup(b.dataset.gid);
+  if (act === 'who') { if (opts.onWho) opts.onWho(b.dataset.gid); return; }
   if (act === 'gpick') { if (!pop.hidden && pop.dataset.for === b.dataset.for) closeMenu(); else openGroupPicker(b, b.dataset.for); return; }
   if (act === 'mic') { micToggle(b.dataset.for); return; }
   if (act === 'add-notes') { pushUndo(); const nb = newNotes(curGroup ? [curGroup] : []); S().blocks.push(nb); renderBlocks({ id: `f-${nb.id}-text` }); markDirty(); toast('Notes added. Drag the dots beside the heading to move them.'); return; }
@@ -1066,6 +1073,18 @@ window.addEventListener('pagehide', flushNow);
   return {
     flush: flushNow,
     getSession: () => JSON.parse(JSON.stringify(S())),
+    // the session's groups with their colours, for the app's "who swims each group"
+    groups: () => (S().groups || []).map(g => ({ ...g, swimmer_ids: [...(g.swimmer_ids || [])], color: groupColor(S(), g.id) })),
+    // who swims each group, already saved by the app: no save of its own
+    setGroupSwimmers(saved){
+      const byId = Object.fromEntries((saved || []).map(g => [g.id, g]))
+      for (const g of S().groups || []) {
+        const x = byId[g.id]; if (!x) continue
+        g.swimmer_ids = [...(x.swimmer_ids || [])]
+        if (x.training_group_id) g.training_group_id = x.training_group_id; else delete g.training_group_id
+      }
+      renderGroupsEdit()
+    },
     setView,
     setComments(list){ comments = list || []; paintComments() },
     addBlocks,

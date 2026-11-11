@@ -136,5 +136,25 @@ assert.equal(EFF_SYSTEMS.bpsc.zones[3].label, 'Red', 'the standard scale is unto
 assert.ok(root2.querySelector('#scaleChart').textContent.includes('Silver 1 colours'))
 b2.destroy(); useScales([])
 
+// who swims each group: a count on each group chip opens the app's chooser; saving it updates the count
+const asked = []
+const root3 = window.document.createElement('div'); window.document.body.appendChild(root3)
+const b3 = mountBuilder(root3, { id: 44, session: sample, effSys: 'effort20', save: async () => ({ ok: true }), onWho: gid => asked.push(gid) })
+const chips = () => [...root3.querySelectorAll('#groupsEdit .gwho')]
+assert.ok(b3.groups().length >= 2)
+assert.equal(chips().length, b3.groups().length, 'one "who" button per group')
+const g0 = b3.groups()[0]
+assert.match(g0.color, /^#/)
+chips()[0].dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+assert.deepEqual(asked, [g0.id])
+b3.setGroupSwimmers([{ id: g0.id, swimmer_ids: [1, 2, 3] }])
+assert.equal(chips()[0].textContent, '3 swimmers')
+assert.deepEqual(b3.getSession().groups[0].swimmer_ids, [1, 2, 3])
+b3.destroy()
+const root4 = window.document.createElement('div'); window.document.body.appendChild(root4)
+const b4 = mountBuilder(root4, { id: 45, session: sample, effSys: 'effort20', save: async () => ({ ok: true }) })
+assert.equal(root4.querySelectorAll('#groupsEdit .gwho').length, 0, 'no "who" button when the app does not offer it')
+b4.destroy()
+
 console.log('Session builder screen checks passed')
 process.exit(0)
