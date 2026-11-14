@@ -5,6 +5,7 @@ import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessio
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 import SetRows from '../components/SetRows'
+import SessionTargets from '../components/SessionTargets'
 import { setRows, rowsTotalMetres } from '../sessionSets'
 import { presentationZones } from '../sessionPresentation'
 
@@ -300,6 +301,8 @@ export default function TodaySession() {
           )}
         </section>
       )}
+
+      {session.session_id && <SessionTargets sessionId={session.session_id} readOnly />}
 
       {(session.coach_intent || session.coach_notes || weeklyPlans.length > 0 || groups.length > 0) && (
         <section className="space-y-2.5">

@@ -109,7 +109,8 @@ const hexRgb = h => { const x = h.replace('#', ''); return [0, 2, 4].map(i => pa
 const lumOf = rgb => (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
 
 /* model */
-const newLine = (p = {}) => ({ id: uid(), t: 'line', reps: p.reps ?? null, dist: p.dist ?? null, desc: p.desc ?? '', int: p.int ?? null, int2: p.int2 ?? null, rest: p.rest ?? null, est: p.est ?? null, eff: p.eff ?? '' });
+// talk (seconds) is only there on a talk line, so ordinary sets keep their shape
+const newLine = (p = {}) => { const n = { id: uid(), t: 'line', reps: p.reps ?? null, dist: p.dist ?? null, desc: p.desc ?? '', int: p.int ?? null, int2: p.int2 ?? null, rest: p.rest ?? null, est: p.est ?? null, eff: p.eff ?? '' }; if (p.talk != null) n.talk = p.talk; return n; };
 const newRound = (times = 2, items = [], note = '') => ({ id: uid(), t: 'round', times, note, items });
 // groups: [] = every group swims it, otherwise the ids of the groups that do. A string is the old single-group label (normalised on load).
 const newBlock = (name = 'Block', groups = [], items) => { const b = { id: uid(), name, groups: Array.isArray(groups) ? groups.slice() : [], items: items || [] }; if (typeof groups === 'string' && groups.trim()) b.group = groups.trim(); return b; };
@@ -213,6 +214,7 @@ function hoistFirstTiming(line){
 }
 function nodeStats(n){
   if (n.t === 'round') return statsOf(n.items, n.times);
+  if (isTalkLine(n)) { const t = +n.talk || 0; return { dist: 0, time: t, time2: t, et: 0, kt: 0 }; }
   const reps = n.reps || 1, dist = n.dist || 0, hd = !!dist;
   let time = 0, time2 = 0;
   const pt = partTimings(n);
@@ -315,9 +317,38 @@ function parseLineNodes(text, loose){
   const parts = splitSets(s, loose);
   return (parts.length === 1 ? [parseSetLine(parts[0])] : parts.flatMap(p => parseLineNodes(p, loose))).filter(Boolean);
 }
+/* Talk: time the coach spends explaining the next set (its purpose, the details, a word with one swimmer) before anyone pushes off.
+   "Talk 3 min purpose and turns" → a talk line { talk: 180, desc: 'purpose and turns' }. It counts toward the session time; no metres, no intensity.
+   The time comes first: m:ss, a number with a unit (90s, 2 min, 3m, 1.5 mins), or a bare minute count ("Talk 2"). "Explain" needs m:ss,
+   seconds or "min", so "Explain 50 fly" and "Explain 25m underwater" stay notes. Anything over half an hour isn't a talk. */
+const TALK_T = '(\\d{1,2}[:.]\\d{2}|\\d{1,3}(?:\\.\\d)?\\s*(?:s|secs?|seconds?|m|mins?|minutes?)\\b|\\d{1,2}(?![\\d:.]|\\s*[x×]))';
+const RX_TALK = new RegExp('^(?:(?:coach|team)\\s+)?(talk|brief(?:ing)?|chat|explain)\\b\\s*(?:for\\s+)?(?:[:\\-–]\\s*)?' + TALK_T + '(?!\\d)(.*)$', 'i');
+const TALK_MAX = 1800;
+const isTalkLine = n => !!n && n.t === 'line' && n.talk != null;
+function talkSecs(v){
+  const x = String(v == null ? '' : v).trim();
+  if (/^\d{1,2}[:.]\d{2}$/.test(x)) return parseTime(x);
+  const m = x.match(/^(\d{1,3}(?:\.\d)?)\s*([a-z]*)$/i); if (!m) return null;
+  const n = +m[1], u = m[2].toLowerCase();
+  if (!u) return n < 10 ? n * 60 : n;
+  return Math.round(/^m/.test(u) ? n * 60 : n);
+}
+// the time typed into a talk row's cell: "2", "2:00", "90s", "2 min"
+function parseTalkTime(v){
+  const x = String(v == null ? '' : v).trim(); if (!x) return null;
+  if (!new RegExp('^' + TALK_T + '$', 'i').test(x)) return null;
+  const t = talkSecs(x); return t != null && t > 0 && t <= TALK_MAX ? t : null;
+}
+function parseTalk(text){
+  const m = String(text).trim().match(RX_TALK); if (!m) return null;
+  if (/^explain/i.test(m[1]) && /^\d+(?:\.\d)?(?:\s*m)?$/i.test(m[2])) return null;
+  const t = talkSecs(m[2]); if (!t || t > TALK_MAX) return null;
+  return newLine({ desc: m[3].replace(/^[\s,;:\-–]+/, '').replace(/\s{2,}/g, ' ').trim(), talk: t });
+}
 function parseSetLine(text){
   let s = String(text).trim();
   if (!s) return null;
+  const talk = parseTalk(s); if (talk) return talk;
   let m = s.match(RX_ROUND);
   if (m) {
     const rest = m[2].replace(/^[:\-–]\s*|^of\s+/i, '').trim();
@@ -356,7 +387,7 @@ function parseText(text){
   let stack = null, last = null;
   for (const raw of lines) {
     if (!raw.trim()) continue;
-    if (PART_LINE.test(raw) && last && last.t === 'line') { addPart(last, raw); continue; }
+    if (PART_LINE.test(raw) && last && last.t === 'line' && !isTalkLine(last)) { addPart(last, raw); continue; }
     const ind = raw.match(/^ */)[0].length;
     if (!stack) stack = [{ ind, items: root }];
     while (stack.length > 1 && ind < stack[stack.length - 1].ind) { stack.pop(); const top = stack[stack.length - 1]; last = top.items[top.items.length - 1] || null; }
@@ -397,8 +428,8 @@ function plainDesc(desc){
   return keep.length ? buildDesc(pe.rawPrefix, keep) : pe.rawPrefix;
 }
 // a line with words only (no reps, distance, send-off or intensity) is a note, e.g. "Fins on" or "Explain the main set"
-const isNoteLine = n => n.t === 'line' && (n.dist == null || n.dist === '') && !(n.reps > 1) && n.int == null && n.int2 == null && n.rest == null && n.est == null && !n.eff && !!plainDesc(n.desc) && !descParts(n.desc);
-const isBlankLine = n => n.t === 'line' && (n.dist == null || n.dist === '') && !(n.reps > 1) && n.int == null && n.int2 == null && n.rest == null && n.est == null && !n.eff && !plainDesc(n.desc);
+const isNoteLine = n => n.t === 'line' && n.talk == null && (n.dist == null || n.dist === '') && !(n.reps > 1) && n.int == null && n.int2 == null && n.rest == null && n.est == null && !n.eff && !!plainDesc(n.desc) && !descParts(n.desc);
+const isBlankLine = n => n.t === 'line' && n.talk == null && (n.dist == null || n.dist === '') && !(n.reps > 1) && n.int == null && n.int2 == null && n.rest == null && n.est == null && !n.eff && !plainDesc(n.desc);
 const newNotes = (groups = []) => ({ id: uid(), kind: 'notes', name: 'Additional notes', groups: groups.slice(), text: '', items: [] });
 const hasNoteText = b => !!String(b.text || '').trim();
 function addPart(line, text){
@@ -421,6 +452,7 @@ function sendoffText(n){
 }
 const timeText = st => fmtTime(st.time) + (st.time2 !== st.time ? ' / ' + fmtTime(st.time2) : '');
 function lineText(n){
+  if (isTalkLine(n)) return ['Talk ' + fmtTime(n.talk), plainDesc(n.desc)].filter(Boolean).join(' ');
   const parts = [];
   if (n.dist != null && n.dist !== '') parts.push((n.reps && n.reps > 1 ? n.reps + 'x' : '') + n.dist);
   const d = plainDesc(n.desc), pe = descParts(d, 1, true);
@@ -562,4 +594,4 @@ function normalizeDictation(raw, speech){
   return t.replace(/\s{2,}/g, ' ').replace(/[\s.]+$/, '').trim();
 }
 
-export { CUSTOM_SCALES, STANDARD_SCALES, sysDef, useScales, DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor }
+export { CUSTOM_SCALES, STANDARD_SCALES, sysDef, useScales, DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, isTalkLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseTalk, parseTalkTime, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor }

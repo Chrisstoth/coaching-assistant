@@ -28,6 +28,13 @@ function Effort({ effort }) {
 
 function Interval({ interval }) {
   if (!interval) return <span />
+  if (interval.kind === 'talk') {
+    return (
+      <span className="justify-self-end tabular-nums text-xs font-semibold text-pool-400 whitespace-nowrap">
+        <span className="text-[10px] uppercase tracking-wide text-pool-500">talk </span>{interval.value}
+      </span>
+    )
+  }
   if (interval.kind === 'rest') {
     return (
       <span className="justify-self-end tabular-nums text-xs font-semibold text-pool-400 whitespace-nowrap">

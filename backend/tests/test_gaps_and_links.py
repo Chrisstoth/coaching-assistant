@@ -1,7 +1,7 @@
 """Gaps and links: coverage in code, predictions with a track record, and the weekly review."""
 import os
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 os.environ.setdefault("APP_PASSWORD", "test-password")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
@@ -104,6 +104,9 @@ class PredictionTests(unittest.TestCase):
             miss = P.add(db, "analyst", {"kind": "race_time", "statement": "Ruby 100 fly under 1:05", "swimmer_id": self.sid,
                                          "distance": 100, "stroke": "fly", "target": "1:05", "meet_id": self.meet})
             other = P.add(db, "physiologist", {"statement": "Ruby flat after race pace again", "due": "2026-11-20"})
+            # Made the week before the meet: a swim from before a prediction was made never settles it.
+            for made in (p, miss):
+                made.created_at = datetime(2026, 11, 2, tzinfo=timezone.utc)
             db.add(models.SwimTime(swimmer_id=self.sid, event="200 Freestyle SCM", stroke="Freestyle", distance=200, course="SCM",
                                    time_seconds=129.4, date=TODAY, meet_id=self.meet))
             db.commit()

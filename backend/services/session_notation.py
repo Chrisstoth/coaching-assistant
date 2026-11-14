@@ -249,8 +249,12 @@ def new_line(p: Optional[dict] = None) -> dict:
         v = p.get(k)
         return d if v is None else v
 
-    return {"id": uid(), "t": "line", "reps": g("reps"), "dist": g("dist"), "desc": g("desc", ""), "int": g("int"),
-            "int2": g("int2"), "rest": g("rest"), "est": g("est"), "eff": g("eff", "")}
+    n = {"id": uid(), "t": "line", "reps": g("reps"), "dist": g("dist"), "desc": g("desc", ""), "int": g("int"),
+         "int2": g("int2"), "rest": g("rest"), "est": g("est"), "eff": g("eff", "")}
+    # talk (seconds) is only there on a talk line, so ordinary sets keep their shape
+    if p.get("talk") is not None:
+        n["talk"] = p["talk"]
+    return n
 
 
 def new_round(times=2, items=None, note="") -> dict:
@@ -518,6 +522,9 @@ def hoist_first_timing(line: dict) -> None:
 def node_stats(n: dict) -> dict:
     if n.get("t") == "round":
         return stats_of(n.get("items"), n.get("times"))
+    if is_talk_line(n):
+        t = n.get("talk") or 0
+        return {"dist": 0, "time": t, "time2": t, "et": 0, "kt": 0}
     reps = n.get("reps") or 1
     dist = n.get("dist") or 0
     hd = bool(dist)
@@ -691,10 +698,55 @@ def parse_line_nodes(text, loose: bool = False) -> list:
     return [x for x in nodes if x]
 
 
+# Talk: time the coach spends explaining the next set (its purpose, the details, a word
+# with one swimmer) before anyone pushes off. "Talk 3 min purpose and turns" -> a talk
+# line {talk: 180, desc: 'purpose and turns'}. It counts toward the session time; no
+# metres, no intensity. The time comes first: m:ss, a number with a unit (90s, 2 min,
+# 3m, 1.5 mins), or a bare minute count ("Talk 2"). "Explain" needs m:ss, seconds or
+# "min", so "Explain 50 fly" and "Explain 25m underwater" stay notes. Anything over half
+# an hour isn't a talk.
+TALK_T = r"(\d{1,2}[:.]\d{2}|\d{1,3}(?:\.\d)?\s*(?:s|secs?|seconds?|m|mins?|minutes?)\b|\d{1,2}(?![\d:.]|\s*[x×]))"
+RX_TALK = re.compile(r"^(?:(?:coach|team)\s+)?(talk|brief(?:ing)?|chat|explain)\b\s*(?:for\s+)?(?:[:\-–]\s*)?" + TALK_T + r"(?!\d)(.*)\Z", I)
+TALK_MAX = 1800
+
+
+def is_talk_line(n) -> bool:
+    return bool(n) and n.get("t") == "line" and n.get("talk") is not None
+
+
+def talk_secs(v):
+    x = str("" if v is None else v).strip()
+    if re.fullmatch(r"\d{1,2}[:.]\d{2}", x):
+        return parse_time(x)
+    m = re.fullmatch(r"(\d{1,3}(?:\.\d)?)\s*([a-z]*)", x, I)
+    if not m:
+        return None
+    n, u = _num(m.group(1)), m.group(2).lower()
+    if not u:
+        return n * 60 if n < 10 else n
+    return js_round(n * 60 if u.startswith("m") else n)
+
+
+def parse_talk(text):
+    m = RX_TALK.match(str(text).strip())
+    if not m:
+        return None
+    if re.match(r"explain", m.group(1), I) and re.fullmatch(r"\d+(?:\.\d)?(?:\s*m)?", m.group(2), I):
+        return None
+    t = talk_secs(m.group(2))
+    if not t or t > TALK_MAX:
+        return None
+    desc = re.sub(r"\s{2,}", " ", re.sub(r"^[\s,;:\-–]+", "", m.group(3), count=1)).strip()
+    return new_line({"desc": desc, "talk": t})
+
+
 def parse_set_line(text):
     s = str(text).strip()
     if not s:
         return None
+    talk = parse_talk(s)
+    if talk:
+        return talk
     m = RX_ROUND.search(s)
     if m:
         rest = re.sub(r"^[:\-–]\s*|^of\s+", "", m.group(2), count=1, flags=I).strip()
@@ -759,7 +811,7 @@ def parse_text(text) -> list:
     for raw in re.split(r"\r?\n", str(text).replace("\t", "  ")):
         if not raw.strip():
             continue
-        if PART_LINE.search(raw) and last and last.get("t") == "line":
+        if PART_LINE.search(raw) and last and last.get("t") == "line" and not is_talk_line(last):
             add_part(last, raw)
             continue
         ind = len(re.match(r" *", raw).group(0))
@@ -831,7 +883,7 @@ def _no_dist(n) -> bool:
 
 
 def _bare(n) -> bool:
-    return (n.get("t") == "line" and _no_dist(n) and not ((n.get("reps") or 0) > 1)
+    return (n.get("t") == "line" and n.get("talk") is None and _no_dist(n) and not ((n.get("reps") or 0) > 1)
             and all(n.get(k) is None for k in ("int", "int2", "rest", "est")) and not n.get("eff"))
 
 
@@ -873,6 +925,8 @@ def time_text(st: dict) -> str:
 
 
 def line_text(n: dict, sys=DEFAULT_SYS) -> str:
+    if is_talk_line(n):
+        return " ".join(x for x in ["Talk " + fmt_time(n["talk"]), plain_desc(n.get("desc"))] if x)
     parts = []
     if not _no_dist(n):
         parts.append((js_str(n["reps"]) + "x" if n.get("reps") and n["reps"] > 1 else "") + js_str(n["dist"]))
@@ -1164,6 +1218,9 @@ def _empty_zones() -> dict:
 
 
 def _add_zone_line(acc, n, k, bands):
+    # the coach talking isn't training: it has no zone
+    if n.get("talk") is not None:
+        return
     st = node_stats(n)
     dist, time = st["dist"] * k, st["time"] * k
     if not dist and not time:

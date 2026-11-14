@@ -1,4 +1,4 @@
-export default function RegisterSavedOverlay({ queued = false, complete = true, operation = null, sessionId = null, onClose, onHome, onDebrief }) {
+export default function RegisterSavedOverlay({ queued = false, complete = true, operation = null, sessionId = null, onClose, onHome, onDebrief, backTo = 'Today' }) {
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-pool-950/70 px-6 backdrop-blur-sm"
@@ -25,7 +25,7 @@ export default function RegisterSavedOverlay({ queued = false, complete = true, 
         {queued ? (
           <div className="mt-4 flex gap-2">
             <button onClick={onClose} className="flex-1 rounded-lg bg-pool-700 py-2 text-xs font-semibold text-pool-200">Keep editing</button>
-            <button onClick={onHome} className="flex-1 rounded-lg bg-accent-600 py-2 text-xs font-semibold text-white">Go to Today</button>
+            <button onClick={onHome} className="flex-1 rounded-lg bg-accent-600 py-2 text-xs font-semibold text-white">{backTo === 'Today' ? 'Go to Today' : `Back to the ${backTo}`}</button>
           </div>
         ) : complete && sessionId ? (
           <div className="mt-4 space-y-2">
@@ -37,7 +37,7 @@ export default function RegisterSavedOverlay({ queued = false, complete = true, 
             </button>
           </div>
         ) : (
-          <p className="mt-3 text-xs text-pool-500">Returning to Today…</p>
+          <p className="mt-3 text-xs text-pool-500">{backTo === 'Today' ? 'Returning to Today…' : `Back to the ${backTo}…`}</p>
         )}
       </div>
     </div>

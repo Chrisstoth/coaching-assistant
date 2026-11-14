@@ -401,6 +401,7 @@ def payload(db: DBSession, session: models.Session) -> dict:
         "pool_slot": {"id": slot.id, "label": slot.label, "time": slot.time} if slot else None,
         "audience": session.audience,
         "register_taken": any(e.attended is not None for e in session.entries or []),
+        "plan_ready": bool(session.plan_ready_at),
         "club": {"name": s.club_name if s else None, "logo": s.logo_data_url if s else None},
         "effort_scale": usual_scale(db),
         "scales": scale_choices(db, include=built.get("effSys")),

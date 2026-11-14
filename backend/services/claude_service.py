@@ -664,9 +664,14 @@ def generate_session_predictions(
         "sets": group.sets,
         "volume_breakdown": group.volume_breakdown,
     } for group in session.groups]
+    from backend.services.target_times import swimmer_target_lines
+    target_lines = swimmer_target_lines(session, db, [row.id for row in pending])
     briefs = []
     for row in pending:
         brief = _prediction_swimmer_brief(row, session, db)
+        if target_lines.get(row.id):
+            # The coach's target times for this session's reps, from PBs on the day.
+            brief["session_target_times"] = target_lines[row.id]
         if triage_reasons.get(row.id):
             # Why this swimmer was singled out today. "Routine check" carries no
             # concern with it and should not be read as one.
@@ -6902,6 +6907,17 @@ def build_session_debrief_context(debrief, db: DBSession) -> str:
             f"Energy focus: {session.energy_system_focus or 'not recorded'}\n"
             + (f"PLAN:\n{plan_summary}" if plan_summary else "No written plan for this session.")
         )
+        from backend.services.target_times import session_context_text
+        targets = session_context_text(session, db)
+        if targets:
+            parts.append(targets)
+        from backend.services.session_notes import notes_text
+        jotted = notes_text(db, session.id)
+        if jotted:
+            parts.append(
+                "NOTES THE COACH TOOK DURING THE SESSION (their own words at the time; "
+                "build on them, don't ask for them again):\n" + jotted
+            )
     else:
         parts.append(
             f"No session plan is linked to this debrief (date {debrief.date}). "
@@ -7239,7 +7255,9 @@ def extract_session_debrief(debrief, db: DBSession) -> list[dict]:
         f"{'COACH' if item.get('role') == 'coach' else 'ASSISTANT'}: {item.get('message', '')}"
         for item in (debrief.messages or []) if item.get("message")
     )
-    if not transcript.strip():
+    from backend.services.session_notes import notes_text
+    jotted = notes_text(db, debrief.session_id)
+    if not transcript.strip() and not jotted:
         return []
 
     session = db.query(models.Session).filter(
@@ -7270,7 +7288,10 @@ SWIMMERS YOU MAY ATTRIBUTE TO (use these exact ids — never invent one):
 {chr(10).join(swimmer_rows) or '  (none)'}
 
 TRANSCRIPT:
-{transcript}
+{transcript or '(the coach only took notes during the session)'}
+
+NOTES THE COACH TOOK DURING THE SESSION (their own words at the time, as good as the transcript):
+{jotted or '  (none)'}
 
 Return a JSON array of proposed records. Each item:
 {{
@@ -7284,12 +7305,14 @@ Return a JSON array of proposed records. Each item:
   "effort": "<for benchmark only: max|aerobic|threshold>",
   "time_seconds": <for benchmark only: number>,
   "confidence": "low|moderate|high",
-  "evidence": "<the words in the transcript this came from>"
+  "evidence": "<the words in the transcript or notes this came from>"
 }}
 
 RULES:
-- Only record what the coach actually said. Never infer times, heart rates or technical detail.
-- If the coach corrected themselves, keep only the corrected version.
+- Only record what the coach actually said or wrote. Never infer times, heart rates or technical detail.
+- If the coach corrected themselves, keep only the corrected version. What they said in the
+  debrief came later than their notes, so it wins where the two disagree.
+- A note about a set but no swimmer is about the group; only attribute it to a swimmer it names.
 - If a swimmer cannot be matched confidently to an id, leave it out entirely.
 - "intent" is a training direction the coach decided on. "watchpoint" is something to check next time.
 - Mark confidence "low" when the coach was vague or hedging.
@@ -7352,6 +7375,13 @@ def summarise_session_debrief(debrief, db: DBSession) -> str:
     session = db.query(models.Session).filter(
         models.Session.id == debrief.session_id,
     ).first() if debrief.session_id else None
+    from backend.services.session_notes import notes_text
+    jotted = notes_text(db, debrief.session_id)
+    if jotted:
+        transcript = (
+            f"{transcript}\n\nNOTES THE COACH TOOK DURING THE SESSION:\n{jotted}"
+            if transcript.strip() else f"NOTES THE COACH TOOK DURING THE SESSION:\n{jotted}"
+        )
     prompt = f"""Write a short session summary from this coach debrief, in plain prose.
 
 Cover, in this order and only where the coach gave something:

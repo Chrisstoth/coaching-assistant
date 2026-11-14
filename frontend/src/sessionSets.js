@@ -202,11 +202,25 @@ function tidyDescription(text) {
  * Parse one line of coach shorthand into a printable row.
  * `zones` are the club's terminology levels (label / colour / canonical_zone).
  */
+// "Talk 3:00 purpose of the set": the time the coach spends explaining the next
+// set, as the Session Builder writes it. No metres; the clock column shows it.
+const TALK_ROW = /^(?:(?:coach|team)\s+)?(?:talk|brief(?:ing)?|chat)\b\s*[:\-–]?\s*(\d{1,2}:\d{2})(?!\d)\s*[·•,;:\-–]?\s*(.*)$/i
+
 export function parseSetLine(line, zones = []) {
   const raw = String(line ?? '')
   const depth = /^(?: {2,}|\t)/.test(raw) ? 1 : 0
   const text = clean(raw).replace(/^[•›]\s*/, '')
   if (!text) return null
+
+  const talk = text.match(TALK_ROW)
+  if (talk) {
+    const value = normaliseClock(talk[1])
+    return {
+      kind: 'note', depth, repetitions: null, distance: null, dose: '', label: '',
+      description: talk[2] ? `Talk: ${clean(talk[2])}` : 'Talk',
+      interval: { kind: 'talk', value, label: `talk ${value}` }, effort: null, totalMetres: null,
+    }
+  }
 
   const repeat = text.match(REPEAT_ROW)
   if (repeat) {

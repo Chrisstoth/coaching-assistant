@@ -116,6 +116,63 @@ class TargetSetTests(unittest.TestCase):
         self.assertEqual([row["event"] for row in rows], ["100 Backstroke", "200 Backstroke"])
         self.assertEqual(rows[1]["times"][0]["display"], "37.5")
 
+    def test_a_session_carries_its_target_sets_into_the_analysis(self):
+        http, h = self._http()
+        made = http.post("/target-sets", headers=h, json={"squad": "Silver 1", "name": "Back 25s",
+                                                          "strokes": ["Backstroke"]}).json()
+        # The session was on 2 May: the 1:07.20 swum that day counts, but not
+        # the 1:05.00 LCM swim or anything later. On 1 May only the 1:08.40 existed.
+        with SessionLocal() as db:
+            on_day = models.Session(date=date(2026, 5, 2), squad="Silver 1", title="Speed")
+            before = models.Session(date=date(2026, 5, 1), squad="Silver 1", title="Earlier")
+            db.add_all([on_day, before])
+            db.flush()
+            db.add(models.SessionEntry(session_id=on_day.id, swimmer_id=self.ids["mia"], attended=True))
+            db.commit()
+            day_id, before_id = on_day.id, before.id
+
+        r = http.put(f"/target-sets/session/{day_id}", headers=h, json={"targets": [
+            {"target_set_id": made["id"], "note": "Main set 16 x 25"}]})
+        self.assertEqual(r.status_code, 200, r.text)
+        view = r.json()
+        self.assertEqual(view["swimmers_from"], "register")
+        self.assertEqual([s["name"] for s in view["targets"][0]["swimmers"]], ["Mia Cole"])
+        self.assertEqual([t["display"] for t in view["targets"][0]["swimmers"][0]["rows"][0]["times"]],
+                         ["16.8", "17.3", "17.8"])
+
+        self.assertEqual(http.post(f"/target-sets/{made['id']}/sessions/{before_id}", headers=h,
+                                   json={"note": "Warm-up 4 x 25"}).status_code, 201)
+        earlier = http.get(f"/target-sets/session/{before_id}", headers=h).json()
+        self.assertEqual(earlier["swimmers_from"], "squad")
+        mia = next(s for s in earlier["targets"][0]["swimmers"] if s["name"] == "Mia Cole")
+        self.assertEqual(mia["rows"][0]["pb"]["display"], "1:08.40")
+
+        used = http.get(f"/target-sets/{made['id']}/sessions", headers=h).json()["used"]
+        self.assertEqual([(u["title"], u["note"]) for u in used], [("Speed", "Main set 16 x 25"), ("Earlier", "Warm-up 4 x 25")])
+
+        with SessionLocal() as db:
+            session = db.get(models.Session, day_id)
+            text = tt.session_context_text(session, db)
+            from backend.services import claude_service
+            debrief = models.SessionDebrief(session_id=day_id, date=session.date)
+            debrief_text = claude_service.build_session_debrief_context(debrief, db)
+            lines = tt.swimmer_target_lines(session, db, [self.ids["mia"]])
+        self.assertIn('"Back 25s"', text)
+        self.assertIn("Used for: Main set 16 x 25", text)
+        self.assertIn("Mia Cole: 100 Back (PB 1:07.20) 16.8 / 17.3 / 17.8", text)
+        self.assertIn("targets, not results", text)
+        self.assertIn("TARGET TIMES SET FOR THIS SESSION", debrief_text)
+        self.assertEqual(lines[self.ids["mia"]], ["Back 25s (Main set 16 x 25): 100 Back (PB 1:07.20) 16.8 / 17.3 / 17.8"])
+
+        # Removing it from a session, and deleting the set, leave nothing behind.
+        http.delete(f"/target-sets/{made['id']}/sessions/{before_id}", headers=h)
+        self.assertEqual(http.get(f"/target-sets/session/{before_id}", headers=h).json()["targets"], [])
+        self.assertEqual(http.delete(f"/target-sets/{made['id']}", headers=h).status_code, 204)
+        with SessionLocal() as db:
+            self.assertIsNone(db.get(models.Session, day_id).targets)
+        self.assertEqual(http.put(f"/target-sets/session/{day_id}", headers=h, json={"targets": [
+            {"target_set_id": 999}]}).status_code, 422)
+
     def test_bad_input_is_refused(self):
         http, h = self._http()
         self.assertEqual(http.post("/target-sets", headers=h, json={"offsets": []}).status_code, 422)

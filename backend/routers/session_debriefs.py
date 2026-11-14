@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend import models
 from backend.database import get_db
 from backend.services import claude_service
+from backend.services import session_notes
 from backend.services.ai_operations import enqueue_operation, operation_out
 
 router = APIRouter()
@@ -104,6 +105,12 @@ def start_debrief(body: DebriefStart, db: DBSession = Depends(get_db)):
         f"How did {session.title or 'the session'} go?"
         if session else "What was the session, and how did it go?"
     )
+    noted = len(session_notes.notes_for(db, session.id)) if session else 0
+    if noted:
+        opener = (
+            f"I've got the {noted} note{'' if noted == 1 else 's'} you took during "
+            f"{session.title or 'the session'}. How did it go overall, and is there anything to add?"
+        )
     row.messages = [{"role": "ai", "message": opener}]
     db.commit()
     db.refresh(row)
@@ -141,7 +148,8 @@ def debrief_chat(debrief_id: int, body: dict = Body(...), db: DBSession = Depend
 def complete_debrief(debrief_id: int, db: DBSession = Depends(get_db)):
     """Hand the write-up to the background queue so the coach can walk away."""
     row = _get_or_404(debrief_id, db)
-    if not any(item.get("role") == "coach" for item in (row.messages or [])):
+    spoke = any(item.get("role") == "coach" for item in (row.messages or []))
+    if not spoke and not (row.session_id and session_notes.notes_for(db, row.session_id)):
         raise HTTPException(400, "Say something about the session before finishing")
     if row.status not in {"in_progress", "ready"}:
         raise HTTPException(409, "This debrief is already being written up")

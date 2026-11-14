@@ -226,6 +226,12 @@ class Session(Base):
     # Whether the session was swum as written: {"status": "as_written"|"changed", "note"}.
     # The staff learn from what was actually swum, not from the plan.
     as_swum = Column(JSON, nullable=True)
+    # Target sets used in this session: [{"target_set_id": 3, "note": "Main set 16 x 25"}].
+    # The times are worked out from the PBs swimmers had on the session date.
+    targets = Column(JSON, nullable=True)
+    # When the coach said the plan was written and ready to run. Editing stays open;
+    # this only tells Home (and the coach) that the writing is finished.
+    plan_ready_at = Column(DateTime(timezone=True), nullable=True)
 
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 
@@ -944,6 +950,33 @@ class SessionDebrief(Base):
     proposals = Column(JSON, nullable=False, default=list)
     committed_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class SessionNote(Base):
+    """
+    A note the coach jotted down during a session, poolside.
+
+    About the whole session, one set, one or more swimmers, or a mix. These are raw
+    material for the debrief: nothing here reaches a swimmer's record until the
+    coach confirms it there.
+    """
+    __tablename__ = "session_notes"
+    __table_args__ = (UniqueConstraint("client_id", name="uq_session_note_client"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False, index=True)
+    # The phone's own id for the note, so a save retried after losing signal is
+    # stored once.
+    client_id = Column(String, nullable=True)
+    text = Column(Text, nullable=False)
+    swimmer_ids = Column(JSON, default=list)
+    # The set it's about, as it read when the note was made:
+    # {"block_id", "line_id", "label"}. The label survives later edits to the plan.
+    set_ref = Column(JSON, nullable=True)
+    # When the coach wrote it (the phone's clock); it may be saved later if offline.
+    noted_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 

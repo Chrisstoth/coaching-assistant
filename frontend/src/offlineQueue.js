@@ -41,6 +41,36 @@ export function queueRegisterSave(sessionId, body) {
   return { queued: true, pending_count: queue.length }
 }
 
+// A note made during a session with no signal. The note carries the phone's own
+// id, so sending it twice (a retry after a lost reply) still stores it once.
+export function queueSessionNote(sessionId, note) {
+  const id = `session-note:${note.client_id}`
+  const queue = readQueue().filter(item => item.id !== id)
+  queue.push({
+    id,
+    method: 'POST',
+    path: `/sessions/${sessionId}/notes`,
+    body: note,
+    created_at: new Date().toISOString(),
+    revision: note.client_id,
+    attempts: 0,
+  })
+  writeQueue(queue)
+  return { queued: true, pending_count: queue.length }
+}
+
+// Notes for this session still waiting on the phone, oldest first.
+export function queuedSessionNotes(sessionId) {
+  const path = `/sessions/${sessionId}/notes`
+  return readQueue().filter(item => item.method === 'POST' && item.path === path).map(item => item.body)
+}
+
+export function dropQueuedSessionNote(clientId) {
+  const id = `session-note:${clientId}`
+  const queue = readQueue()
+  if (queue.some(item => item.id === id)) writeQueue(queue.filter(item => item.id !== id))
+}
+
 async function runFlush(sendRequest) {
   if (!navigator.onLine) {
     return { synced: 0, pending_count: getOfflineSaveCount(), offline: true }

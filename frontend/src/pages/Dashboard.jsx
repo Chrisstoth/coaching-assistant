@@ -5,7 +5,7 @@ import { isSessionNear, localDateKey, sessionEnded, weekStartKey, weeklySessionQ
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import HelpLink from '../components/HelpLink'
 
-function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, busyLabel = 'Opening…', error, onRetry }) {
+function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKey, busyLabel = 'Opening…', error, onRetry }) {
   if (sessions.length === 0) {
     return (
       <section className="bg-pool-800/70 border border-pool-700 rounded-2xl p-4">
@@ -38,7 +38,6 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, busyL
       </div>
       <div className="space-y-2.5">
         {sessions.map(session => {
-          const query = session.session_id ? `session=${session.session_id}` : `slot=${session.slot_id}`
           const sessionDate = new Date(`${session.date}T12:00:00`)
           const day = sessionDate.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
           const current = isSessionNear(session)
@@ -46,20 +45,23 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, busyL
           const groups = session.groups || []
           const mods = Object.entries(session.individual_mods || {})
           const written = Boolean(session.session_id && (groups.some(g => g.sets) || session.coach_intent))
+          const ready = Boolean(session.plan_ready)
           const finished = sessionEnded(session)
+          const busy = busyKey && busyKey.startsWith(`${key}:`)
           return (
-            <article key={key} className={`rounded-2xl border p-3.5 ${current ? 'bg-accent-900/30 border-accent-600/50' : 'bg-pool-800 border-pool-700'}`}>
+            <article key={key} className={`rounded-2xl border p-3.5 ${current ? 'bg-accent-900/30 border-accent-600/50' : ready ? 'bg-pool-800 border-teal-700/60' : 'bg-pool-800 border-pool-700'}`}>
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
+                <button type="button" onClick={() => onOpen(session)} disabled={busy} className="min-w-0 text-left flex-1">
+                  <span className="flex items-center gap-2">
                     {current && <span className="w-2 h-2 rounded-full bg-accent-400" />}
-                    <p className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</p>
+                    <span className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</span>
+                    {ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded-full px-2 py-0.5 shrink-0">Ready ✓</span>}
                     {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{session.cycle_code}</span>}
-                  </div>
-                  <p className="text-xs text-pool-400 mt-1">
+                  </span>
+                  <span className="block text-xs text-pool-400 mt-1">
                     {[day, session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}
-                  </p>
-                </div>
+                  </span>
+                </button>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
                     onClick={() => onCancel(session)}
@@ -94,18 +96,25 @@ function SessionDesk({ sessions, onRegister, onDismiss, onCancel, busyKey, busyL
                 <p className="text-xs text-amber-200 mt-3">Finished. Take the register while it's fresh: it's what the staff learn from.</p>
               )}
               <div className="grid grid-cols-3 gap-2 mt-3">
-                <button onClick={() => onRegister(session)} disabled={busyKey === key}
-                  className={`${finished && !session.registered ? 'bg-amber-600' : 'bg-accent-600'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
-                  {busyKey === key ? busyLabel : session.registered ? 'Continue register' : 'Take register'}
+                <button onClick={() => onOpen(session)} disabled={busy}
+                  className="bg-accent-600 disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold">
+                  {busyKey === `${key}:open` ? busyLabel : 'Open'}
                 </button>
-                <Link to={session.session_id ? `/builder/${session.session_id}` : `/builder/new?date=${session.date}&slot=${session.slot_id || ''}`}
-                  className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
-                  {written ? 'Open session' : 'Write it'}
-                </Link>
-                <Link to={session.session_id && written ? `/builder/${session.session_id}?view=pool` : `/today-session?${query}`}
-                  className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-300">
-                  Poolside
-                </Link>
+                <button onClick={() => onRegister(session)} disabled={busy}
+                  className={`${finished && !session.registered ? 'bg-amber-600 text-white' : 'bg-pool-700 border border-pool-600 text-pool-200'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
+                  {busyKey === `${key}:register` ? busyLabel : session.registered ? 'Register ✓' : 'Register'}
+                </button>
+                {written ? (
+                  <Link to={`/builder/${session.session_id}?view=pool`}
+                    className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
+                    Poolside
+                  </Link>
+                ) : (
+                  <Link to={session.session_id ? `/builder/${session.session_id}` : `/builder/new?date=${session.date}&slot=${session.slot_id || ''}`}
+                    className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
+                    Write it
+                  </Link>
+                )}
               </div>
             </article>
           )
@@ -933,26 +942,31 @@ export default function Dashboard() {
     setAssistantInbox(inbox)
   }
 
-  const openRegister = async (item) => {
+  // A timetabled session with no record yet gets one the first time it's opened.
+  const openSessionPage = async (item, page) => {
     const key = `${item.date}-${item.session_id || `slot-${item.slot_id}`}`
-    setBusySessionKey(key)
+    const to = id => (page === 'register' ? `/sessions/${id}/register` : `/sessions/${id}`)
+    const state = page === 'register' ? undefined : { from: 'home' }
+    setBusySessionKey(`${key}:${page}`)
     setSessionWaking(false)
     try {
       if (item.session_id) {
-        navigate(`/sessions/${item.session_id}/register`)
+        navigate(to(item.session_id), { state })
         return
       }
       const created = await api.startCalendarSession(
         { pool_slot_id: item.slot_id, date: item.date },
         { onWaking: () => setSessionWaking(true) },
       )
-      navigate(`/sessions/${created.id}/register`)
+      navigate(to(created.id), { state })
     } catch (error) {
-      alert(`Could not open register: ${error.message}. Check you have signal and try again.`)
+      alert(`Could not open ${page === 'register' ? 'the register' : 'the session'}: ${error.message}. Check you have signal and try again.`)
       setBusySessionKey('')
       setSessionWaking(false)
     }
   }
+  const openRegister = item => openSessionPage(item, 'register')
+  const openSession = item => openSessionPage(item, 'open')
 
   const dismissSession = async (item) => {
     if (!window.confirm(`Remove ${item.title || item.label || 'this session'} from the home session desk?`)) return
@@ -1018,6 +1032,7 @@ export default function Dashboard() {
       {!loading && (
         <SessionDesk
           sessions={sessionQueue}
+          onOpen={openSession}
           onRegister={openRegister}
           onDismiss={dismissSession}
           onCancel={setCancelTarget}

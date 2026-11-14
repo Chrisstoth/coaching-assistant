@@ -18,7 +18,11 @@
     "4 x (2x50 @1:00) (3:00)", "2x (100 kick @2:00, 4x25 sprint @30)", "3 rounds: 4x50 @1:00", "2 rounds - easy", "4x 100 @1:30",
     "200 IM drill, 20 seconds rest", "8 x 100 free @ 1:30 Threshold", "16 x 50 @ 45", "10 x 25 fast r15", "400 steady",
     "2x200 @3:00 [14] 1) Free 2) Back", "1x400 @6:00", "1x100", "12 Mins Choice", "x 50 as Build 1-4 (60)",
-    "4x100 4 each", "2x 50 each @1:00", "300 swim, 200 kick, 100 pull", "4x100 r15 ~1:25 [16]"
+    "4x100 4 each", "2x 50 each @1:00", "300 swim, 200 kick, 100 pull", "4x100 r15 ~1:25 [16]",
+    "Talk 3 min purpose of the main set", "Talk 2:00", "Talk 2", "Talk 90s - turns, then a word with Sam", "talk 1.5 mins", "Talk 3m",
+    "Brief 2 mins", "Briefing: 1:30 race plan", "Coach talk 4 minutes", "Team talk 5 min", "Chat 45 seconds", "Explain 2 min why we hold pace",
+    "Explain 50 fly", "Explain 25m underwater", "Explain the main set", "Talk about turns", "Talk 4x50", "Talk 400", "Talk 45 min",
+    "talk for 2 minutes about the main set", "Talk 2 min purpose, 4x100 @1:40 [16]", "3 x (Talk 1 min feedback, 4x50 @1:00)"
   ],
   "descs": [
     "1 Fast 1 Easy",
@@ -55,7 +59,10 @@
     "8x50 @1:00\n2) easy\n3) fast",
     "Fins on\n4x50 kick @1:10\n\n\n200 easy",
     "3 rounds of\n  100 @1:30\n  50 @1:00\nRest 2 mins\n400 r30 ~6:00",
-    "\t2x\n\t\t100 @1:40\n\t100 easy"
+    "\t2x\n\t\t100 @1:40\n\t100 easy",
+    "400 easy\nTalk 3:00 purpose of the set\n8x100 @1:30 [16]\n1) Kick",
+    "Talk 2:00\n1) Kick\n4x50 @1:00",
+    "3x\n  Talk 1:00 feedback\n  4x50 @1:00 [17]"
   ],
   "parts": [
     ["2x100 kick @2:00", "2) swim"],
@@ -73,7 +80,8 @@
     ["line 2 build on 4 45", false], ["line to build on 4 45", true], ["number 3 fast", false],
     ["for by fifty", true], ["to by two hundred", true], ["200 easy with 1 minute rest", false], ["rest for 30 seconds", false],
     ["4 times through", false], ["10 by 25 heart rate 24 to 26", true], ["4 by 100 build 1 to 4", true], ["one twenty fives", true],
-    ["twelve seventy fives on one fifteen", true], ["4 by 100 on the 1:30.", true], ["4 by 100 at 1:30", false]
+    ["twelve seventy fives on one fifteen", true], ["4 by 100 on the 1:30.", true], ["4 by 100 at 1:30", false],
+    ["talk for two minutes about the main set", true], ["talk for a minute", false], ["talk for two and a half minutes", true]
   ],
   "effort": {
     "toCanon": [

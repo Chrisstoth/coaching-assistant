@@ -98,4 +98,12 @@ assert.deepEqual(setRows(null, zones), [])
 const block = setRows({ raw: ['400 choice', '3x:', '  4 x 100 free', '  200 easy', '200 easy'].join('\n') }, zones)
 assert.equal(rowsTotalMetres(block), 400 + 3 * (400 + 200) + 200)
 
+// The Session Builder's talk line ("Talk 3:00 purpose") reads as a talk, not a send-off, and adds no metres.
+const talk = parse('Talk 3:00 purpose of the set, then a word with Sam')
+assert.deepEqual([talk.kind, talk.description, talk.interval.kind, talk.interval.value], ['note', 'Talk: purpose of the set, then a word with Sam', 'talk', '3:00'])
+assert.deepEqual([parse('Talk 1:30').description, parse('Talk 1:30').interval.kind], ['Talk', 'talk'])
+const withTalk = setRows({ raw: ['Talk 2:00 hold pace', '8x100 @1:30', '3x', '  Talk 1:00 feedback', '  4x50 @1:00'].join('\n') }, zones)
+assert.equal(rowsTotalMetres(withTalk), 800 + 3 * 200)
+assert.equal(withTalk.filter(r => r.interval?.kind === 'talk').length, 2)
+
 console.log('session set checks passed')

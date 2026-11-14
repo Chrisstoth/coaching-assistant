@@ -1,4 +1,5 @@
 """Target sets: training target times worked out from each swimmer's PBs."""
+from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -118,10 +119,115 @@ def update_target_set(set_id: int, body: TargetSetIn, db: DBSession = Depends(ge
     return _serialize(ts)
 
 
+def _sessions_using(set_id: int, db: DBSession) -> list[models.Session]:
+    rows = db.query(models.Session).filter(models.Session.targets != None).all()  # noqa: E711
+    return [s for s in rows if any(link["target_set_id"] == set_id for link in tt.session_links(s))]
+
+
 @router.delete("/{set_id}", status_code=204)
 def delete_target_set(set_id: int, db: DBSession = Depends(get_db)):
-    db.delete(_get_or_404(set_id, db))
+    ts = _get_or_404(set_id, db)
+    for session in _sessions_using(set_id, db):
+        session.targets = [link for link in tt.session_links(session) if link["target_set_id"] != set_id] or None
+    db.delete(ts)
     db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Target sets used in a session
+# ---------------------------------------------------------------------------
+
+class SessionTargetLink(BaseModel):
+    target_set_id: int
+    note: Optional[str] = Field(None, max_length=200)
+
+
+class SessionNoteIn(BaseModel):
+    note: Optional[str] = Field(None, max_length=200)
+
+
+class SessionTargetsIn(BaseModel):
+    targets: list[SessionTargetLink] = Field(default_factory=list, max_length=6)
+
+
+def _session_or_404(session_id: int, db: DBSession) -> models.Session:
+    session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+def _session_view(session: models.Session, db: DBSession) -> dict:
+    _, source = tt.session_swimmer_ids(session, db)
+    return {"session_id": session.id, "swimmers_from": source, "targets": tt.session_tables(session, db)}
+
+
+@router.get("/session/{session_id}")
+def session_targets(session_id: int, db: DBSession = Depends(get_db)):
+    return _session_view(_session_or_404(session_id, db), db)
+
+
+@router.put("/session/{session_id}")
+def set_session_targets(session_id: int, body: SessionTargetsIn, db: DBSession = Depends(get_db)):
+    session = _session_or_404(session_id, db)
+    ids = [link.target_set_id for link in body.targets]
+    found = {row.id for row in db.query(models.TargetSet.id).filter(models.TargetSet.id.in_(ids or [-1])).all()}
+    missing = [i for i in ids if i not in found]
+    if missing:
+        raise HTTPException(status_code=422, detail="Target set not found")
+    links, seen = [], set()
+    for link in body.targets:
+        if link.target_set_id in seen:
+            continue
+        seen.add(link.target_set_id)
+        links.append({"target_set_id": link.target_set_id, "note": (link.note or "").strip() or None})
+    session.targets = links or None
+    db.commit()
+    return _session_view(session, db)
+
+
+@router.get("/{set_id}/sessions")
+def target_set_sessions(set_id: int, db: DBSession = Depends(get_db)):
+    """Sessions this set is used in, and nearby sessions it could be added to."""
+    ts = _get_or_404(set_id, db)
+    used = sorted(_sessions_using(set_id, db), key=lambda s: s.date, reverse=True)
+    used_ids = {s.id for s in used}
+    today = date.today()
+    q = db.query(models.Session).filter(
+        models.Session.date >= today - timedelta(days=14),
+        models.Session.date <= today + timedelta(days=28),
+        models.Session.status != "cancelled",
+    )
+    if ts.squad:
+        q = q.filter(models.Session.squad == ts.squad)
+    candidates = [s for s in q.order_by(models.Session.date, models.Session.start_time).all() if s.id not in used_ids]
+
+    def row(s, note=None):
+        return {"id": s.id, "date": s.date.isoformat(), "start_time": s.start_time,
+                "title": s.title, "squad": s.squad, "note": note}
+
+    notes = {s.id: next((l["note"] for l in tt.session_links(s) if l["target_set_id"] == set_id), None) for s in used}
+    return {"used": [row(s, notes[s.id]) for s in used], "candidates": [row(s) for s in candidates][:40]}
+
+
+@router.post("/{set_id}/sessions/{session_id}", status_code=201)
+def add_set_to_session(set_id: int, session_id: int, body: Optional[SessionNoteIn] = None,
+                       db: DBSession = Depends(get_db)):
+    _get_or_404(set_id, db)
+    session = _session_or_404(session_id, db)
+    links = [link for link in tt.session_links(session) if link["target_set_id"] != set_id]
+    links.append({"target_set_id": set_id, "note": ((body.note if body else None) or "").strip() or None})
+    session.targets = links[-6:]
+    db.commit()
+    return _session_view(session, db)
+
+
+@router.delete("/{set_id}/sessions/{session_id}")
+def remove_set_from_session(set_id: int, session_id: int, db: DBSession = Depends(get_db)):
+    session = _session_or_404(session_id, db)
+    session.targets = [link for link in tt.session_links(session) if link["target_set_id"] != set_id] or None
+    db.commit()
+    return _session_view(session, db)
 
 
 @router.post("/preview")

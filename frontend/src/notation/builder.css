@@ -242,6 +242,9 @@
   .sb .round-head>.grip{grid-area:g}.sb .round-head>.times{grid-area:n}.sb .round-head>.note{grid-area:o}.sb .round-head>.tot{grid-area:t}.sb .round-head>.kebab{grid-area:k}
   .sb .round-body{grid-template-columns:14px minmax(0,1fr);padding-left:6px}
   .sb .quick{padding-left:4px}
+  /* on a phone: TALK and its time on top, what it covers full width underneath */
+  .sb .line.talk{grid-template-areas:"g l l i . k" "g s s s s s"}
+  .sb .line.talk .tlab{grid-area:l}.sb .line.talk .talkt{grid-area:i;text-align:right}.sb .line.talk .tgap{display:none}
 }
 
 .sb .textmode{display:grid;gap:8px;padding-top:6px}
@@ -277,6 +280,14 @@
 .sb .cell.need:not(:focus){border-color:var(--warn);border-style:dashed}
 .sb .pnote:empty{display:none}
 .sb .pnote{padding-left:20px}
+/* a talk: the coach explaining the next set; its time counts, it has no metres */
+.sb .line.talk{background:var(--surface-2)}
+.sb .line.talk:hover{background:var(--surface-2)}
+.sb .line.talk.sel{background:var(--accent-soft)}
+.sb .tlab{grid-column:2/5;display:flex;align-items:center;gap:6px;padding-left:6px;font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-text);white-space:nowrap}
+.sb .tlab svg{flex:0 0 14px;width:14px;height:14px}
+.sb .line.talk .desc{font-style:italic}
+.sb .talkt{color:var(--accent-text)}
 
 /* ---------- popover menu ---------- */
 .sb .pop{position:fixed;z-index:50;min-width:220px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:5px;display:grid}
@@ -364,6 +375,9 @@
 .sb .pl:last-child{border-bottom:0}
 .sb .pl.note{grid-template-columns:minmax(0,1fr)}
 .sb .pl.note .pd{font-style:italic;color:var(--muted)}
+.sb .pl.talk .pq{font-family:var(--f-body);font-size:13px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--accent-text)}
+.sb .pl.talk .pd{font-style:italic;color:var(--muted)}
+.sb .pl.talk .pi{color:var(--accent-text)}
 .sb .pnotes{background:var(--surface-2);border-style:dashed}
 .sb .pnote{white-space:pre-wrap;font-size:18px;line-height:1.5}
 .sb .pl.has-parts{border-bottom:0;padding-bottom:0}
@@ -446,3 +460,9 @@
   .sb .btot{white-space:normal;text-align:left;padding-left:6px}
   .sb .line{grid-template-columns:22px 38px 12px 54px minmax(0,1fr) 34px}
 }
+
+/* Poolside notes: in the app, a set can be tapped to note something about it.
+   A set already noted this session carries a small marker. */
+.sb.sb-notes #pool [data-nid]{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.sb.sb-notes #pool .pl[data-nid]:active,.sb.sb-notes #pool .prl[data-nid]:active{background:var(--surface-2)}
+.sb #pool .pl.noted .pd::after,.sb #pool .prl.noted > span::after{content:"";display:inline-block;width:8px;height:8px;margin-left:8px;border-radius:50%;background:#f59e0b;vertical-align:middle}

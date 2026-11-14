@@ -88,3 +88,29 @@ export function filterSwimmers(swimmers = [], search = '') {
 export function countTimes(swimmers = []) {
   return swimmers.reduce((n, s) => n + s.rows.filter(r => r.times.length).length, 0)
 }
+
+// --- Target sets used in a session -------------------------------------------
+
+export function addSessionTarget(links = [], targetSetId, note = '') {
+  const rest = links.filter(l => l.target_set_id !== targetSetId)
+  return { targets: [...rest, { target_set_id: targetSetId, note: note.trim() || null }] }
+}
+
+export function removeSessionTarget(links = [], targetSetId) {
+  return { targets: links.filter(l => l.target_set_id !== targetSetId) }
+}
+
+export function swimmersFromLabel(source) {
+  return {
+    register: 'Swimmers on the register',
+    audience: 'Swimmers the session was written for',
+    squad: 'Everyone in the squad (no register yet)',
+  }[source] || 'No swimmers yet'
+}
+
+// "2026-11-12", "06:00" → "Thu 12 Nov · 06:00"
+export function sessionLabel(row) {
+  const [y, m, d] = row.date.split('-').map(Number)
+  const day = new Date(y, m - 1, d).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+  return [day, row.start_time, row.title].filter(Boolean).join(' · ')
+}

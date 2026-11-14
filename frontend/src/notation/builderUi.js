@@ -10,8 +10,9 @@
 */
 import Sortable from 'sortablejs'
 import { jsPDF } from 'jspdf'
-import { sysDef, useScales, DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor } from './core.js'
+import { sysDef, useScales, DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, isTalkLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseTalkTime, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor } from './core.js'
 import { buildSessionPdf, exportFileName, hslRgb } from './pdf.js'
+import { loadPdfFonts } from './sessionPdf.js'
 import { BUILDER_TEMPLATE } from './template.js'
 
 export function mountBuilder(root, opts){
@@ -64,6 +65,7 @@ const dotStyle = p => p ? `background:${effBg(p)}` : '';
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 let view = 'edit', curGroup = '';
+let noted = new Set();   // sets the coach has noted something about this session (poolside)
 const sel = new Set();
 const textMode = new Set();
 let undoStack = [];
@@ -75,8 +77,11 @@ const S = () => cur.session;
 const ICON = {
   grip: '<svg viewBox="0 0 6 10" fill="currentColor"><circle cx="1.2" cy="1.2" r="1.1"/><circle cx="4.8" cy="1.2" r="1.1"/><circle cx="1.2" cy="5" r="1.1"/><circle cx="4.8" cy="5" r="1.1"/><circle cx="1.2" cy="8.8" r="1.1"/><circle cx="4.8" cy="8.8" r="1.1"/></svg>',
   mic: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="5.5" y="1.8" width="5" height="8" rx="2.5"/><path d="M3.2 7.6a4.8 4.8 0 0 0 9.6 0M8 12.4v2.2"/></svg>',
-  dots: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>'
+  dots: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.4"/><circle cx="8" cy="8" r="1.4"/><circle cx="13" cy="8" r="1.4"/></svg>',
+  talk: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z"/></svg>'
 };
+// how long a talk runs when it's added from a menu; the coach changes it in the row
+const TALK_DEFAULT = 120;
 
 function blankSession(from){
   return {
@@ -109,7 +114,22 @@ function contains(node, id){ return (node.items || []).some(n => n.id === id || 
 function walk(items, fn){ (items || []).forEach(n => { fn(n); if (n.t === 'round') walk(n.items, fn); }); }
 
 /* ---------- rendering ---------- */
-function totHTML(st){ return `<b>${fmtDist(st.dist)}</b> m${st.time ? ' · ' + fmtTime(st.time) : ''}`; }
+function totHTML(st, n){
+  if (n && isTalkLine(n)) return `<b>${fmtTime(st.time)}</b>`;
+  return `<b>${fmtDist(st.dist)}</b> m${st.time ? ' · ' + fmtTime(st.time) : ''}`;
+}
+// the coach explaining the next set: a note of what to cover and how long it takes
+function talkHTML(n){
+  return `<div class="node line talk${sel.has(n.id) ? ' sel' : ''}" data-id="${n.id}">` +
+    `<button class="grip" type="button" data-act="sel" aria-label="Select or drag this talk" aria-pressed="${sel.has(n.id)}">${ICON.grip}</button>` +
+    `<span class="tlab">${ICON.talk}Talk</span>` +
+    `<input class="cell desc" id="f-${n.id}-desc" data-f="desc" value="${esc(n.desc)}" placeholder="What you’ll cover: purpose, key points, who to speak to" aria-label="What the talk covers" autocomplete="off">` +
+    `<input class="cell num int talkt" id="f-${n.id}-talk" data-f="talk" value="${esc(fmtTime(n.talk))}" placeholder="m:ss" inputmode="decimal" aria-label="How long the talk takes" title="How long you’ll talk before the set: 2, 2:00, 90s or 2 min" autocomplete="off">` +
+    `<span class="tgap"></span><span class="tgap"></span>` +
+    `<span class="tot" data-tot="${n.id}">${totHTML(nodeStats(n), n)}</span>` +
+    `<button class="kebab" type="button" data-act="menu" data-for="${n.id}" aria-label="Talk options" aria-haspopup="menu">${ICON.dots}</button>` +
+    `</div>`;
+}
 function blockTotHTML(b, st, starts){
   const a = avgEff(st); const s = S(); let clock = '';
   if (starts && starts.length && s.start) {
@@ -118,6 +138,7 @@ function blockTotHTML(b, st, starts){
   return `<b>${fmtDist(st.dist)}</b> m · ${st.time || st.time2 ? timeText(st) : '0:00'}${clock}${a != null ? ' · avg ' + effAvgText(a) : ''}`;
 }
 function lineHTML(n){
+  if (isTalkLine(n)) return talkHTML(n);
   const st = nodeStats(n), e = parseEffort(n.eff), pe = descParts(n.desc, 1, true), md = timingMode(n);
   return `<div class="node line${sel.has(n.id) ? ' sel' : ''}" data-id="${n.id}">` +
     `<button class="grip" type="button" data-act="sel" aria-label="Select or drag this set" aria-pressed="${sel.has(n.id)}">${ICON.grip}</button>` +
@@ -167,7 +188,7 @@ function setParts(id, texts, prefix, focus){
 }
 // Shift+Enter: add the next numbered line under this set (what's already typed stays as its heading)
 function startOrAddPart(id, afterIdx){
-  const l = locate(id); if (!l || l.node.t !== 'line') return;
+  const l = locate(id); if (!l || l.node.t !== 'line' || isTalkLine(l.node)) return;
   const cp = currentParts(id);
   if (cp) {
     if (afterIdx == null && cp.texts[cp.texts.length - 1] === '') { const el = $(`#p-${id}-${cp.texts.length - 1}`); if (el) el.focus(); return; }
@@ -242,7 +263,7 @@ function blockHTML(b, starts){
   if (textMode.has(b.id)) {
     return `<article class="block" data-id="${b.id}">${head}<div class="textmode">` +
       `<textarea id="t-${b.id}" data-text="${b.id}" spellcheck="false" aria-label="Block as text">${esc(itemsToText(b.items).join('\n'))}</textarea>` +
-      `<div class="help">One set per line: <code>3x50 Build 1-3 (1:05) [14->18]</code>. Send-off can be <code>@1:05</code>, <code>(60)</code>, <code>on 60</code> or <code>off 1:10</code>; add a second lane with a slash, <code>@1:30/1:40</code>. Numbered lines: <code>4x100 1) Kick 2) Drill 3) Swim 4) Build</code>, or put <code>1) Kick</code>, <code>2) Drill</code>… on the lines under the set; Shift+Enter starts the next number for you. Rest sets: <code>r20 ~1:20</code> (20s rest, about 1:20 per swim). A turnaround after a numbered line is that line’s own: <code>2) Build @4:45</code>. <code>2 x (4 x 50, 2 x 100)</code> makes a 2× round in one line. A line like <code>3x</code> on its own starts a round; indent the lines under it with two spaces.</div>` +
+      `<div class="help">One set per line: <code>3x50 Build 1-3 (1:05) [14->18]</code>. Send-off can be <code>@1:05</code>, <code>(60)</code>, <code>on 60</code> or <code>off 1:10</code>; add a second lane with a slash, <code>@1:30/1:40</code>. Numbered lines: <code>4x100 1) Kick 2) Drill 3) Swim 4) Build</code>, or put <code>1) Kick</code>, <code>2) Drill</code>… on the lines under the set; Shift+Enter starts the next number for you. Rest sets: <code>r20 ~1:20</code> (20s rest, about 1:20 per swim). Time you spend explaining the next set: <code>Talk 3:00 purpose and turns</code>. A turnaround after a numbered line is that line’s own: <code>2) Build @4:45</code>. <code>2 x (4 x 50, 2 x 100)</code> makes a 2× round in one line. A line like <code>3x</code> on its own starts a round; indent the lines under it with two spaces.</div>` +
       `<div class="bfoot"><span></span><span style="display:flex;gap:8px"><button class="btn" type="button" data-act="cancel-text" data-for="${b.id}">Cancel</button><button class="btn primary" type="button" data-act="apply-text" data-for="${b.id}">Apply</button></span></div>` +
       `</div></article>`;
   }
@@ -362,7 +383,7 @@ function refreshTotals(){
   s.blocks.forEach(b => {
     const bt = $(`[data-tot="${b.id}"]`); if (bt) bt.innerHTML = blockTotHTML(b, statsOf(b.items), starts.get(b.id));
     walk(b.items, n => {
-      const el = $(`[data-tot="${n.id}"]`); if (el) el.innerHTML = totHTML(nodeStats(n));
+      const el = $(`[data-tot="${n.id}"]`); if (el) el.innerHTML = totHTML(nodeStats(n), n);
       if (n.t === 'round') { const pl = $(`[data-pl="${n.id}"]`); if (pl) pl.textContent = n.times == 1 ? '' : 's'; }
       else {
         const d = $(`[data-dot="${n.id}"]`); if (d) d.setAttribute('style', dotStyle(parseEffort(n.eff)));
@@ -378,14 +399,17 @@ function refreshTotals(){
 /* ---------- poolside ---------- */
 const poolTiming = t => (t.int != null ? '@' + fmtTime(t.int) + (t.int2 != null && t.int2 !== t.int ? ' / ' + fmtTime(t.int2) : '') : (t.rest != null ? restLabel(t.rest) : ''));
 function poolItems(items){
+  // data-nid: tapping a set poolside notes something about it (when the app asks for that)
+  const nid = n => `data-nid="${esc(n.id)}"`, nc = n => (noted.has(n.id) ? ' noted' : '');
   return (items || []).map(n => {
-    if (n.t === 'round') return `<div class="pr"><div class="prl"><span>${n.times || 1}× round${n.times == 1 ? '' : 's'}</span>${n.note ? `<em>${esc(n.note)}</em>` : ''}</div><div class="prb"><div class="rope" aria-hidden="true"></div><div>${poolItems(n.items)}</div></div></div>`;
+    if (n.t === 'round') return `<div class="pr"><div class="prl${nc(n)}" ${nid(n)}><span>${n.times || 1}× round${n.times == 1 ? '' : 's'}</span>${n.note ? `<em>${esc(n.note)}</em>` : ''}</div><div class="prb"><div class="rope" aria-hidden="true"></div><div>${poolItems(n.items)}</div></div></div>`;
+    if (isTalkLine(n)) return `<div class="pl talk${nc(n)}" ${nid(n)}><span class="pq">Talk</span><span class="pd">${esc(plainDesc(n.desc))}</span><span class="pi">${esc(fmtTime(n.talk))}</span><span></span></div>`;
     if (isBlankLine(n)) return '';
-    if (isNoteLine(n)) return `<div class="pl note"><span class="pd">${esc(plainDesc(n.desc))}</span></div>`;
+    if (isNoteLine(n)) return `<div class="pl note${nc(n)}" ${nid(n)}><span class="pd">${esc(plainDesc(n.desc))}</span></div>`;
     const q = n.dist != null && n.dist !== '' ? ((n.reps && n.reps > 1) ? `${n.reps}×${n.dist}` : `${n.dist}`) : (n.reps && n.reps > 1 ? `${n.reps}×` : '');
     const e = parseEffort(n.eff), dp = partTimings(n);
     const parts = dp ? `<div class="pparts">${dp.parts.map(p => `<span><b>${p.n}</b>${esc(p.text)}${p.own && (p.own.int != null || p.own.rest != null) ? ` <em class="ptime">${esc(poolTiming(p.eff))}</em>` : ''}</span>`).join('')}</div>` : '';
-    return `<div class="pl${dp ? ' has-parts' : ''}"><span class="pq">${q}</span><span class="pd">${esc(dp ? dp.prefix : plainDesc(n.desc))}</span><span class="pi">${esc(poolTiming(lineTiming(n)))}</span>${n.eff ? `<span class="pe" style="background:${effBg(e)};color:${effInk(e)}">${esc(effFromCanon(n.eff))}</span>` : '<span></span>'}</div>` + parts;
+    return `<div class="pl${dp ? ' has-parts' : ''}${nc(n)}" ${nid(n)}><span class="pq">${q}</span><span class="pd">${esc(dp ? dp.prefix : plainDesc(n.desc))}</span><span class="pi">${esc(poolTiming(lineTiming(n)))}</span>${n.eff ? `<span class="pe" style="background:${effBg(e)};color:${effInk(e)}">${esc(effFromCanon(n.eff))}</span>` : '<span></span>'}</div>` + parts;
   }).join('');
 }
 function renderPool(){
@@ -406,6 +430,7 @@ function renderPool(){
 }
 async function setView(v){
   view = v;
+  if (opts.onView) opts.onView(v);
   $('#vEdit').setAttribute('aria-pressed', v === 'edit'); $('#vPool').setAttribute('aria-pressed', v === 'pool');
   $('#editor').hidden = v !== 'edit'; $('#pool').hidden = v !== 'pool';
   if (v === 'pool') {
@@ -517,14 +542,14 @@ function opDup(id){ const l = locate(id); if (!l) return; pushUndo(); const c = 
 function opDel(id){
   const l = locate(id); if (!l) return;
   pushUndo(); l.arr.splice(l.index, 1); sel.delete(id); textMode.delete(id); renderBlocks(); markDirty();
-  const what = l.kind === 'block' ? `block “${l.node.name || 'Block'}”` : l.node.t === 'round' ? `${l.node.times}× round` : 'set';
+  const what = l.kind === 'block' ? `block “${l.node.name || 'Block'}”` : l.node.t === 'round' ? `${l.node.times}× round` : isTalkLine(l.node) ? 'talk' : 'set';
   toast(`Deleted ${what}`, 'Undo', undo);
 }
 function addFromQuick(parentId, text){
   const target = locate(parentId); if (!target) return;
   if (!text.includes('\n')) text = normalizeDictation(text, looksSpoken(text));
   if (!text.includes('\n') && PART_LINE.test(text)) {
-    const lastLine = [...target.node.items].reverse().find(n => n.t === 'line');
+    const lastLine = [...target.node.items].reverse().find(n => n.t === 'line' && !isTalkLine(n));
     if (lastLine) { pushUndo(); addPart(lastLine, text); renderBlocks({ id: `q-${parentId}` }); markDirty(); return; }
   }
   const nodes = text.includes('\n') ? parseText(text) : parseLineNodes(text);
@@ -549,18 +574,19 @@ function openMenu(btn, id){
     html = (isN ? '' : `<button data-op="btext">${textMode.has(id) ? 'Back to rows' : 'Edit as text'}</button>`) +
       `<button data-op="up" ${vi <= 0 ? 'disabled' : ''}>Move ${what} up</button>` +
       `<button data-op="down" ${vi === vis.length - 1 ? 'disabled' : ''}>Move ${what} down</button>` +
-      `<button data-op="dup">Duplicate ${what}</button>` + (isN ? '' : `<button data-op="notes-after">Add notes below</button>`) + `<hr>` + fork + copies + `<button data-op="del" class="danger">Delete ${what}</button>`;
+      `<button data-op="dup">Duplicate ${what}</button>` + (isN ? '' : `<button data-op="talk-start">Talk at the start</button><button data-op="notes-after">Add notes below</button>`) + `<hr>` + fork + copies + `<button data-op="del" class="danger">Delete ${what}</button>`;
   } else {
     const prev = l.arr[l.index - 1];
     const canIn = prev && prev.t === 'round', canOut = l.parent && l.parent.t === 'round';
-    html = `<button data-op="wrap" data-times="2">Wrap in 2× round</button><button data-op="wrap" data-times="3">Wrap in 3× round</button>` +
+    html = (isTalkLine(l.node) ? '' : `<button data-op="talk-before">Talk before this ${l.node.t === 'round' ? 'round' : 'set'}</button><hr>`) +
+      `<button data-op="wrap" data-times="2">Wrap in 2× round</button><button data-op="wrap" data-times="3">Wrap in 3× round</button>` +
       `<button data-op="indent" ${canIn ? '' : 'disabled'}>Into round above <kbd>${mod} ]</kbd></button>` +
       `<button data-op="outdent" ${canOut ? '' : 'disabled'}>Out of this round <kbd>${mod} [</kbd></button>` +
       (l.node.t === 'round' ? `<button data-op="unwrap">Remove round, keep sets</button>` : '') + `<hr>` +
       `<button data-op="up" ${l.index === 0 ? 'disabled' : ''}>Move up <kbd>Alt ↑</kbd></button>` +
       `<button data-op="down" ${l.index === l.arr.length - 1 ? 'disabled' : ''}>Move down <kbd>Alt ↓</kbd></button>` +
       `<button data-op="dup">Duplicate <kbd>${mod} D</kbd></button><hr>` +
-      `<button data-op="del" class="danger">${l.node.t === 'round' ? 'Delete round and its sets' : 'Delete set'}</button>`;
+      `<button data-op="del" class="danger">${l.node.t === 'round' ? 'Delete round and its sets' : isTalkLine(l.node) ? 'Delete talk' : 'Delete set'}</button>`;
   }
   pop.innerHTML = html; pop.dataset.for = id; pop.hidden = false;
   const r = btn.getBoundingClientRect(); const pw = pop.offsetWidth, ph = pop.offsetHeight;
@@ -587,7 +613,14 @@ pop.addEventListener('click', e => {
   if (op === 'copyto') return opCopyTo(id, b.dataset.gid);
   if (op === 'notes-after') { pushUndo(); const nb = newNotes(curGroup ? [curGroup] : (l.node.groups || [])); l.arr.splice(l.index + 1, 0, nb); renderBlocks({ id: `f-${nb.id}-text` }); markDirty(); return; }
   if (op === 'fork') return opFork(id, curGroup);
+  if (op === 'talk-before') return addTalk(l.arr, l.index);
+  if (op === 'talk-start') return addTalk(l.node.items, 0);
 });
+// a talk goes in just before the set it explains; the note gets the cursor
+function addTalk(arr, index){
+  pushUndo(); const n = newLine({ talk: TALK_DEFAULT }); arr.splice(index, 0, n);
+  renderBlocks({ id: `f-${n.id}-desc` }); markDirty();
+}
 pop.addEventListener('change', e => {
   const t = e.target; if (!t.dataset.gtoggle && t.dataset.gtoggle !== '') return;
   const l = locate(t.dataset.block); if (!l) return;
@@ -743,6 +776,7 @@ document.addEventListener('input', e => {
   else if (f === 'est') { n.est = t.value.trim() ? parseTime(t.value) : null; t.classList.toggle('bad', !!t.value.trim() && n.est == null); t.classList.toggle('need', n.est == null && !!n.dist); }
   else if (f === 'int2') { n[f] = parseTime(t.value); t.classList.toggle('bad', !!t.value.trim() && n[f] == null); }
   else if (f === 'eff') n.eff = effToCanon(t.value);
+  else if (f === 'talk') { const v = parseTalkTime(t.value); t.classList.toggle('bad', v == null); if (v != null) n.talk = v; }
   else if (f === 'desc' && t.dataset.prefix) n.desc = buildDesc(t.value, partTexts(n.id));
   else n[f] = t.value;
   refreshTotals(); markDirty();
@@ -758,6 +792,8 @@ document.addEventListener('focusout', e => {
     if (l && !(rel && host.contains(rel)) && descParts(l.node.desc, 1, true)) setTimeout(() => repaintLine(l.node.id), 0);
   }
   if (t.dataset && t.dataset.f === 'eff') { const host = t.closest('[data-id]'); const l = host && locate(host.dataset.id); if (l) t.value = effFromCanon(l.node.eff); }
+  // a talk's time shows as m:ss once you leave it; a time that couldn't be read goes back to the last good one
+  if (t.dataset && t.dataset.f === 'talk') { const host = t.closest('[data-id]'); const l = host && locate(host.dataset.id); if (l) { t.value = fmtTime(l.node.talk); t.classList.remove('bad'); } }
   if (t.dataset && (t.dataset.f === 'int' || t.dataset.f === 'int2' || t.dataset.f === 'est')) {
     const f = t.dataset.f, host = t.closest('.node[data-id]'), l = host && locate(host.dataset.id);
     if (l) {
@@ -970,14 +1006,6 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('pagehide', flushNow);
 
   /* ---------- PDF (fonts bundled with the app, logo and header from the club's settings) ---------- */
-  let pdfFonts = null
-  function abToB64(buf){ const bytes = new Uint8Array(buf); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(bin) }
-  async function loadPdfFonts(){
-    if (pdfFonts) return pdfFonts
-    const names = { regular: 'Regular', semibold: 'SemiBold', bold: 'Bold', italic: 'Italic' }, out = {}
-    await Promise.all(Object.entries(names).map(async ([k, n]) => { const res = await fetch(`/fonts/BarlowSemiCondensed-${n}.ttf`); if (!res.ok) throw new Error('font'); out[k] = abToB64(await res.arrayBuffer()) }))
-    return (pdfFonts = out)
-  }
   async function pdfReady(){ let fonts = null; try { fonts = await loadPdfFonts() } catch (e) { fonts = null } return fonts || {} }
   const pdfFor = (sess, fonts) => buildSessionPdf(jsPDF, sess, opts.logo || null, fonts && fonts.regular ? fonts : null,
     new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
@@ -1052,6 +1080,17 @@ window.addEventListener('pagehide', flushNow);
     opts.onComment(c, action)
   })
 
+  /* ---------- poolside: tap a set to note something about it ---------- */
+  function holds(items, id){ return (items || []).some(n => n.id === id || (n.t === 'round' && holds(n.items, id))) }
+  const onPoolTap = e => {
+    if (view !== 'pool' || !opts.onPoolNote) return
+    const el = e.target.closest && e.target.closest('#pool [data-nid]'); if (!el || !root.contains(el)) return
+    const id = el.dataset.nid, block = S().blocks.find(b => holds(b.items, id))
+    if (block) opts.onPoolNote({ block_id: block.id, line_id: id })
+  }
+  root.addEventListener('click', onPoolTap); listeners.push([root, 'click', onPoolTap, undefined])
+  if (opts.onPoolNote) root.classList.add('sb-notes')
+
   /* ---------- Jess's draft, added as new blocks ---------- */
   function addBlocks(blocks, meta = {}){
     pushUndo()
@@ -1086,6 +1125,9 @@ window.addEventListener('pagehide', flushNow);
       renderGroupsEdit()
     },
     setView,
+    view: () => view,
+    // the sets with a note from this session, marked in the poolside view
+    setNoted(ids){ noted = new Set(ids || []); if (view === 'pool') renderPool() },
     setComments(list){ comments = list || []; paintComments() },
     addBlocks,
     destroy(){
@@ -1095,7 +1137,7 @@ window.addEventListener('pagehide', flushNow);
       sortables.forEach(s => { try { s.destroy() } catch (e) {} })
       clearTimeout(saveTimer); clearTimeout(toastTimer)
       listeners.forEach(([t, type, h, o]) => t.removeEventListener(type, h, o))
-      root.innerHTML = ''; root.classList.remove('sb')
+      root.innerHTML = ''; root.classList.remove('sb', 'sb-notes')
     },
   }
 

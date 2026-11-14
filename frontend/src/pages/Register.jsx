@@ -125,6 +125,9 @@ export default function Register() {
   const [loadAttempt, setLoadAttempt] = useState(0)
 
   const draftKey = `lanewatch_register_draft:${id}`
+  // Opened from the session page: go back there when done, otherwise to Today.
+  const fromSession = location.state?.from === 'session' && location.key !== 'default'
+  const leave = () => (fromSession ? navigate(-1) : navigate('/', { replace: true }))
 
   useEffect(() => {
     let cancelled = false
@@ -212,11 +215,9 @@ export default function Register() {
   useEffect(() => {
     // A completed session offers a debrief, so don't navigate out from under it.
     if (!submitted || submitted.queued || submitted.complete) return undefined
-    const returnHome = window.setTimeout(() => {
-      navigate('/', { replace: true })
-    }, 1400)
+    const returnHome = window.setTimeout(leave, 1400)
     return () => window.clearTimeout(returnHome)
-  }, [navigate, submitted])
+  }, [navigate, submitted]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const update = (swimmerId, field, value) => {
     setSubmitted(null)
@@ -403,8 +404,9 @@ export default function Register() {
           operation={submitted.operation}
           sessionId={id}
           onClose={() => setSubmitted(null)}
-          onHome={() => navigate('/', { replace: true })}
-          onDebrief={() => navigate(`/debrief?session=${id}`)}
+          onHome={leave}
+          backTo={fromSession ? 'session' : 'Today'}
+          onDebrief={() => navigate(`/debrief?session=${id}`, { replace: true })}
         />
       )}
 

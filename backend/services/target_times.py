@@ -8,6 +8,7 @@ current PBs every time, so they follow the swimmer as they get faster.
 from __future__ import annotations
 
 import re
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Iterable, Optional
 
@@ -67,11 +68,14 @@ def course_of(t: models.SwimTime) -> Optional[str]:
     return None
 
 
-def personal_bests(times: Iterable[models.SwimTime], course: str) -> dict[tuple[int, str], models.SwimTime]:
-    """Fastest time per (distance, stroke) in one pool length."""
+def personal_bests(times: Iterable[models.SwimTime], course: str,
+                   as_of: Optional[date] = None) -> dict[tuple[int, str], models.SwimTime]:
+    """Fastest time per (distance, stroke) in one pool length, optionally as it stood on a date."""
     best: dict[tuple[int, str], models.SwimTime] = {}
     for t in times:
         if not t.time_seconds or t.time_seconds <= 0 or course_of(t) != course:
+            continue
+        if as_of and t.date and t.date > as_of:
             continue
         distance, stroke = race_event(t)
         if not distance or not stroke:
@@ -238,3 +242,101 @@ def swimmer_sets(swimmer: models.Swimmer, sets: list, db: DBSession) -> list[dic
             "columns": columns(ts), "rows": mine["rows"], "note": mine["note"],
         })
     return out
+
+
+# ---------------------------------------------------------------------------
+# Target sets used in a session
+# ---------------------------------------------------------------------------
+
+def session_links(session: models.Session) -> list[dict]:
+    links = []
+    for item in session.targets or []:
+        if isinstance(item, dict) and isinstance(item.get("target_set_id"), int):
+            links.append({"target_set_id": item["target_set_id"], "note": (item.get("note") or "").strip() or None})
+    return links
+
+
+def session_swimmer_ids(session: models.Session, db: DBSession) -> tuple[list[int], str]:
+    """Who the session's targets are for: the register if taken, else who it was written for."""
+    attended = [row.swimmer_id for row in db.query(models.SessionEntry).filter(
+        models.SessionEntry.session_id == session.id, models.SessionEntry.attended == True,  # noqa: E712
+    ).all()]
+    if attended:
+        return attended, "register"
+    planned = [i for i in ((session.audience or {}).get("swimmer_ids") or []) if isinstance(i, int)]
+    if planned:
+        return planned, "audience"
+    if session.squad:
+        ids = [row.id for row in db.query(models.Swimmer.id).filter(
+            models.Swimmer.active == True, models.Swimmer.squad == session.squad,  # noqa: E712
+        ).all()]
+        return ids, "squad"
+    return [], "none"
+
+
+def session_tables(session: models.Session, db: DBSession, swimmer_ids: Optional[list[int]] = None) -> list[dict]:
+    """Each target set on the session, with the times its swimmers had on the day."""
+    links = session_links(session)
+    if not links:
+        return []
+    sets = {ts.id: ts for ts in db.query(models.TargetSet).filter(
+        models.TargetSet.id.in_([link["target_set_id"] for link in links]),
+    ).all()}
+    if swimmer_ids is None:
+        swimmer_ids, _ = session_swimmer_ids(session, db)
+    swimmers = (db.query(models.Swimmer).filter(models.Swimmer.id.in_(swimmer_ids or [-1]))
+                .order_by(models.Swimmer.name).all())
+    times = _times_by_swimmer([s.id for s in swimmers], db)
+    pbs = {(s.id, c): personal_bests(times[s.id], c, as_of=session.date) for s in swimmers for c in COURSES}
+    out = []
+    for link in links:
+        ts = sets.get(link["target_set_id"])
+        if not ts:
+            continue
+        out.append({
+            "target_set_id": ts.id, "name": ts.name, "summary": describe(ts), "note": link["note"],
+            "columns": columns(ts),
+            "swimmers": [swimmer_targets(s, ts, pbs[(s.id, ts.course)]) for s in swimmers],
+        })
+    return out
+
+
+def _swimmer_line(entry: dict) -> str:
+    parts = []
+    for row in entry["rows"]:
+        if row["times"]:
+            parts.append(f"{row['short_event']} (PB {row['pb']['display']}) " + " / ".join(t["display"] for t in row["times"]))
+        else:
+            parts.append(f"{row['short_event']} no PB yet")
+    return "; ".join(parts) or (entry["note"] or "no target events")
+
+
+def session_context_text(session: models.Session, db: DBSession,
+                         swimmer_ids: Optional[list[int]] = None, max_chars: int = 3500) -> str:
+    """The session's target times, for the staff and the AI. Empty when none are set."""
+    tables = session_tables(session, db, swimmer_ids)
+    if not tables:
+        return ""
+    lines = [
+        "TARGET TIMES SET FOR THIS SESSION (the coach's targets for the reps, worked out from each "
+        f"swimmer's PBs as of {session.date.isoformat()}. These are targets, not results; only the coach's "
+        "register and observations say what was swum):"
+    ]
+    for table in tables:
+        lines.append(f'- "{table["name"]}": {table["summary"]}'
+                     + (f". Used for: {table['note']}" if table["note"] else "")
+                     + f". Times shown: {', '.join(c['label'] for c in table['columns'])}")
+        for entry in table["swimmers"]:
+            lines.append(f"    {entry['name']}: {_swimmer_line(entry)}")
+    text = "\n".join(lines)
+    return text if len(text) <= max_chars else text[:max_chars - 1] + "…"
+
+
+def swimmer_target_lines(session: models.Session, db: DBSession, swimmer_ids: list[int]) -> dict[int, list[str]]:
+    """Each swimmer's targets for a session, as short lines for a per-swimmer brief."""
+    lines: dict[int, list[str]] = {}
+    for table in session_tables(session, db, swimmer_ids):
+        label = table["name"] + (f" ({table['note']})" if table["note"] else "")
+        for entry in table["swimmers"]:
+            lines.setdefault(entry["id"], []).append(f"{label}: {_swimmer_line(entry)}")
+    return lines

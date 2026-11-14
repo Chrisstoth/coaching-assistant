@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
 const sessionImport = await readFile(new URL('../src/pages/Import.jsx', import.meta.url), 'utf8')
-const sessionHub = await readFile(new URL('../src/pages/SessionDetail.jsx', import.meta.url), 'utf8')
+const sessionHub = await readFile(new URL('../src/pages/SessionHub.jsx', import.meta.url), 'utf8')
 const calendar = await readFile(new URL('../src/pages/Calendar.jsx', import.meta.url), 'utf8')
 const cancellationDialog = await readFile(new URL('../src/components/SessionCancellationDialog.jsx', import.meta.url), 'utf8')
 
@@ -11,8 +11,8 @@ assert.match(sessionImport, /api\.getCalendar\(localDateIso\(mondayFor\(selected
 assert.match(sessionImport, /New standalone session/, 'A coach should be able to import without linking a timetable occurrence.')
 assert.match(sessionImport, /targetLocked && preview\.context_match === false/, 'Dashboard-launched imports should retain strict target matching.')
 assert.match(sessionImport, /pool_slot_id: poolSlotId/, 'Selecting a timetable occurrence should link its pool slot into the reviewed draft.')
-assert.match(sessionHub, /No session plan yet[\s\S]*Import a workbook instead/, 'An unplanned session hub should still expose a clear import route.')
-assert.match(sessionHub, /to=\{`\/builder\/\$\{session\.id\}`\}/, 'The session hub should open the session in the Session Builder.')
+assert.match(sessionHub, /Not written yet[\s\S]*import a workbook/, 'An unplanned session hub should still expose a clear import route.')
+assert.match(sessionHub, /to=\{`\/builder\/\$\{id\}\?view=edit`\}/, 'The session hub should open the session in the Session Builder.')
 assert.match(sessionHub, /session: String\(session\.id\)/, 'The hub import route should target the current session.')
 assert.match(calendar, /z-\[70\].*flex items-end/, 'The calendar cancellation sheet should sit above the bottom toolbar.')
 assert.match(cancellationDialog, /z-\[70\]/, 'Shared cancellation dialogs should sit above the bottom toolbar.')

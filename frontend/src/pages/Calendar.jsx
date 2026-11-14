@@ -82,7 +82,7 @@ function SessionActionSheet({ item, dayDate, onClose, onDeleted, onStart, onCanc
 
         {item.status === 'active' && item.session_id && (
           <button
-            onClick={() => navigate(`/sessions/${item.session_id}`)}
+            onClick={() => navigate(`/sessions/${item.session_id}`, { state: { from: 'calendar' } })}
             className="w-full bg-accent-600 rounded-xl py-3 font-semibold text-sm"
           >
             Continue Session
@@ -100,7 +100,7 @@ function SessionActionSheet({ item, dayDate, onClose, onDeleted, onStart, onCanc
 
         {item.session_id && (
           <button
-            onClick={() => navigate(`/sessions/${item.session_id}`)}
+            onClick={() => navigate(`/sessions/${item.session_id}`, { state: { from: 'calendar' } })}
             className="w-full bg-pool-700 rounded-xl py-3 font-semibold text-sm"
           >
             View / Edit Session
@@ -296,7 +296,7 @@ export default function Calendar() {
     setStarting(item.slot_id)
     try {
       const session = await api.startCalendarSession({ pool_slot_id: item.slot_id, date: item.date || todayIso })
-      navigate(`/sessions/${session.id}`)
+      navigate(`/sessions/${session.id}`, { state: { from: 'calendar' } })
     } catch (error) {
       alert(`Could not open the session: ${error.message}. Check you have signal and try again.`)
     } finally {
@@ -382,7 +382,7 @@ export default function Calendar() {
                   starting={starting === item.slot_id}
                   onStart={() => handleStart({ ...item, date: day.date })}
                   onCancel={() => openCancel(item, day.date)}
-                  onOpen={() => item.session_id && navigate(`/sessions/${item.session_id}`)}
+                  onOpen={() => item.session_id && navigate(`/sessions/${item.session_id}`, { state: { from: 'calendar' } })}
                   onLongPress={() => setActiveSheet({ item, dayDate: day.date })}
                 />
               ))}

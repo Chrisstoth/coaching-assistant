@@ -6824,6 +6824,1461 @@
      "time": 0
     }
    }
+  },
+  {
+   "in": "Talk 3 min purpose of the main set",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "purpose of the main set",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 180
+    }
+   ],
+   "text": [
+    "Talk 3:00 purpose of the main set"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 180,
+    "time2": 180,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 2:00",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    }
+   ],
+   "text": [
+    "Talk 2:00"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 120,
+    "time2": 120,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 2",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    }
+   ],
+   "text": [
+    "Talk 2:00"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 120,
+    "time2": 120,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 90s - turns, then a word with Sam",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "turns, then a word with Sam",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 90
+    }
+   ],
+   "text": [
+    "Talk 1:30 turns, then a word with Sam"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 90,
+    "time2": 90,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "talk 1.5 mins",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 90
+    }
+   ],
+   "text": [
+    "Talk 1:30"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 90,
+    "time2": 90,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 3m",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 180
+    }
+   ],
+   "text": [
+    "Talk 3:00"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 180,
+    "time2": 180,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Brief 2 mins",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    }
+   ],
+   "text": [
+    "Talk 2:00"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 120,
+    "time2": 120,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Briefing: 1:30 race plan",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "race plan",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 90
+    }
+   ],
+   "text": [
+    "Talk 1:30 race plan"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 90,
+    "time2": 90,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Coach talk 4 minutes",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 240
+    }
+   ],
+   "text": [
+    "Talk 4:00"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 240,
+    "time2": 240,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Team talk 5 min",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 300
+    }
+   ],
+   "text": [
+    "Talk 5:00"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 300,
+    "time2": 300,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Chat 45 seconds",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 45
+    }
+   ],
+   "text": [
+    "Talk 0:45"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 45,
+    "time2": 45,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Explain 2 min why we hold pace",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "why we hold pace",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    }
+   ],
+   "text": [
+    "Talk 2:00 why we hold pace"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 120,
+    "time2": 120,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Explain 50 fly",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Explain 50 fly",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Explain 50 fly"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Explain 25m underwater",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Explain 25m underwater",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Explain 25m underwater"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Explain the main set",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Explain the main set",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Explain the main set"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk about turns",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Talk about turns",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Talk about turns"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 4x50",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Talk 4x50",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Talk 4x50"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 400",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Talk 400",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Talk 400"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 45 min",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "Talk 45 min",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Talk 45 min"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 0,
+    "time2": 0,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "talk for 2 minutes about the main set",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "about the main set",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    }
+   ],
+   "text": [
+    "Talk 2:00 about the main set"
+   ],
+   "stats": {
+    "dist": 0,
+    "time": 120,
+    "time2": 120,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "Talk 2 min purpose, 4x100 @1:40 [16]",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "purpose",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    },
+    {
+     "t": "line",
+     "reps": 4,
+     "dist": 100,
+     "desc": "",
+     "int": 100,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "16"
+    }
+   ],
+   "text": [
+    "Talk 2:00 purpose",
+    "4x100 @1:40 [16]"
+   ],
+   "stats": {
+    "dist": 400,
+    "time": 520,
+    "time2": 520,
+    "et": 6400,
+    "kt": 400
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 400,
+     "time": 400
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 0,
+     "time": 0
+    }
+   }
+  },
+  {
+   "in": "3 x (Talk 1 min feedback, 4x50 @1:00)",
+   "nodes": [
+    {
+     "t": "round",
+     "times": 3,
+     "note": "",
+     "items": [
+      {
+       "t": "line",
+       "reps": null,
+       "dist": null,
+       "desc": "feedback",
+       "int": null,
+       "int2": null,
+       "rest": null,
+       "est": null,
+       "eff": "",
+       "talk": 60
+      },
+      {
+       "t": "line",
+       "reps": 4,
+       "dist": 50,
+       "desc": "",
+       "int": 60,
+       "int2": null,
+       "rest": null,
+       "est": null,
+       "eff": ""
+      }
+     ]
+    }
+   ],
+   "text": [
+    "3x",
+    "  Talk 1:00 feedback",
+    "  4x50 @1:00"
+   ],
+   "stats": {
+    "dist": 600,
+    "time": 900,
+    "time2": 900,
+    "et": 0,
+    "kt": 0
+   },
+   "zones": {
+    "recovery": {
+     "dist": 0,
+     "time": 0
+    },
+    "aerobic": {
+     "dist": 0,
+     "time": 0
+    },
+    "threshold": {
+     "dist": 0,
+     "time": 0
+    },
+    "vo2": {
+     "dist": 0,
+     "time": 0
+    },
+    "lact_tol": {
+     "dist": 0,
+     "time": 0
+    },
+    "race_pace": {
+     "dist": 0,
+     "time": 0
+    },
+    "sprint": {
+     "dist": 0,
+     "time": 0
+    },
+    "kicking": {
+     "dist": 0,
+     "time": 0
+    },
+    "unspecified": {
+     "dist": 600,
+     "time": 720
+    }
+   }
   }
  ],
  "descs": [
@@ -8674,6 +10129,155 @@
     "et": 0,
     "kt": 0
    }
+  },
+  {
+   "in": "400 easy\nTalk 3:00 purpose of the set\n8x100 @1:30 [16]\n1) Kick",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": 400,
+     "desc": "easy",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    },
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "purpose of the set",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 180
+    },
+    {
+     "t": "line",
+     "reps": 8,
+     "dist": 100,
+     "desc": "1) Kick",
+     "int": 90,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "16"
+    }
+   ],
+   "text": [
+    "400 easy",
+    "Talk 3:00 purpose of the set",
+    "8x100 @1:30 [16] 1) Kick"
+   ],
+   "stats": {
+    "dist": 1200,
+    "time": 900,
+    "time2": 900,
+    "et": 11520,
+    "kt": 720
+   }
+  },
+  {
+   "in": "Talk 2:00\n1) Kick\n4x50 @1:00",
+   "nodes": [
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": "",
+     "talk": 120
+    },
+    {
+     "t": "line",
+     "reps": null,
+     "dist": null,
+     "desc": "1) Kick",
+     "int": null,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    },
+    {
+     "t": "line",
+     "reps": 4,
+     "dist": 50,
+     "desc": "",
+     "int": 60,
+     "int2": null,
+     "rest": null,
+     "est": null,
+     "eff": ""
+    }
+   ],
+   "text": [
+    "Talk 2:00",
+    "1) Kick",
+    "4x50 @1:00"
+   ],
+   "stats": {
+    "dist": 200,
+    "time": 360,
+    "time2": 360,
+    "et": 0,
+    "kt": 0
+   }
+  },
+  {
+   "in": "3x\n  Talk 1:00 feedback\n  4x50 @1:00 [17]",
+   "nodes": [
+    {
+     "t": "round",
+     "times": 3,
+     "note": "",
+     "items": [
+      {
+       "t": "line",
+       "reps": null,
+       "dist": null,
+       "desc": "feedback",
+       "int": null,
+       "int2": null,
+       "rest": null,
+       "est": null,
+       "eff": "",
+       "talk": 60
+      },
+      {
+       "t": "line",
+       "reps": 4,
+       "dist": 50,
+       "desc": "",
+       "int": 60,
+       "int2": null,
+       "rest": null,
+       "est": null,
+       "eff": "17"
+      }
+     ]
+    }
+   ],
+   "text": [
+    "3x",
+    "  Talk 1:00 feedback",
+    "  4x50 @1:00 [17]"
+   ],
+   "stats": {
+    "dist": 600,
+    "time": 900,
+    "time2": 900,
+    "et": 12240,
+    "kt": 720
+   }
   }
  ],
  "parts": [
@@ -8984,6 +10588,24 @@
    "speech": false,
    "out": "4x100 on 1:30",
    "spoken": true
+  },
+  {
+   "in": "talk for two minutes about the main set",
+   "speech": true,
+   "out": "talk for 2 minutes about the main set",
+   "spoken": false
+  },
+  {
+   "in": "talk for a minute",
+   "speech": false,
+   "out": "talk for 1 minute",
+   "spoken": false
+  },
+  {
+   "in": "talk for two and a half minutes",
+   "speech": true,
+   "out": "talk for 2:30",
+   "spoken": false
   }
  ],
  "effort": {
@@ -15232,6 +16854,331 @@
     "effort20": "Sunday 25 October 2026 · AM · 06:00–07:45\nBSV Shallw End Lanes 1-3 · Week 1.2.1\nAims: Kick Set; Descend Set\n\nWARM UP · 1,050 m · 23:45\n300 Easy choice @7:00 [8]\n3x\n  100 Kick @2:20 [14]\n  3x50 Build 1-3 - No board swimmers must have long U/Wers @1:05 [14->18]\n\nALL GROUPS SUB · 1,200 m · 26:30\n3x\n  3x75 Technical - Drill/Swim - 6KR + 1/3/5 Pulls @1:30 [12]\n  3x25 Swim Faster but High Quality @0:40 [17/18]\n  2x50 HVO Turn @1:10 [21]\n\nGROUP 1 (Group 1 Boys) · 2,000 m · 40:30\n2x\n  200 Steady @3:15 [10]\n  25 Fast Swim @0:30 [19]\n  150 Steady @2:15 [14]\n  25 Fast Swim @0:30 [19]\n  100 Build with PB + 12 Target @1:30 [16]\n  25 Fast Swim @0:30 [19]\n  75 Easy Choice @2:00 [8]\n  5x50 1 Fast 1 Easy @1:15 [20-8]\n  150 Easy choice @3:30 [8]\n\nGROUP 1 (Group 1 Girls) · 2,200 m · 40:30\n2x\n  200 Steady @3:15 [10]\n  25 Fast Swim @0:30 [19]\n  150 HR 24-25 @2:15 [14]\n  25 Fast Swim @0:30 [19]\n  100 PB + 12 @1:30 [16]\n  25 Fast Swim @0:30 [19]\n  75 Easy Choice @2:00 [8]\n  3x100 PB + 10 @2:00 [18]\n  200 Steady @3:45 [10]\n\nTotals: Group 1 Boys 4,250 m · 90:45 | Group 1 Girls 4,450 m · 90:45",
     "bpsc": "Sunday 25 October 2026 · AM · 06:00–07:45\nBSV Shallw End Lanes 1-3 · Week 1.2.1\nAims: Kick Set; Descend Set\n\nWARM UP · 1,050 m · 23:45\n300 Easy choice @7:00 [White]\n3x\n  100 Kick @2:20 [Yellow]\n  3x50 Build 1-3 - No board swimmers must have long U/Wers @1:05 [Yellow->Purple]\n\nALL GROUPS SUB · 1,200 m · 26:30\n3x\n  3x75 Technical - Drill/Swim - 6KR + 1/3/5 Pulls @1:30 [White]\n  3x25 Swim Faster but High Quality @0:40 [Red/Purple]\n  2x50 HVO Turn @1:10 [Gold]\n\nGROUP 1 (Group 1 Boys) · 2,000 m · 40:30\n2x\n  200 Steady @3:15 [White]\n  25 Fast Swim @0:30 [Blue]\n  150 Steady @2:15 [Yellow]\n  25 Fast Swim @0:30 [Blue]\n  100 Build with PB + 12 Target @1:30 [Pink]\n  25 Fast Swim @0:30 [Blue]\n  75 Easy Choice @2:00 [White]\n  5x50 1 Fast 1 Easy @1:15 [Blue-White]\n  150 Easy choice @3:30 [White]\n\nGROUP 1 (Group 1 Girls) · 2,200 m · 40:30\n2x\n  200 Steady @3:15 [White]\n  25 Fast Swim @0:30 [Blue]\n  150 HR 24-25 @2:15 [Yellow]\n  25 Fast Swim @0:30 [Blue]\n  100 PB + 12 @1:30 [Pink]\n  25 Fast Swim @0:30 [Blue]\n  75 Easy Choice @2:00 [White]\n  3x100 PB + 10 @2:00 [Purple]\n  200 Steady @3:45 [White]\n\nTotals: Group 1 Boys 4,250 m · 90:45 | Group 1 Girls 4,450 m · 90:45",
     "sweetenham": "Sunday 25 October 2026 · AM · 06:00–07:45\nBSV Shallw End Lanes 1-3 · Week 1.2.1\nAims: Kick Set; Descend Set\n\nWARM UP · 1,050 m · 23:45\n300 Easy choice @7:00 [A1]\n3x\n  100 Kick @2:20 [A2]\n  3x50 Build 1-3 - No board swimmers must have long U/Wers @1:05 [A2->MVO2]\n\nALL GROUPS SUB · 1,200 m · 26:30\n3x\n  3x75 Technical - Drill/Swim - 6KR + 1/3/5 Pulls @1:30 [A1]\n  3x25 Swim Faster but High Quality @0:40 [AT/MVO2]\n  2x50 HVO Turn @1:10 [Speed]\n\nGROUP 1 (Group 1 Boys) · 2,000 m · 40:30\n2x\n  200 Steady @3:15 [A1]\n  25 Fast Swim @0:30 [LT]\n  150 Steady @2:15 [A2]\n  25 Fast Swim @0:30 [LT]\n  100 Build with PB + 12 Target @1:30 [A3]\n  25 Fast Swim @0:30 [LT]\n  75 Easy Choice @2:00 [A1]\n  5x50 1 Fast 1 Easy @1:15 [LP-A1]\n  150 Easy choice @3:30 [A1]\n\nGROUP 1 (Group 1 Girls) · 2,200 m · 40:30\n2x\n  200 Steady @3:15 [A1]\n  25 Fast Swim @0:30 [LT]\n  150 HR 24-25 @2:15 [A2]\n  25 Fast Swim @0:30 [LT]\n  100 PB + 12 @1:30 [A3]\n  25 Fast Swim @0:30 [LT]\n  75 Easy Choice @2:00 [A1]\n  3x100 PB + 10 @2:00 [MVO2]\n  200 Steady @3:45 [A1]\n\nTotals: Group 1 Boys 4,250 m · 90:45 | Group 1 Girls 4,450 m · 90:45"
+   }
+  },
+  {
+   "id": "talk-between-sets",
+   "title": "Talk between sets",
+   "slot": 5400,
+   "groups": [
+    "Squad A",
+    "Squad B"
+   ],
+   "blocks": [
+    {
+     "name": "Warm up",
+     "groups": [],
+     "stats": {
+      "dist": 400,
+      "time": 360,
+      "time2": 360,
+      "et": 3600,
+      "kt": 360
+     },
+     "starts": [
+      0
+     ]
+    },
+    {
+     "name": "Main set",
+     "groups": [
+      "Squad A"
+     ],
+     "stats": {
+      "dist": 1400,
+      "time": 1800,
+      "time2": 1800,
+      "et": 23760,
+      "kt": 1440
+     },
+     "starts": [
+      360
+     ]
+    },
+    {
+     "name": "Main set",
+     "groups": [
+      "Squad B"
+     ],
+     "stats": {
+      "dist": 600,
+      "time": 600,
+      "time2": 600,
+      "et": 9000,
+      "kt": 600
+     },
+     "starts": [
+      360
+     ]
+    },
+    {
+     "name": "Swim down",
+     "groups": [],
+     "stats": {
+      "dist": 200,
+      "time": 330,
+      "time2": 330,
+      "et": 1920,
+      "kt": 240
+     },
+     "starts": [
+      2160,
+      960
+     ]
+    }
+   ],
+   "totals": [
+    {
+     "g": "Squad A",
+     "gid": "Squad A",
+     "dist": 2000,
+     "time": 2490,
+     "time2": 2490,
+     "et": 29280,
+     "kt": 2040,
+     "seq": [
+      {
+       "time": 360,
+       "eff": {
+        "lo": 10,
+        "hi": 10,
+        "mean": 10,
+        "kind": "single"
+       },
+       "label": "400 easy choice @6:00 [10]"
+      },
+      {
+       "time": 180,
+       "eff": null,
+       "label": "Talk 3:00 purpose of the set, hold pace, a word with Sam on turns"
+      },
+      {
+       "time": 720,
+       "eff": {
+        "lo": 16,
+        "hi": 16,
+        "mean": 16,
+        "kind": "single"
+       },
+       "label": "8x100 free @1:30 [16]"
+      },
+      {
+       "time": 60,
+       "eff": null,
+       "label": "Talk 1:00 feedback"
+      },
+      {
+       "time": 240,
+       "eff": {
+        "lo": 17,
+        "hi": 17,
+        "mean": 17,
+        "kind": "single"
+       },
+       "label": "4x50 kick @1:00 [17]"
+      },
+      {
+       "time": 60,
+       "eff": null,
+       "label": "Talk 1:00 feedback"
+      },
+      {
+       "time": 240,
+       "eff": {
+        "lo": 17,
+        "hi": 17,
+        "mean": 17,
+        "kind": "single"
+       },
+       "label": "4x50 kick @1:00 [17]"
+      },
+      {
+       "time": 60,
+       "eff": null,
+       "label": "Talk 1:00 feedback"
+      },
+      {
+       "time": 240,
+       "eff": {
+        "lo": 17,
+        "hi": 17,
+        "mean": 17,
+        "kind": "single"
+       },
+       "label": "4x50 kick @1:00 [17]"
+      },
+      {
+       "time": 90,
+       "eff": null,
+       "label": "Talk 1:30"
+      },
+      {
+       "time": 240,
+       "eff": {
+        "lo": 8,
+        "hi": 8,
+        "mean": 8,
+        "kind": "single"
+       },
+       "label": "200 easy @4:00 [8]"
+      }
+     ]
+    },
+    {
+     "g": "Squad B",
+     "gid": "Squad B",
+     "dist": 1200,
+     "time": 1290,
+     "time2": 1290,
+     "et": 14520,
+     "kt": 1200,
+     "seq": [
+      {
+       "time": 360,
+       "eff": {
+        "lo": 10,
+        "hi": 10,
+        "mean": 10,
+        "kind": "single"
+       },
+       "label": "400 easy choice @6:00 [10]"
+      },
+      {
+       "time": 600,
+       "eff": {
+        "lo": 15,
+        "hi": 15,
+        "mean": 15,
+        "kind": "single"
+       },
+       "label": "6x100 free @1:40 [15]"
+      },
+      {
+       "time": 90,
+       "eff": null,
+       "label": "Talk 1:30"
+      },
+      {
+       "time": 240,
+       "eff": {
+        "lo": 8,
+        "hi": 8,
+        "mean": 8,
+        "kind": "single"
+       },
+       "label": "200 easy @4:00 [8]"
+      }
+     ]
+    }
+   ],
+   "zones": [
+    {
+     "g": "Squad A",
+     "gid": "Squad A",
+     "zones": {
+      "recovery": {
+       "dist": 200,
+       "time": 240
+      },
+      "aerobic": {
+       "dist": 1200,
+       "time": 1080
+      },
+      "threshold": {
+       "dist": 0,
+       "time": 0
+      },
+      "vo2": {
+       "dist": 0,
+       "time": 0
+      },
+      "lact_tol": {
+       "dist": 0,
+       "time": 0
+      },
+      "race_pace": {
+       "dist": 0,
+       "time": 0
+      },
+      "sprint": {
+       "dist": 0,
+       "time": 0
+      },
+      "kicking": {
+       "dist": 600,
+       "time": 720
+      },
+      "unspecified": {
+       "dist": 0,
+       "time": 0
+      }
+     }
+    },
+    {
+     "g": "Squad B",
+     "gid": "Squad B",
+     "zones": {
+      "recovery": {
+       "dist": 200,
+       "time": 240
+      },
+      "aerobic": {
+       "dist": 1000,
+       "time": 960
+      },
+      "threshold": {
+       "dist": 0,
+       "time": 0
+      },
+      "vo2": {
+       "dist": 0,
+       "time": 0
+      },
+      "lact_tol": {
+       "dist": 0,
+       "time": 0
+      },
+      "race_pace": {
+       "dist": 0,
+       "time": 0
+      },
+      "sprint": {
+       "dist": 0,
+       "time": 0
+      },
+      "kicking": {
+       "dist": 0,
+       "time": 0
+      },
+      "unspecified": {
+       "dist": 0,
+       "time": 0
+      }
+     }
+    }
+   ],
+   "perGroup": [
+    {
+     "group": "Squad A",
+     "blocks": [
+      "Warm up",
+      "Main set",
+      "Swim down"
+     ]
+    },
+    {
+     "group": "Squad B",
+     "blocks": [
+      "Warm up",
+      "Main set",
+      "Swim down"
+     ]
+    }
+   ],
+   "text": {
+    "effort20": "Talk between sets · PM · 17:00–18:30\nAims: Threshold with the coach's talks counted\n\nWARM UP · 400 m · 6:00\n400 easy choice @6:00 [10]\n\nMAIN SET (Squad A) · 1,400 m · 30:00\nTalk 3:00 purpose of the set, hold pace, a word with Sam on turns\n8x100 free @1:30 [16]\n3x\n  Talk 1:00 feedback\n  4x50 kick @1:00 [17]\n\nMAIN SET (Squad B) · 600 m · 10:00\n6x100 free @1:40 [15]\n\nSWIM DOWN · 200 m · 5:30\nTalk 1:30\n200 easy @4:00 [8]\n\nTotals: Squad A 2,000 m · 41:30 | Squad B 1,200 m · 21:30",
+    "bpsc": "Talk between sets · PM · 17:00–18:30\nAims: Threshold with the coach's talks counted\n\nWARM UP · 400 m · 6:00\n400 easy choice @6:00 [White]\n\nMAIN SET (Squad A) · 1,400 m · 30:00\nTalk 3:00 purpose of the set, hold pace, a word with Sam on turns\n8x100 free @1:30 [Pink]\n3x\n  Talk 1:00 feedback\n  4x50 kick @1:00 [Red]\n\nMAIN SET (Squad B) · 600 m · 10:00\n6x100 free @1:40 [Pink]\n\nSWIM DOWN · 200 m · 5:30\nTalk 1:30\n200 easy @4:00 [White]\n\nTotals: Squad A 2,000 m · 41:30 | Squad B 1,200 m · 21:30",
+    "sweetenham": "Talk between sets · PM · 17:00–18:30\nAims: Threshold with the coach's talks counted\n\nWARM UP · 400 m · 6:00\n400 easy choice @6:00 [A1]\n\nMAIN SET (Squad A) · 1,400 m · 30:00\nTalk 3:00 purpose of the set, hold pace, a word with Sam on turns\n8x100 free @1:30 [A3]\n3x\n  Talk 1:00 feedback\n  4x50 kick @1:00 [AT]\n\nMAIN SET (Squad B) · 600 m · 10:00\n6x100 free @1:40 [A3]\n\nSWIM DOWN · 200 m · 5:30\nTalk 1:30\n200 easy @4:00 [A1]\n\nTotals: Squad A 2,000 m · 41:30 | Squad B 1,200 m · 21:30"
    }
   },
   {

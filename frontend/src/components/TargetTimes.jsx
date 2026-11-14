@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { api } from '../api'
 import HelpLink from './HelpLink'
 import TargetTable from './TargetTable'
+import TargetSetSessions from './TargetSetSessions'
 import {
   BASE_DISTANCES, DEFAULT_DRAFT, REP_DISTANCES, STROKES, SHORT_STROKE,
   countTimes, draftFromSet, filterSwimmers, payloadFromDraft, toggleStroke,
@@ -260,6 +261,8 @@ export default function TargetTimes() {
           {table.swimmers.length === 0
             ? <p className="text-xs text-pool-500">No active swimmers in {table.squad || 'the squad'}.</p>
             : <TargetTable columns={table.columns} swimmers={shown} />}
+
+          {!editing && selected && <TargetSetSessions setId={selected.id} />}
 
           {!editing && selected && (
             confirmDelete ? (

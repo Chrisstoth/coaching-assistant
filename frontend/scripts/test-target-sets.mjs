@@ -37,3 +37,13 @@ assert.equal(filterSwimmers(swimmers, '').length, 2)
 assert.equal(countTimes(swimmers), 1)
 
 console.log('Target set checks passed')
+
+const { addSessionTarget, removeSessionTarget, swimmersFromLabel, sessionLabel } = await import('../src/targetSets.js')
+const links = [{ target_set_id: 1, note: null }]
+assert.deepEqual(addSessionTarget(links, 2, ' Main set 16 x 25 '), { targets: [
+  { target_set_id: 1, note: null }, { target_set_id: 2, note: 'Main set 16 x 25' }] })
+assert.deepEqual(addSessionTarget(links, 1, 'Kick').targets, [{ target_set_id: 1, note: 'Kick' }], 'Adding again updates the note.')
+assert.deepEqual(removeSessionTarget(links, 1), { targets: [] })
+assert.equal(swimmersFromLabel('register'), 'Swimmers on the register')
+assert.equal(sessionLabel({ date: '2026-11-12', start_time: '06:00', title: 'Speed' }), 'Thu 12 Nov · 06:00 · Speed')
+console.log('Session target checks passed')

@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { mountBuilder } from '../notation/builderUi'
 import VoiceInput from '../components/VoiceInput'
 import GroupSwimmers from '../components/GroupSwimmers'
+import { NoteComposer } from '../components/SessionNotes'
+import { queuedSessionNotes } from '../offlineQueue'
+import { noteSetOptions, setRefFor } from '../sessionNotes'
 import '../notation/builder.css'
 
 const toIso = d => d.toISOString().slice(0, 10)
@@ -161,9 +164,25 @@ function openInPool(asked, session) {
   return Boolean(phone && written && session?.date === toIso(new Date()))
 }
 
+/* A note made poolside: about the session, or the set that was tapped. */
+function PoolNoteSheet({ sessionId, swimmers, setGroups, presetSet, onSaved, onClose }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end bg-black/55" onClick={onClose}>
+      <div className="w-full max-w-lg mx-auto bg-pool-900 border-t border-pool-700 rounded-t-2xl px-4 pt-4 pb-6 space-y-3 max-h-[88vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()} role="dialog" aria-label="Note something">
+        <p className="text-sm font-semibold text-pool-100">
+          {presetSet?.label ? <>Note about <span className="text-teal-300">{presetSet.label}</span></> : 'Note something'}
+        </p>
+        <NoteComposer sessionId={sessionId} swimmers={swimmers} setGroups={setGroups} presetSet={presetSet} onSaved={onSaved} onCancel={onClose} />
+      </div>
+    </div>
+  )
+}
+
 /* The Session Builder itself, mounted from the builder's own screen code. */
 function Builder({ id }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const [params] = useSearchParams()
   const host = useRef(null)
   const [payload, setPayload] = useState(null)
@@ -186,6 +205,70 @@ function Builder({ id }) {
   const [drafting, setDrafting] = useState('')
   const idle = useRef(null)
   const lastRead = useRef('')
+  // Running the session: which view is showing, "ready", and notes made poolside.
+  const [view, setView] = useState('edit')
+  const [ready, setReady] = useState(false)
+  const [readyBusy, setReadyBusy] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [noteFor, setNoteFor] = useState(null)          // null, or { set_ref } while the note sheet is open
+  const [noteGroups, setNoteGroups] = useState([])
+  const [noteSwimmers, setNoteSwimmers] = useState(null)
+  const noted = useRef(new Set())
+  const flashTimer = useRef(null)
+  const flash = text => { setNotice(text); clearTimeout(flashTimer.current); flashTimer.current = setTimeout(() => setNotice(''), 4000) }
+  useEffect(() => () => clearTimeout(flashTimer.current), [])
+
+  const goBack = () => {
+    if (location.key !== 'default') navigate(-1)
+    else navigate(`/sessions/${id}`, { replace: true })
+  }
+
+  const toggleReady = async () => {
+    if (ready && !window.confirm('Mark this session as not ready yet?')) return
+    setReadyBusy(true)
+    try {
+      await builderRef.current?.flush()
+      const res = await api.setSessionReady(payload.id, !ready)
+      setReady(res.plan_ready)
+      flash(res.plan_ready ? 'Marked ready. Home shows it as ready; you can still change it.' : 'No longer marked ready.')
+    } catch (e) {
+      flash(e.message || 'Could not change that.')
+    } finally {
+      setReadyBusy(false)
+    }
+  }
+
+  const openNote = ref => {
+    const groups = noteSetOptions(builderRef.current ? builderRef.current.getSession() : payload?.session)
+    setNoteGroups(groups)
+    setNoteFor({ set_ref: ref ? setRefFor(groups, ref.line_id ? `line:${ref.line_id}` : `block:${ref.block_id}`) : null })
+    if (noteSwimmers === null) {
+      api.getRegister(payload.id).then(rows => {
+        const taken = (rows || []).some(r => r.attended === true || r.attended === false)
+        setNoteSwimmers((rows || []).map(r => ({
+          id: r.swimmer_id, name: r.swimmer_name || 'Swimmer',
+          here: taken ? r.attended === true : Boolean((r.usual_for_slot || r.group_planned != null) && !r.exception_reason),
+        })).sort((a, b) => (b.here - a.here) || a.name.localeCompare(b.name)))
+      }).catch(() => setNoteSwimmers([]))
+    }
+  }
+  const noteSaved = note => {
+    setNoteFor(null)
+    const line = note?.set_ref?.line_id
+    if (line) { noted.current.add(line); builderRef.current?.setNoted([...noted.current]) }
+    flash(note?.pending ? "Noted. It's on this phone and sends when there's signal." : 'Noted.')
+  }
+  // Poolside, mark the sets already noted this session.
+  useEffect(() => {
+    if (view !== 'pool' || !payload) return
+    let live = true
+    api.getSessionNotes(payload.id).catch(() => []).then(saved => {
+      if (!live) return
+      for (const n of [...(saved || []), ...queuedSessionNotes(payload.id)]) if (n.set_ref?.line_id) noted.current.add(n.set_ref.line_id)
+      builderRef.current?.setNoted([...noted.current])
+    })
+    return () => { live = false }
+  }, [view, payload?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const showComments = list => { setComments(list); if (builderRef.current) builderRef.current.setComments(list) }
   const askStaff = async (auto = false) => {
@@ -209,7 +292,7 @@ function Builder({ id }) {
     let body = { action }
     if (action === 'useful' || action === 'notuseful') body = { action: 'useful', useful: action === 'useful' }
     if (action === 'dismiss' && c.flag !== 'safety') {
-      const reason = window.prompt(`Why not? ${c.name} will remember this and stop raising it. (Leave empty to just dismiss.)`, '')
+      const reason = window.prompt(`Why not? ${c.name} won't raise this again on this session either way. Give a reason and they'll remember it for every session.`, '')
       if (reason === null) return
       body.reason = reason
     }
@@ -232,7 +315,7 @@ function Builder({ id }) {
   useEffect(() => {
     let live = true
     setPayload(null); setError('')
-    api.getBuilderSession(id).then(p => { if (live) setPayload(p) }).catch(e => { if (live) setError(e.message || 'Could not open the session.') })
+    api.getBuilderSession(id).then(p => { if (live) { setPayload(p); setReady(Boolean(p.plan_ready)) } }).catch(e => { if (live) setError(e.message || 'Could not open the session.') })
     return () => { live = false }
   }, [id])
 
@@ -256,6 +339,8 @@ function Builder({ id }) {
       onComment: (c, action) => onCommentRef.current(c, action),
       onLooseComments: setLoose,
       onWho: gid => onWhoRef.current(gid),
+      onView: v => setView(v),
+      onPoolNote: ref => onPoolNoteRef.current(ref),
       copyNextWeek: async () => {
         try {
           const next = await api.copyBuilderSessionToNextWeek(payload.id)
@@ -275,6 +360,7 @@ function Builder({ id }) {
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange
   const onCommentRef = useRef(onComment); onCommentRef.current = onComment
   const onWhoRef = useRef(openWho); onWhoRef.current = openWho
+  const onPoolNoteRef = useRef(openNote); onPoolNoteRef.current = openNote
   const toggleLive = () => { const v = !live; setLive(v); try { localStorage.setItem('sb.liveComments', v ? 'on' : 'off') } catch { /* fine */ } }
   const openCount = comments.filter(c => c.status === 'open').length
 
@@ -284,17 +370,42 @@ function Builder({ id }) {
       {payload && (
         <div className="flex items-center justify-between gap-3 builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <div className="flex items-center gap-3 min-w-0">
-            <Link to={`/sessions/${payload.id}`} className="text-pool-400 text-xl leading-none" aria-label="Back to the session">‹</Link>
+            <button type="button" onClick={goBack} className="text-pool-400 text-xl leading-none" aria-label="Back">‹</button>
             <span className="truncate text-pool-300">
               For <button onClick={() => setPicking(p => !p)} className="font-bold text-pool-100 underline decoration-dotted underline-offset-2">{audienceText(payload)}</button>
               {payload.cycle_code ? ` · Week ${payload.cycle_code}` : ''}
               {payload.pool_slot ? ` · ${payload.pool_slot.label || payload.pool_slot.time}` : ''}
             </span>
           </div>
-          <Link to={`/sessions/${payload.id}/register`} className="shrink-0 text-accent-400 font-semibold">Register</Link>
+          <div className="flex items-center gap-3 shrink-0">
+            {payload.status !== 'cancelled' && (
+              <button type="button" onClick={toggleReady} disabled={readyBusy}
+                className={ready ? 'font-semibold text-teal-300 disabled:opacity-50' : 'rounded-full border border-teal-600/70 px-2.5 py-1 font-semibold text-teal-200 disabled:opacity-50'}
+                title={ready ? 'Marked ready. Tap to take that back.' : "Say it's written and ready to run"}>
+                {ready ? 'Ready ✓' : 'Mark ready'}
+              </button>
+            )}
+            <Link to={`/sessions/${payload.id}/register`} className="text-accent-400 font-semibold">Register</Link>
+          </div>
         </div>
       )}
-      {payload && payload.staff_notes?.length > 0 && (
+      {payload && notice && (
+        <p className="builder-gut py-1.5 bg-teal-950/60 border-b border-teal-800/40 text-xs text-teal-200">{notice}</p>
+      )}
+      {payload && view === 'pool' && (
+        <>
+          <p className="builder-gut py-1.5 bg-pool-900 border-b border-pool-800 text-xs text-pool-400">Tap a set to note something about it, or use + Note.</p>
+          <button type="button" onClick={() => openNote(null)}
+            className="fixed bottom-20 right-4 z-40 rounded-full bg-accent-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-black/40">
+            + Note
+          </button>
+        </>
+      )}
+      {payload && noteFor && (
+        <PoolNoteSheet sessionId={payload.id} swimmers={noteSwimmers || []} setGroups={noteGroups} presetSet={noteFor.set_ref}
+          onSaved={noteSaved} onClose={() => setNoteFor(null)} />
+      )}
+      {payload && view !== 'pool' && payload.staff_notes?.length > 0 && (
         <details className="builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <summary className="cursor-pointer text-pool-300">From the staff since last time ({payload.staff_notes.length})</summary>
           <ul className="mt-1.5 space-y-1">
@@ -307,7 +418,7 @@ function Builder({ id }) {
           </ul>
         </details>
       )}
-      {payload && (
+      {payload && view !== 'pool' && (
         <div className="flex items-center gap-2 flex-wrap builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
           <button onClick={() => askStaff(false)} disabled={reading} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
             {reading ? 'The staff are reading…' : 'Ask the staff'}

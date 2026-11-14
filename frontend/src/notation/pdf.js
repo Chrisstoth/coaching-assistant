@@ -1,7 +1,7 @@
 /* The poolside PDF: summary first, groups that swim at the same time side by side,
    rounds as lane-rope brackets. From the Session Builder artifact; the header and
    footer text and the logo now come from the club's settings. */
-import { DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor } from './core.js'
+import { DIST_END, DKW, EFF_ORDER, EFF_STOPS, EFF_SYS, EFF_SYSTEMS, GROUP_COLORS, NUMW, NUMWORD, PART_LINE, PURE_TIME, RX_DIST, RX_PREFIX, RX_REPS, RX_ROUND, RX_SENDOFF, RX_STRONG, SET_START, T_R, T_SO, Z, addPart, appliesTo, avgEff, blockGroupNames, blockStarts, buildDesc, canonOf, capFirst, cellText, clamp, clockAdd, clockMins, cloneWithNewIds, descParts, displayTitle, effAvgText, effFromCanon, effHSL, effSys, effToCanon, esc, expandSeq, extractTiming, fmtDist, fmtTime, groupColor, groupLabel, groupName, hasNoteText, hasTiming, hexRgb, hoistFirstTiming, isBlankLine, isNoteLine, isTalkLine, itemsToText, lineText, lineTiming, looksSpoken, lumOf, matchParen, mergeTiming, newBlock, newLine, newNotes, newRound, nodeStats, normalizeDictation, normalizeSession, parseEffort, parseLineNodes, parseRest, parseSetLine, parseText, parseTime, parseTimingCell, partTimings, partsNote, perRep, plainDesc, restLabel, restShort, sendoffText, sessionForGroup, sessionGroups, sessionText, setEffSys, slotSeconds, splitSets, statsOf, timeText, timingMode, timingToken, totalsFor, uid, wordsToDigits, zoneFor } from './core.js'
 export function blockGroupLabel(s, b){
   const nm = (b.name || '').trim().toLowerCase();
   return blockGroupNames(s, b).map(grp => (nm && grp.toLowerCase().startsWith(nm + ' ') ? grp.slice(nm.length).trim() : (nm.includes(grp.toLowerCase()) ? '' : grp))).filter(Boolean).join(' / ');
@@ -134,6 +134,19 @@ export function buildSessionPdf(JsPDF, s, logo, fonts, printedAt, label = {}){
     }
     const add = (items, depth) => (items || []).forEach(n => {
       const off = depth * DEP;
+      // the coach's talk before a set: TALK, what it covers, and how long, where a send-off would be
+      if (isTalkLine(n)) {
+        const note = plainDesc(n.desc), dW = cols.desc - off;
+        font('italic', 9.5); const nl = note ? wrap(note, dW) : [], h = Math.max(6, nl.length * LH(9.5) + 2.6);
+        rows.push({ h, draw(x, yy){
+          ropes(x, yy, h, depth); const x0 = x + off;
+          font('semibold', 7.5, ORANGE); T('TALK', x0, yy + 1.9, { charSpace: 0.3 });
+          font('italic', 9.5, MUTED); nl.forEach((l, i) => T(l, x0 + cols.qty + cols.g, yy + 1.3 + i * LH(9.5)));
+          font('semibold', 9.5, ORANGE); T(fmtTime(n.talk), x + w - cols.eff - cols.g, yy + 1.3, { align: 'right' });
+          doc.setDrawColor(...LINE); doc.setLineWidth(0.15); doc.line(x0, yy + h, x + w, yy + h);
+        } });
+        return;
+      }
       if (isBlankLine(n)) return;
       if (isNoteLine(n)) {
         font('italic', 9.5); const nl = wrap(plainDesc(n.desc), w - off - 1), h = nl.length * LH(9.5) + 2.6;

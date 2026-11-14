@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
 import useWhisperVoice from '../hooks/useWhisperVoice'
 
@@ -79,6 +79,7 @@ export default function SessionDebrief() {
   const { id } = useParams()
   const [params] = useSearchParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const sessionId = params.get('session')
 
   const [debrief, setDebrief] = useState(null)
@@ -181,11 +182,17 @@ export default function SessionDebrief() {
     p => (decisions[p.id]?.status || 'accepted') !== 'rejected'
   ).length
 
+  // Back to where the debrief was opened from (the session page, Home…).
+  const leave = () => {
+    if (location.key !== 'default') navigate(-1)
+    else navigate(debrief.session_id ? `/sessions/${debrief.session_id}` : '/', { replace: true })
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <div className="bg-pool-800 px-4 pt-4 pb-3 sticky top-0 z-10">
         <div className="flex items-start gap-3">
-          <Link to={debrief.session_id ? `/sessions/${debrief.session_id}` : '/'} className="text-pool-400 text-2xl leading-none">‹</Link>
+          <button type="button" onClick={leave} aria-label="Back" className="text-pool-400 text-2xl leading-none">‹</button>
           <div className="flex-1 min-w-0">
             <h1 className="text-base font-bold leading-tight truncate">
               {debrief.session_title || debrief.title || 'Session debrief'}
@@ -339,7 +346,7 @@ export default function SessionDebrief() {
 
         {(debrief.status === 'committed' || (debrief.status === 'ready' && !(debrief.proposals || []).length)) && (
           <button
-            onClick={() => navigate(debrief.session_id ? `/sessions/${debrief.session_id}` : '/')}
+            onClick={leave}
             className="w-full bg-pool-700 rounded-xl py-3 text-sm font-semibold text-pool-200"
           >
             Done

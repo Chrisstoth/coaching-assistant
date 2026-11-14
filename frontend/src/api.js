@@ -1,4 +1,4 @@
-import { flushOfflineSaves, queueRegisterSave } from './offlineQueue'
+import { flushOfflineSaves, queueRegisterSave, queueSessionNote } from './offlineQueue'
 
 const BASE = '/api'
 const TOKEN_KEY = 'lanewatch_ai_token'
@@ -208,6 +208,18 @@ async function saveRegisterWithOfflineFallback(sessionId, data) {
   }
 }
 
+// A note made poolside: saved now if there's signal, otherwise kept on the phone
+// and sent when there is. The note's client_id makes a repeat harmless.
+async function saveSessionNoteWithOfflineFallback(sessionId, note) {
+  if (isOffline()) return { ...queueSessionNote(sessionId, note), note }
+  try {
+    return await request('POST', `/sessions/${sessionId}/notes`, note, false, timeoutSignal(15000))
+  } catch (error) {
+    if (isRetryableRegisterFailure(error)) return { ...queueSessionNote(sessionId, note), note }
+    throw error
+  }
+}
+
 export const api = {
   // Swimmers
   getSwimmers: (params = {}) => {
@@ -380,6 +392,13 @@ export const api = {
     return request(method, path, body, false, options)
   }),
   recommendGroups: (sessionId) => request('POST', `/sessions/${sessionId}/recommend-groups`),
+
+  // Running a session: the plan marked ready, and notes taken poolside
+  setSessionReady: (sessionId, ready = true) => request('PUT', `/sessions/${sessionId}/ready`, { ready }),
+  getSessionNotes: (sessionId) => request('GET', `/sessions/${sessionId}/notes`),
+  addSessionNote: saveSessionNoteWithOfflineFallback,
+  editSessionNote: (sessionId, noteId, data) => request('PUT', `/sessions/${sessionId}/notes/${noteId}`, data),
+  deleteSessionNote: (sessionId, noteId) => request('DELETE', `/sessions/${sessionId}/notes/${noteId}`),
 
   // Import
   importCombinedSwims: (file, trackerFile = null, squad = 'Silver 1', replaceExisting = true, reconcileRoster = true) => {
@@ -575,6 +594,11 @@ export const api = {
   previewTargetSet: (data) => request('POST', '/target-sets/preview', data),
   getTargetSetTable: (id, squad) => request('GET', `/target-sets/${id}/table${squad != null ? '?squad=' + encodeURIComponent(squad) : ''}`),
   getSwimmerTargetTimes: (swimmerId) => request('GET', `/target-sets/swimmer/${swimmerId}`),
+  getSessionTargets: (sessionId) => request('GET', `/target-sets/session/${sessionId}`),
+  setSessionTargets: (sessionId, data) => request('PUT', `/target-sets/session/${sessionId}`, data),
+  getTargetSetSessions: (id) => request('GET', `/target-sets/${id}/sessions`),
+  addTargetSetToSession: (id, sessionId, data = {}) => request('POST', `/target-sets/${id}/sessions/${sessionId}`, data),
+  removeTargetSetFromSession: (id, sessionId) => request('DELETE', `/target-sets/${id}/sessions/${sessionId}`),
 
   // Coaching context
   getCoachingProfiles: () => request('GET', '/coaching-context/profiles'),

@@ -7,7 +7,7 @@ import Swimmers from './pages/Swimmers'
 import SwimmerDetail from './pages/SwimmerDetail'
 import NewSwimmer from './pages/NewSwimmer'
 import Sessions from './pages/Sessions'
-import SessionDetail from './pages/SessionDetail'
+import SessionHub from './pages/SessionHub'
 import Register from './pages/Register'
 import Meets from './pages/Meets'
 import MeetDetail from './pages/MeetDetail'
@@ -283,7 +283,7 @@ export default function App() {
           <Route path="/swimmers/:id/profile-wizard" element={<ProfileWizard />} />
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/sessions" element={<Sessions />} />
-          <Route path="/sessions/:id" element={<SessionDetail />} />
+          <Route path="/sessions/:id" element={<SessionHub />} />
           <Route path="/sessions/:id/register" element={<Register />} />
           <Route path="/debrief" element={<SessionDebrief />} />
           <Route path="/debrief/:id" element={<SessionDebrief />} />

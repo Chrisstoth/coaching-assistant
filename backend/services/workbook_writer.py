@@ -91,6 +91,10 @@ def _context(db: DBSession, role: str, session: models.Session) -> str:
              "SWUM AS WRITTEN?: " + ({"as_written": "yes", "changed": f"changed on deck - {swum.get('note') or 'no detail'}"}.get(swum.get("status")) or "not recorded"),
              "REGISTER:\n" + register,
              "YOUR WORKBOOK (index):\n" + W.read_index(db, role)]
+    from backend.services.target_times import session_context_text
+    targets = session_context_text(session, db, swimmer_ids or None)
+    if targets:
+        parts.insert(4, targets)
     pages = []
     if role == "physiologist":
         for sid in swimmer_ids:

@@ -14,6 +14,7 @@ from backend.services.importer import (
     save_session_xlsx_draft,
 )
 from backend.services import claude_service
+from backend.services import session_notes
 from backend.services.availability import availability_on_date
 from backend.services.openai_service import parse_whiteboard_photo
 from backend.services.cycle_codes import cycle_context, link_session
@@ -447,6 +448,7 @@ def delete_session(session_id: int, db: DBSession = Depends(get_db)):
     db.query(models.SessionGroup).filter(models.SessionGroup.session_id == session_id).delete()
     db.query(models.AIAnalysis).filter(models.AIAnalysis.session_id == session_id).delete()
     db.query(models.SwimmerObservation).filter(models.SwimmerObservation.session_id == session_id).delete()
+    db.query(models.SessionNote).filter(models.SessionNote.session_id == session_id).delete()
     db.delete(session)
     db.commit()
 
@@ -1110,6 +1112,112 @@ def recommend_groups(session_id: int, db: DBSession = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Running the session: "ready" and notes taken poolside
+# ---------------------------------------------------------------------------
+
+class PlanReady(BaseModel):
+    ready: bool = True
+
+
+class SessionNoteIn(BaseModel):
+    text: str
+    client_id: Optional[str] = None
+    swimmer_ids: list[int] = []
+    set_ref: Optional[dict] = None
+    noted_at: Optional[str] = None
+
+
+class SessionNoteEdit(BaseModel):
+    text: Optional[str] = None
+    swimmer_ids: Optional[list[int]] = None
+    set_ref: Optional[dict] = None
+    clear_set: bool = False
+
+
+@router.put("/{session_id}/ready")
+def set_plan_ready(session_id: int, body: PlanReady, db: DBSession = Depends(get_db)):
+    """The coach has finished writing the session (or taken that back)."""
+    session = _get_or_404(session_id, db)
+    if body.ready and session.status == "cancelled":
+        raise HTTPException(status_code=409, detail="A cancelled session can't be marked ready.")
+    if body.ready:
+        session.plan_ready_at = session.plan_ready_at or datetime.now(timezone.utc)
+    else:
+        session.plan_ready_at = None
+    db.commit()
+    return {"id": session.id, "plan_ready": bool(session.plan_ready_at), "plan_ready_at": session.plan_ready_at}
+
+
+def _get_note_or_404(session_id: int, note_id: int, db: DBSession) -> models.SessionNote:
+    note = db.query(models.SessionNote).filter(
+        models.SessionNote.id == note_id,
+        models.SessionNote.session_id == session_id,
+    ).first()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+@router.get("/{session_id}/notes")
+def list_session_notes(session_id: int, db: DBSession = Depends(get_db)):
+    _get_or_404(session_id, db)
+    return session_notes.notes_out(db, session_notes.notes_for(db, session_id))
+
+
+@router.post("/{session_id}/notes", status_code=201)
+def add_session_note(session_id: int, body: SessionNoteIn, db: DBSession = Depends(get_db)):
+    """A note made during the session. Safe to repeat: the phone's id makes it one note."""
+    _get_or_404(session_id, db)
+    text_value = (body.text or "").strip()[:session_notes.MAX_TEXT]
+    if not text_value:
+        raise HTTPException(status_code=422, detail="Write or say the note first.")
+    client_id = (body.client_id or "").strip()[:80] or None
+    if client_id:
+        existing = db.query(models.SessionNote).filter(models.SessionNote.client_id == client_id).first()
+        if existing:
+            if existing.session_id != session_id:
+                raise HTTPException(status_code=409, detail="That note belongs to another session.")
+            return session_notes.notes_out(db, [existing])[0]
+    note = models.SessionNote(
+        session_id=session_id,
+        client_id=client_id,
+        text=text_value,
+        swimmer_ids=session_notes.clean_swimmer_ids(db, body.swimmer_ids),
+        set_ref=session_notes.clean_set_ref(body.set_ref),
+        noted_at=session_notes.parse_noted_at(body.noted_at),
+    )
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    return session_notes.notes_out(db, [note])[0]
+
+
+@router.put("/{session_id}/notes/{note_id}")
+def edit_session_note(session_id: int, note_id: int, body: SessionNoteEdit, db: DBSession = Depends(get_db)):
+    note = _get_note_or_404(session_id, note_id, db)
+    if body.text is not None:
+        text_value = body.text.strip()[:session_notes.MAX_TEXT]
+        if not text_value:
+            raise HTTPException(status_code=422, detail="A note can't be empty. Delete it instead.")
+        note.text = text_value
+    if body.swimmer_ids is not None:
+        note.swimmer_ids = session_notes.clean_swimmer_ids(db, body.swimmer_ids)
+    if body.clear_set:
+        note.set_ref = None
+    elif body.set_ref is not None:
+        note.set_ref = session_notes.clean_set_ref(body.set_ref)
+    db.commit()
+    db.refresh(note)
+    return session_notes.notes_out(db, [note])[0]
+
+
+@router.delete("/{session_id}/notes/{note_id}", status_code=204)
+def delete_session_note(session_id: int, note_id: int, db: DBSession = Depends(get_db)):
+    db.delete(_get_note_or_404(session_id, note_id, db))
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
 # Session planner
 # ---------------------------------------------------------------------------
 
@@ -1364,6 +1472,8 @@ def _session_summary(s: models.Session, planned_ids: Optional[set[int]] = None) 
         "cycle_code": s.cycle_code,
         "cycle_context": context,
         "has_plan": _has_plan(s, planned_ids),
+        "plan_ready": bool(s.plan_ready_at),
+        "plan_ready_at": s.plan_ready_at,
     }
 
 
@@ -1418,6 +1528,7 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
         "has_plan": bool(session and (
             session.coach_intent or session.coach_notes or session.planned_content or groups
         )),
+        "plan_ready": bool(session and session.plan_ready_at),
         "course": (session.course if session else None) or (slot.course if slot else None),
         "lanes": slot.lanes if slot else None,
         "has_blocks": slot.has_blocks if slot else None,

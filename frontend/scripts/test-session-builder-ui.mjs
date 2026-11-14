@@ -67,6 +67,47 @@ assert.equal(last.t, 'round')
 assert.equal(last.times, 2)
 assert.deepEqual(last.items.map(n => n.dist), [100, 50])
 
+// a talk before a set: typed in the add box, it adds time but no metres, and shows as a talk row
+const timeOf = () => totalsFor(normalizeSession(JSON.parse(JSON.stringify(api.getSession()))))[0]
+const t0 = timeOf()
+type('Talk 3 min purpose of the set')
+let talk = api.getSession().blocks[0].items.at(-1)
+assert.deepEqual([talk.talk, talk.desc, talk.dist], [180, 'purpose of the set', null])
+assert.equal(timeOf().time, t0.time + 180, 'the talk counts toward the session time')
+assert.equal(timeOf().dist, t0.dist, 'a talk has no metres')
+assert.ok(root.querySelector(`.node.talk[data-id="${talk.id}"] .tlab`), 'drawn as a talk row')
+// its time can be changed in the row, and reads back as m:ss
+const cell = root.querySelector(`#f-${talk.id}-talk`)
+cell.value = '90s'; cell.dispatchEvent(new window.Event('input', { bubbles: true }))
+assert.equal(api.getSession().blocks[0].items.at(-1).talk, 90)
+cell.value = 'soon'; cell.dispatchEvent(new window.Event('input', { bubbles: true }))
+assert.ok(cell.classList.contains('bad'))
+assert.equal(api.getSession().blocks[0].items.at(-1).talk, 90, 'an unreadable time keeps the last good one')
+cell.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true }))
+assert.equal(cell.value, '1:30')
+// "Talk before this set" from a set's menu puts a 2:00 talk just above it
+key(window.document.body, 'z', { ctrlKey: true })   // the cell edits aren't undo steps: this takes the typed talk back out
+assert.ok(!api.getSession().blocks[0].items.some(n => n.talk != null))
+const setBefore = api.getSession().blocks[0].items[0]
+click(root.querySelector(`.node[data-id="${setBefore.id}"] .kebab`))
+click(root.querySelector('#pop [data-op="talk-before"]'))
+talk = api.getSession().blocks[0].items[0]
+assert.equal(talk.talk, 120)
+assert.equal(api.getSession().blocks[0].items[1].id, setBefore.id)
+assert.equal(window.document.activeElement.id, `f-${talk.id}-desc`, 'the cursor goes to what the talk covers')
+// a block's menu puts one at the start of the block
+const blk = api.getSession().blocks[1]
+click(root.querySelector(`.block[data-id="${blk.id}"] .bhead .kebab`))
+click(root.querySelector('#pop [data-op="talk-start"]'))
+assert.equal(api.getSession().blocks[1].items[0].talk, 120)
+// poolside shows it, with its time
+click($('#vPool'))
+assert.ok($('#pool .pl.talk'))
+assert.match($('#pool .pl.talk').textContent, /Talk.*2:00/)
+click($('#vEdit'))
+key(window.document.body, 'z', { ctrlKey: true }); key(window.document.body, 'z', { ctrlKey: true })
+assert.ok(!api.getSession().blocks.some(bk => (bk.items || []).some(n => n.talk != null)))
+
 // a group's tab shows only the blocks it swims
 const tabs = $$('#gtabs button')
 click(tabs[1])
@@ -121,6 +162,11 @@ const pdfText = buildSessionPdf(jsPDF, normalizeSession(JSON.parse(JSON.stringif
 assert.match(pdfText, /SILVER 1 · SESSION PLAN|SILVER 1 \267 SESSION PLAN|SILVER 1/)
 assert.match(pdfText, /BPSC Session Builder/)
 assert.match(pdfText, /WARM UP/)
+// talks print, with their time
+const talkSession = JSON.parse(readFileSync(join(here, '..', '..', 'shared', 'notation', 'sessions', 'talk-between-sets.json'), 'utf8')).session
+const talkPdf = buildSessionPdf(jsPDF, normalizeSession(talkSession), null, null, '13 Nov 2026').output()
+assert.match(talkPdf, /TALK/)
+assert.match(talkPdf, /3:00/)
 
 // a club's own scale: listed in the picker beside the standard ones it hasn't hidden, and shown in its own words
 const { EFF_SYSTEMS, effFromCanon, useScales } = await import('../src/notation/core.js')
@@ -155,6 +201,29 @@ const root4 = window.document.createElement('div'); window.document.body.appendC
 const b4 = mountBuilder(root4, { id: 45, session: sample, effSys: 'effort20', save: async () => ({ ok: true }) })
 assert.equal(root4.querySelectorAll('#groupsEdit .gwho').length, 0, 'no "who" button when the app does not offer it')
 b4.destroy()
+
+// poolside notes: the app hears which view is showing, a tapped set says which set it
+// was, sets already noted carry a marker, and nothing happens on a tap while editing
+const views = [], tapped = []
+const root5 = window.document.createElement('div'); window.document.body.appendChild(root5)
+const b5 = mountBuilder(root5, { id: 46, session: sample, effSys: 'effort20', save: async () => ({ ok: true }),
+  onView: v => views.push(v), onPoolNote: ref => tapped.push(ref) })
+const firstSet = b5.getSession().blocks[0].items.find(n => n.t === 'line')
+root5.querySelector(`#blocks .node[data-id="${firstSet.id}"]`)?.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+assert.deepEqual(tapped, [], 'tapping a set while editing does not open a note')
+b5.setView('pool')
+assert.deepEqual(views, ['pool'])
+assert.equal(b5.view(), 'pool')
+const poolLine = root5.querySelector(`#pool [data-nid="${firstSet.id}"]`)
+assert.ok(poolLine, 'each poolside set says which set it is')
+poolLine.querySelector('.pd').dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+assert.deepEqual(tapped, [{ block_id: b5.getSession().blocks[0].id, line_id: firstSet.id }])
+b5.setNoted([firstSet.id])
+assert.ok(root5.querySelector(`#pool [data-nid="${firstSet.id}"]`).classList.contains('noted'))
+assert.equal(root5.querySelectorAll('#pool .noted').length, 1)
+b5.destroy()
+poolLine.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+assert.equal(tapped.length, 1, 'the tap listener goes with the builder')
 
 console.log('Session builder screen checks passed')
 process.exit(0)

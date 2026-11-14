@@ -188,6 +188,9 @@ function effortHtml(effort) {
 /** The clock cell — a send-off and a prescribed rest read differently. */
 function intervalHtml(interval) {
   if (!interval) return '<span class="col-clock empty"></span>'
+  if (interval.kind === 'talk') {
+    return `<span class="col-clock is-rest"><i>talk</i> ${escapeHtml(interval.value)}</span>`
+  }
   if (interval.kind === 'rest') {
     return `<span class="col-clock is-rest"><i>rest</i> ${escapeHtml(interval.value)}</span>`
   }

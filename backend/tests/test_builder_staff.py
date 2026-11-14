@@ -43,6 +43,8 @@ class BuilderStaffTests(unittest.TestCase):
 
     def fake(self, system, user, operation, max_tokens=700):
         self.seen.append(user)
+        self.prompts = getattr(self, "prompts", {})
+        self.prompts[system.split(",")[0].replace("You are ", "")] = system
         if "Physiologist" in system:
             return {"comments": [{"line_id": "L2", "flag": "safety", "message": "Third race-pace day in a row for the girls."},
                                  {"line_id": "nope", "flag": "preference", "message": "General point."}]}
@@ -69,9 +71,41 @@ class BuilderStaffTests(unittest.TestCase):
             self.assertEqual(by[("Erin", "L1")]["flag"], "preference")
             BS.decide(db, by[("Fiona", "L2")]["id"], "accept", useful=True)
             again = BS.review(db, s, s.builder, ask=self.fake)
-            self.assertEqual(sum(1 for c in again if c["name"] == "Fiona" and c["line_id"] == "L2"), 2,
-                             "the decided one stays, the undecided ones are replaced")
-            self.assertEqual(len(again), 1 + 3, "one decided, plus the three from the new read")
+            self.assertEqual(sum(1 for c in again if c["name"] == "Fiona" and c["line_id"] == "L2"), 1,
+                             "the decided one stays, and the same flag again is not raised a second time")
+            self.assertEqual(len(again), 1 + 2, "one decided, plus the two new ones from the new read")
+            self.assertIn("WHAT YOU HAVE ALREADY SAID ON THIS SESSION", self.prompts["Fiona"])
+            self.assertIn("Third race-pace day in a row", self.prompts["Fiona"])
+
+    def test_a_dismissed_point_does_not_come_back_in_other_words(self):
+        replies = {"Swimmer Manager": [{"line_id": "L1", "flag": "preference", "message": "Make the warm up mixed strokes."}]}
+
+        def ask(system, user, operation, max_tokens=700):
+            return {"comments": next((v for k, v in replies.items() if k in system), [])}
+        with SessionLocal() as db:
+            s = db.get(models.Session, self.sid)
+            first = [c for c in BS.review(db, s, s.builder, ask=ask) if c["name"] == "Erin"]
+            BS.decide(db, first[0]["id"], "dismiss")       # no reason given: still remembered on this session
+            replies["Swimmer Manager"] = [
+                {"line_id": "L1", "flag": "preference", "message": "Could the warm up have some backstroke in it?"},
+                {"line_id": "L2", "flag": "preference", "message": "Amira is back from a cold; she could swim lane 2 on the race pace."}]
+            again = [c for c in BS.review(db, s, s.builder, ask=ask) if c["status"] == "open"]
+            self.assertEqual([c["line_id"] for c in again], ["L2"], "the same line is held back; a new point elsewhere comes through")
+            replies["Swimmer Manager"] = [{"line_id": None, "flag": "preference", "message": "Warm up strokes should be mixed, not all free."}]
+            self.assertEqual([c for c in BS.review(db, s, s.builder, ask=ask) if c["status"] == "open"], [],
+                             "the same point in other words, not pinned to a line, is held back too")
+
+    def test_repeats(self):
+        said = [{"role": "manager", "flag": "preference", "message": "Make the warm up mixed strokes.", "line_id": "L1", "block": "Warm up"}]
+        new = lambda **k: {"role": "manager", "flag": "preference", "message": "x", "line_id": "L9", "block": "Main", **k}
+        self.assertTrue(BS._repeats(new(line_id="L1", message="Something else entirely"), said))
+        self.assertTrue(BS._repeats(new(block="Warm up", message="Mixed strokes in the warm up please"), said))
+        self.assertFalse(BS._repeats(new(message="The kick set is long for Ben"), said))
+        self.assertFalse(BS._repeats(new(role="analyst", line_id="L1"), said), "another worker may say their own thing")
+        safety = [{**said[0], "flag": "safety", "message": "Third race-pace day in a row for the girls."}]
+        self.assertTrue(BS._repeats(new(flag="safety", line_id="L1", message="Third race-pace day in a row for the girls"), safety))
+        self.assertFalse(BS._repeats(new(flag="safety", line_id="L1", message="Josh's shoulder: no paddles"), safety),
+                         "a different safety flag always comes through")
 
     def test_a_dismissed_preference_teaches_the_worker_but_safety_stays(self):
         self.seen = []

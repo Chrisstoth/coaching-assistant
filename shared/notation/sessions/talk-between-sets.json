@@ -1,0 +1,47 @@
+{
+ "id": "talk-between-sets",
+ "session": {
+  "title": "Talk between sets",
+  "date": "2026-11-13",
+  "slot": "PM",
+  "start": "17:00",
+  "end": "18:30",
+  "aims": ["Threshold with the coach's talks counted", ""],
+  "groups": [{ "id": "gA", "name": "Squad A" }, { "id": "gB", "name": "Squad B" }],
+  "blocks": [
+   {
+    "id": "b1", "name": "Warm up", "groups": [],
+    "items": [
+     { "id": "l1", "t": "line", "reps": null, "dist": 400, "desc": "easy choice", "int": 360, "int2": null, "rest": null, "est": null, "eff": "10" }
+    ]
+   },
+   {
+    "id": "b2", "name": "Main set", "groups": ["gA"],
+    "items": [
+     { "id": "t1", "t": "line", "reps": null, "dist": null, "desc": "purpose of the set, hold pace, a word with Sam on turns", "int": null, "int2": null, "rest": null, "est": null, "eff": "", "talk": 180 },
+     { "id": "l2", "t": "line", "reps": 8, "dist": 100, "desc": "free", "int": 90, "int2": null, "rest": null, "est": null, "eff": "16" },
+     {
+      "id": "r1", "t": "round", "times": 3, "note": "",
+      "items": [
+       { "id": "t2", "t": "line", "reps": null, "dist": null, "desc": "feedback", "int": null, "int2": null, "rest": null, "est": null, "eff": "", "talk": 60 },
+       { "id": "l3", "t": "line", "reps": 4, "dist": 50, "desc": "kick", "int": 60, "int2": null, "rest": null, "est": null, "eff": "17" }
+      ]
+     }
+    ]
+   },
+   {
+    "id": "b3", "name": "Main set", "groups": ["gB"],
+    "items": [
+     { "id": "l4", "t": "line", "reps": 6, "dist": 100, "desc": "free", "int": 100, "int2": null, "rest": null, "est": null, "eff": "15" }
+    ]
+   },
+   {
+    "id": "b4", "name": "Swim down", "groups": [],
+    "items": [
+     { "id": "t3", "t": "line", "reps": null, "dist": null, "desc": "", "int": null, "int2": null, "rest": null, "est": null, "eff": "", "talk": 90 },
+     { "id": "l5", "t": "line", "reps": null, "dist": 200, "desc": "easy", "int": 240, "int2": null, "rest": null, "est": null, "eff": "8" }
+    ]
+   }
+  ]
+ }
+}

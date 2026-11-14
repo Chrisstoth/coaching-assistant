@@ -92,7 +92,7 @@ export default function HelpGuide() {
       <Section id="idea" title="The idea in one minute" open>
         <p>Each member of staff has one job and a <b>workbook</b>: plain notes they write about the swimmers, the squad and their own area. Because they write things down, they remember from week to week, and you can see exactly what they think and why.</p>
         <p>They all read the same records: the <b>season plan</b>, the <b>sessions</b> you write, the <b>register</b> and <b>race results</b>. Numbers such as metres per training zone are worked out by the app, not guessed by the staff.</p>
-        <p>They stay quiet when nothing would change a decision. When they do speak, a <b>safety flag</b> (for example a big jump in load) is kept until you acknowledge it. A <b>preference</b> you dismiss is remembered, so it isn't raised again.</p>
+        <p>They stay quiet when nothing would change a decision. When they do speak, a <b>safety flag</b> (for example a big jump in load) is kept until you acknowledge it. Anything you accept or dismiss in the Session Builder isn't raised again on that session, not even in other words. Give a reason when you dismiss a <b>preference</b> and they remember it for every session.</p>
       </Section>
 
       <Section id="staff" title="Meet the staff">
@@ -157,6 +157,7 @@ export default function HelpGuide() {
         <p>A <b>target set</b> is your recipe for training target times, worked out from each swimmer's race PBs. For example: their <b>100 PB ÷ 4 for each 25</b>, then <b>+0.5</b> and <b>+1.0</b>, which gives three times per event.</p>
         <p>Pick which PB to start from (or each target event's own PB), the rep distance, the times to show (seconds added to PB pace, e.g. 0, 0.5, 1.0), the strokes (each swimmer's target events from their profile, or the strokes you choose), 25m or 50m pool PBs, and which squad.</p>
         <p>Nothing is copied: the times are worked out from the current PBs each time you open them, so they move on when new times are imported. A swimmer without a PB in that event shows "No time yet" rather than a guess.</p>
+        <p>Add a target set to the <b>sessions where you use it</b> (on the session page, or "Used in sessions" on the Targets tab), with a note such as "Main set 16 x 25". The times then show poolside, and the staff read them when they analyse the session. For a past session they use the PBs swimmers had on that day, so a later PB doesn't change the story.</p>
         <Link to="/swimmers?view=targets" className="text-xs text-accent-400">Open target sets ›</Link>
       </Section>
 

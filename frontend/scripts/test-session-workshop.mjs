@@ -52,7 +52,7 @@ assert.equal(offeredLesson({}), '')
 assert.equal(DECIDED_LABEL.withdrawn, 'Withdrawn after your reply')
 assert.match(api, /replyToWorkshopSuggestion/)
 assert.match(api, /getCoachGuidance: \(\) => request\('GET', '\/coach-guidance'\)/)
-assert.match(builderPage, /will remember this and stop raising it/, 'A dismissed preference, with a reason, is remembered.')
+assert.match(builderPage, /won't raise this again on this session either way. Give a reason and they'll remember it for every session/, 'A dismissed preference, with a reason, is remembered.')
 const settings = await read('../src/pages/Settings.jsx')
 assert.match(settings, /<CoachGuidancePanel \/>/, 'The coach can see and change what the staff remember.')
 

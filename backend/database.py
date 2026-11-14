@@ -76,6 +76,8 @@ def _apply_migrations():
             add_col("sessions", "builder", "JSON")
             add_col("sessions", "audience", "JSON")
             add_col("sessions", "as_swum", "JSON")
+            add_col("sessions", "targets", "JSON")
+            add_col("sessions", "plan_ready_at", "DATETIME")
 
         if "session_entries" in insp.get_table_names():
             add_col("session_entries", "response", "VARCHAR")

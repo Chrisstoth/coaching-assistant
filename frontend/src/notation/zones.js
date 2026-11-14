@@ -45,6 +45,8 @@ function emptyZones(){
 }
 
 function addLine(acc, n, k, bands){
+  // the coach talking isn't training: it has no zone
+  if (n.talk != null) return
   const st = nodeStats(n)
   const dist = st.dist * k, time = st.time * k
   if (!dist && !time) return

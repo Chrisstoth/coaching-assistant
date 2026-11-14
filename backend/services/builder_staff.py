@@ -92,9 +92,14 @@ data gives a clear reason that could change the coach's mind. Staying quiet is n
 - Name the swimmer or figure behind every comment, in one or two sentences.
 - "flag": "safety" only for one of your safety flags; anything else is "preference".
 - Never repeat something the coach has told you not to flag (below), unless it is a safety flag.
+- Never raise again anything you have already said on THIS session (below) - not on the same line, not
+  on a line near it, not in other words. The coach has answered it. A safety flag the coach has
+  acknowledged comes back only if the session has since changed to make it clearly worse.
 - Never invent data. The coach decides; you advise.
 
 {prefs}
+
+{already}
 
 Return JSON only:
 {{"comments": [{{"line_id": "ab12cd34", "flag": "safety|preference", "message": "...", "swimmer_ids": []}}]}}
@@ -120,7 +125,63 @@ def _not_to_flag(db: DBSession, role: str) -> str:
     return ("WHAT THE COACH HAS TOLD YOU NOT TO FLAG:\n" + W.parse(text)[1].strip()) if text else ""
 
 
-def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None) -> list:
+_DECIDED = {"dismissed": "dismissed", "resolved": "accepted"}
+
+
+def _decided(db: DBSession, session_id: int) -> list:
+    """The comments the coach has already answered on this session, oldest first."""
+    rows = db.query(models.StaffNote).filter(models.StaffNote.session_id == session_id, models.StaffNote.trigger == "builder",
+                                             models.StaffNote.status.in_(tuple(_DECIDED))).order_by(models.StaffNote.id).all()
+    return [{"role": n.role, "flag": n.flag, "message": n.message, "status": n.status, "reply": n.coach_reply,
+             "line_id": (n.anchor or {}).get("line_id"), "block": (n.anchor or {}).get("block")} for n in rows]
+
+
+def _already_said(decided: list, role: str, lines: list) -> str:
+    """What this worker has already said on this session, and how the coach answered."""
+    text = {l["id"]: l["text"].strip() for l in lines}
+    out = []
+    for d in (d for d in decided if d["role"] == role):
+        where = f"on [{d['line_id']}] {text.get(d['line_id'], '')}".strip() if d["line_id"] else "on the whole session"
+        verdict = "acknowledged" if d["flag"] == "safety" and d["status"] == "dismissed" else _DECIDED[d["status"]]
+        out.append(f"- {where}: “{d['message']}” - the coach {verdict} it" + (f", saying: “{d['reply']}”" if d["reply"] else ""))
+    return ("WHAT YOU HAVE ALREADY SAID ON THIS SESSION (do not say it again):\n" + "\n".join(out)) if out else ""
+
+
+_STOP = set("""a an and are as at be been but by can could do does for from had has have he her his how i if in into is it
+its just may might more most much not of on or our over she so some than that the their them then there these they this
+those to too up very was we were what when which who will with would you your about after all also any back before being
+both each few get got here keep make maybe need only other same should still such them through under until while""".split())
+
+
+def _words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9']+", (text or "").lower()) if len(w) > 2 and w not in _STOP}
+
+
+def _overlap(a: str, b: str) -> float:
+    x, y = _words(a), _words(b)
+    return len(x & y) / min(len(x), len(y)) if x and y else 0.0
+
+
+def _repeats(c: dict, decided: list) -> bool:
+    """True when a new comment says again what this worker already said and the coach answered.
+
+    A preference is a repeat on the same line whatever the wording, in the same block
+    when it sounds alike, anywhere when it says much the same. A safety flag is only held
+    back when it is the same flag, on the same line, already acknowledged."""
+    for d in decided:
+        if d["role"] != c["role"]:
+            continue
+        same_line = bool(c["line_id"]) and c["line_id"] == d["line_id"]
+        sim = _overlap(c["message"], d["message"])
+        if c["flag"] == "safety":
+            if same_line and sim >= 0.34:
+                return True
+        elif same_line or (c["block"] and c["block"] == d["block"] and sim >= 0.34) or sim >= 0.5:
+            return True
+    return False
+
+
+def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None, decided: Optional[list] = None) -> list:
     """One worker's comments on the session (own database connection: runs in parallel)."""
     from backend.services.staff_room import ROSTER, Subject, role_context
     ask = ask or _ask
@@ -134,7 +195,8 @@ def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None) 
             day = None
         data = role_context(role, db, Subject(session_date=day, squad=squad, attendee_ids=_attendees(b)))
         system = _REVIEW.format(name=r.name, title=r.title, remit=r.remit, watch_for=r.watch_for,
-                                safety="; ".join(w.safety) or "none", max_n=MAX_PER_WORKER, prefs=_not_to_flag(db, role))
+                                safety="; ".join(w.safety) or "none", max_n=MAX_PER_WORKER, prefs=_not_to_flag(db, role),
+                                already=_already_said(decided or [], role, lines))
         out = ask(system, f"{_session_text_for_staff(b, lines)}\n\nYOUR DATA:\n{data}", "builder_comments")
     except Exception:  # noqa: BLE001 - one worker failing must not stop the others
         log.exception("builder review failed for %s", role)
@@ -155,15 +217,19 @@ def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None) 
 
 
 def review(db: DBSession, session: models.Session, b: dict, ask=None) -> list:
-    """All the reviewers, in parallel. Replaces the session's undecided comments with the new ones."""
+    """All the reviewers, in parallel. Replaces the session's undecided comments with the new ones.
+
+    Each worker is told what they have already said on this session and how the coach
+    answered, and anything that says it again is dropped before the coach sees it."""
     lines = line_index(b)
     if not lines:
         return comments_out(db, session)
+    decided = _decided(db, session.id)
     with ThreadPoolExecutor(max_workers=len(REVIEWERS)) as pool:
-        results = list(pool.map(lambda role: review_one(role, b, lines, session.squad, ask), REVIEWERS))
+        results = list(pool.map(lambda role: review_one(role, b, lines, session.squad, ask, decided), REVIEWERS))
     db.query(models.StaffNote).filter(models.StaffNote.session_id == session.id, models.StaffNote.trigger == "builder",
                                       models.StaffNote.status == "open").delete(synchronize_session=False)
-    for c in [c for r in results for c in r]:
+    for c in [c for r in results for c in r if not _repeats(c, decided)]:
         db.add(models.StaffNote(role=c["role"], kind="concern" if c["flag"] == "safety" else "observation",
                                 message=c["message"], swimmer_ids=c["swimmer_ids"], session_id=session.id,
                                 trigger="builder", topic=f"Session {session.date}", flag=c["flag"],
@@ -231,6 +297,9 @@ THE NOTATION (one set per line):
 - Numbered lines for what each rep does: "4x100 1) Kick 2) Drill 3) Swim 4) Build".
 - A round: a line "3x" (optionally "3x descend each round") with its sets indented two spaces underneath.
 - A line with words only ("Fins on") is a note.
+- Time the coach spends explaining a set before it starts: "Talk 2:00 purpose, key points" on its own line
+  just before that set (inside a round for feedback each round). No metres; it counts toward the session
+  time, so leave room for it in the slot. Use it where the coach's own sessions do.
 
 GROUPS: use the session's groups as given. A block for everyone has "groups": [].
 

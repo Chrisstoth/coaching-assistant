@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { DEFAULT_PRESENTATION, energyPresentation, openSessionPrint } from '../sessionPresentation'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
@@ -58,11 +58,12 @@ function VolumeDisplay({ breakdown, presentation = DEFAULT_PRESENTATION }) {
   )
 }
 
-export default function SessionDetail() {
-  const { id } = useParams()
+/* The less-used tools for a session, under "More" on the session page: the AI's
+   read of the dose, suggested groups, the older print sheets, metres per zone for
+   sessions not written in the Session Builder, and deleting the session. */
+export function SessionTools({ session, setSession, onDeleted }) {
   const navigate = useNavigate()
-  const location = useLocation()
-  const [session, setSession] = useState(null)
+  const id = session.id
   const [recommending, setRecommending] = useState(false)
   const [recommendations, setRecommendations] = useState(null)
   const [deleting, setDeleting] = useState(false)
@@ -72,10 +73,6 @@ export default function SessionDetail() {
   const [savingVol, setSavingVol] = useState(false)
   const [generatingIntelligence, setGeneratingIntelligence] = useState(false)
   const [presentation, setPresentation] = useState(DEFAULT_PRESENTATION)
-
-  useEffect(() => {
-    if (id !== 'new') api.getSession(id).then(setSession)
-  }, [id])
 
   useEffect(() => {
     api.getSessionPresentation().then(setPresentation).catch(() => {})
@@ -111,7 +108,6 @@ export default function SessionDetail() {
   }
 
   const printSheet = () => {
-    if (!session) return
     try {
       openSessionPrint({ session, settings: presentation, recommendations })
     } catch (error) {
@@ -122,8 +118,7 @@ export default function SessionDetail() {
   const getRecommendations = async () => {
     setRecommending(true)
     try {
-      const res = await api.recommendGroups(id)
-      setRecommendations(res)
+      setRecommendations(await api.recommendGroups(id))
     } catch (e) {
       alert(`Error: ${e.message}`)
     }
@@ -134,104 +129,18 @@ export default function SessionDetail() {
     setDeleting(true)
     try {
       await api.deleteSession(id)
-      navigate(location.state?.backTo || '/sessions', { replace: true })
+      onDeleted?.()
     } catch (e) {
       alert(`Error: ${e.message}`)
       setDeleting(false)
     }
   }
 
-  if (id === 'new') return <NewSession />
-  if (!session) return <div className="p-4 text-pool-400">Loading...</div>
-
-  const hasPlan = Boolean(
-    session.coach_intent
-    || session.planned_content
-    || session.groups?.some(group => (
-      group?.description
-      || group?.sets?.raw
-      || group?.sets?.items?.length
-      || Object.values(group?.volume_breakdown || {}).some(value => Number(value) > 0)
-    )),
-  )
-  const importTarget = new URLSearchParams({
-    tab: 'excel',
-    date: session.date,
-    session: String(session.id),
-  })
-  if (session.pool_slot_id) importTarget.set('slot', String(session.pool_slot_id))
-
-  const goBack = () => {
-    if (location.key && location.key !== 'default') navigate(-1)
-    else navigate(location.state?.backTo || '/sessions', { replace: true })
-  }
+  // A Session Builder session works its metres out itself; only older ones are typed in.
+  const legacyGroups = session.builder ? [] : (session.groups || [])
 
   return (
-    <div className="p-4 space-y-4">
-      <div className="flex items-center gap-3 pt-2">
-        <button type="button" onClick={goBack} aria-label="Go back" className="text-pool-400 text-2xl">‹</button>
-        <div className="flex-1">
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-bold">{session.title || 'Session'}</h1>
-            {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 border border-teal-700/40 rounded px-1.5 py-0.5">{session.cycle_code}</span>}
-          </div>
-          <p className="text-pool-400 text-xs">
-            {session.date}
-            {(session.start_time || session.end_time) && (
-              <span> · {session.start_time}{session.end_time ? `–${session.end_time}` : ''}</span>
-            )}
-            {session.squad && ` · ${session.squad}`}
-            {session.course && ` · ${session.course}`}
-          </p>
-        </div>
-        <button
-          onClick={() => setShowDeleteConfirm(true)}
-          className="text-pool-600 hover:text-red-400 text-sm transition-colors ml-auto"
-        >
-          Delete
-        </button>
-      </div>
-
-      <Link
-        to={`/debrief?session=${session.id}`}
-        className="flex items-center justify-between rounded-xl border border-teal-700/50 bg-teal-950/35 px-4 py-3 active:opacity-70"
-      >
-        <span className="min-w-0">
-          <span className="block text-sm font-semibold text-teal-100">Debrief this session</span>
-          <span className="block text-xs text-teal-400/80 mt-0.5">Talk it through — notes go to the swimmers</span>
-        </span>
-        <span className="text-xl shrink-0 ml-3" aria-hidden="true">🎤</span>
-      </Link>
-
-      {session.cycle_context && (
-        <div className="bg-teal-900/15 border border-teal-700/35 rounded-xl p-3">
-          <p className="text-[10px] uppercase tracking-wide font-semibold text-teal-300">Cycle position · {session.cycle_code}</p>
-          <p className="text-xs text-pool-300 mt-1">
-            {[session.cycle_context.macrocycle_name, session.cycle_context.mesocycle_name, session.cycle_context.microcycle_label].filter(Boolean).join(' · ')}
-          </p>
-        </div>
-      )}
-
-      {session.status !== 'cancelled' && (
-        <div className="bg-accent-600/10 border border-accent-500/40 rounded-xl p-4 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-pool-100">{hasPlan ? 'Session plan' : 'No session plan yet'}</p>
-            <p className="text-xs text-pool-400 mt-1">
-              {hasPlan ? 'Edit it, view it poolside or print it in the Session Builder.' : 'Write it in the Session Builder, or import a workbook.'}
-            </p>
-            {!hasPlan && (
-              <Link to={`/import?${importTarget.toString()}`} className="text-xs text-accent-400 mt-1 inline-block">Import a workbook instead</Link>
-            )}
-          </div>
-          <Link
-            to={`/builder/${session.id}`}
-            className="shrink-0 bg-accent-600 hover:bg-accent-500 text-white rounded-lg px-3 py-2 text-xs font-semibold"
-          >
-            {hasPlan ? 'Open in builder' : 'Write session'}
-          </Link>
-        </div>
-      )}
-
+    <div className="space-y-3">
       <div className="bg-pool-800 rounded-xl p-3 flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold text-pool-200">Session intelligence</p>
@@ -247,48 +156,7 @@ export default function SessionDetail() {
         </button>
       </div>
 
-      {showDeleteConfirm && (
-        <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-4 space-y-3">
-          <p className="text-sm text-red-300">Delete this session and all its register data? This cannot be undone.</p>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setShowDeleteConfirm(false)}
-              className="flex-1 bg-pool-700 rounded-lg py-2 text-sm font-semibold"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={deleteSession}
-              disabled={deleting}
-              className="flex-1 bg-red-900 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold text-red-100"
-            >
-              {deleting ? 'Deleting...' : 'Delete Session'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {session.coach_intent && (
-        <div className="bg-pool-800 rounded-xl p-4">
-          <p className="text-xs text-pool-400 mb-1">Coach Intent</p>
-          <p className="text-sm">{session.coach_intent}</p>
-        </div>
-      )}
-
-      {session.individual_mods && Object.keys(session.individual_mods).length > 0 && (
-        <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4 space-y-2">
-          <p className="text-xs font-semibold text-amber-300 uppercase tracking-wide">Individual Modifications</p>
-          {Object.entries(session.individual_mods).map(([name, note]) => (
-            <div key={name} className="flex gap-2 items-start">
-              <span className="text-xs font-medium text-amber-200 shrink-0 w-24">{name}</span>
-              <span className="text-xs text-pool-300 leading-relaxed">{note}</span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Groups */}
-      {session.groups?.map((g) => (
+      {legacyGroups.map((g) => (
         <div key={g.group_number} className="bg-pool-800 rounded-xl p-4">
           <div className="flex items-center justify-between mb-2">
             <h3 className="font-semibold text-sm text-accent-400">Group {g.group_number}</h3>
@@ -320,38 +188,19 @@ export default function SessionDetail() {
         </div>
       ))}
 
-      {/* Actions */}
-      <div className="flex gap-3">
-        <Link
-          to={`/sessions/${id}/register`}
-          className="flex-1 bg-accent-600 text-white text-center rounded-xl py-3 font-semibold text-sm"
-        >
-          Open Register
-        </Link>
-        <button
-          onClick={getRecommendations}
-          disabled={recommending}
-          className="flex-1 bg-pool-700 rounded-xl py-3 font-semibold text-sm disabled:opacity-40"
-        >
-          {recommending ? 'Thinking...' : 'Suggest Groups'}
+      <div className="grid grid-cols-3 gap-2">
+        <button onClick={getRecommendations} disabled={recommending}
+          className="bg-pool-700 rounded-xl py-2.5 text-xs font-semibold disabled:opacity-40">
+          {recommending ? 'Thinking…' : 'Suggest groups'}
         </button>
-        <button
-          onClick={printSheet}
-          className="bg-pool-700 hover:bg-pool-600 border border-pool-600 rounded-xl px-4 py-3 text-sm transition-colors"
-          title="Quick print (popup)"
-        >
-          🖨
+        <button onClick={printSheet} className="bg-pool-700 rounded-xl py-2.5 text-xs font-semibold text-pool-300" title="Quick print (popup)">
+          Quick print
         </button>
-        <button
-          onClick={() => navigate(`/sessions/${id}/print`)}
-          className="bg-pool-700 hover:bg-pool-600 border border-pool-600 rounded-xl px-4 py-3 text-xs font-medium transition-colors text-pool-300"
-          title="Session sheet with sub-groups"
-        >
+        <button onClick={() => navigate(`/sessions/${id}/print`)} className="bg-pool-700 rounded-xl py-2.5 text-xs font-semibold text-pool-300" title="Session sheet with sub-groups">
           Sheet
         </button>
       </div>
 
-      {/* Group recommendations */}
       {recommendations && (
         <div className="bg-pool-800 rounded-xl p-4 space-y-2">
           <h3 className="font-semibold text-sm text-accent-400">Group Recommendations</h3>
@@ -367,6 +216,25 @@ export default function SessionDetail() {
             </div>
           ))}
         </div>
+      )}
+
+      {showDeleteConfirm ? (
+        <div className="bg-red-900/20 border border-red-800/50 rounded-xl p-4 space-y-3">
+          <p className="text-sm text-red-300">Delete this session, its register and its notes? This cannot be undone.</p>
+          <div className="flex gap-2">
+            <button onClick={() => setShowDeleteConfirm(false)} className="flex-1 bg-pool-700 rounded-lg py-2 text-sm font-semibold">
+              Cancel
+            </button>
+            <button onClick={deleteSession} disabled={deleting}
+              className="flex-1 bg-red-900 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold text-red-100">
+              {deleting ? 'Deleting...' : 'Delete session'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowDeleteConfirm(true)} className="text-xs text-pool-500 hover:text-red-400">
+          Delete this session
+        </button>
       )}
     </div>
   )
@@ -394,7 +262,8 @@ function GroupVolumeToggle({ value, onChange, presentation }) {
   )
 }
 
-function NewSession() {
+// A session typed in by hand, outside the timetable and the Session Builder.
+export function NewSession() {
   const { settings: presentation } = useSessionPresentation()
   const [form, setForm] = useState({
     date: new Date().toISOString().split('T')[0],
