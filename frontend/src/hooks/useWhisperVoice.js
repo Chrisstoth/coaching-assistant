@@ -166,6 +166,7 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
   const [transcribing, setTranscribing] = useState(false)
   const [error, setError] = useState(null)
   const recorderRef = useRef(null)
+  const streamRef = useRef(null)
   const chunksRef = useRef([])
   const discardRef = useRef(false)
   const unwatchRef = useRef(() => {})
@@ -185,6 +186,25 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
     setRecording(false)
   }, [])
 
+  // Beep once the mic is really open - with Bluetooth earbuds that takes a
+  // moment - then start measuring the room after the beep, so the tone itself
+  // is not mistaken for talking.
+  const watch = useCallback((stream) => {
+    let unwatch = () => {}
+    const wait = window.setTimeout(() => {
+      unwatch = watchForPause(stream, {
+        onPause: () => finish(false),
+        // Never thrown away: what was recorded is written down to check.
+        onNothing: () => finish(false, true),
+        onDeaf: () => cannotTellRef.current?.(),
+      })
+    }, beep() + 120)
+    unwatchRef.current = () => {
+      window.clearTimeout(wait)
+      unwatch()
+    }
+  }, [finish])
+
   const start = useCallback(async ({ autoStop = false } = {}) => {
     if (recording || transcribing) return
     setError(null)
@@ -203,8 +223,10 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
       chunksRef.current = []
       discardRef.current = false
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      streamRef.current = stream
       recorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop())
+        if (streamRef.current === stream) streamRef.current = null
         // Out of "phone call" mode, so the staff are heard in the earbuds again.
         forSpeaking()
         if (discardRef.current) return
@@ -223,24 +245,9 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
       recorder.start()
       recorderRef.current = recorder
       setRecording(true)
-      if (autoStop) await wakeContext()
       if (autoStop) {
-        // Beep once the mic is really open - with Bluetooth earbuds that
-        // takes a moment - then start measuring the room after the beep, so
-        // the tone itself is not mistaken for talking.
-        let unwatch = () => {}
-        const wait = window.setTimeout(() => {
-          unwatch = watchForPause(stream, {
-            onPause: () => finish(false),
-            // Never thrown away: what was recorded is written down to check.
-            onNothing: () => finish(false, true),
-            onDeaf: () => cannotTellRef.current?.(),
-          })
-        }, beep() + 120)
-        unwatchRef.current = () => {
-          window.clearTimeout(wait)
-          unwatch()
-        }
+        await wakeContext()
+        watch(stream)
       }
     } catch (e) {
       forSpeaking()
@@ -248,12 +255,21 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
         ? 'Microphone blocked — tap the lock icon in your address bar to allow it.'
         : `Microphone unavailable: ${e.message}`)
     }
-  }, [recording, transcribing, onResult, finish])
+  }, [recording, transcribing, onResult, finish, watch])
+
+  // Recording already, started as push-to-talk: carry on hands-free and
+  // finish when the speaker pauses (a quick tap on a hold-to-talk button).
+  const listenForPause = useCallback(async () => {
+    const stream = streamRef.current
+    if (!stream || recorderRef.current?.state !== 'recording') return
+    await wakeContext()
+    if (recorderRef.current?.state === 'recording') watch(stream)
+  }, [watch])
 
   const stop = useCallback(() => finish(false), [finish])
   const cancel = useCallback(() => finish(true), [finish])
 
   useEffect(() => () => finish(true), [finish])
 
-  return { recording, transcribing, supported, start, stop, cancel, error, clearError: () => setError(null) }
+  return { recording, transcribing, supported, start, stop, cancel, listenForPause, error, clearError: () => setError(null) }
 }

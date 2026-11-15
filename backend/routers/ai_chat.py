@@ -5,6 +5,7 @@ import re
 from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File, Form
 from typing import Optional
+from sqlalchemy import func
 from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
@@ -450,10 +451,24 @@ def _extract_target_date(text: str):
 # Thread management
 # ---------------------------------------------------------------------------
 
-@router.get("/threads")
-def get_threads(db: DBSession = Depends(get_db)):
-    threads = db.query(models.AIThread).order_by(models.AIThread.created_at.asc()).all()
-    return [{"id": t.id, "name": t.name, "created_at": t.created_at} for t in threads]
+THREAD_NAME_LENGTH = 48
+
+
+def thread_name_from(text: str) -> Optional[str]:
+    """A conversation's name: the start of the coach's first message."""
+    words = re.sub(r"^\[Photo[^\]]*\]\s*", "", text or "").split()
+    name = " ".join(words)
+    if not name:
+        return "Photo"
+    if len(name) <= THREAD_NAME_LENGTH:
+        return name
+    cut = name[:THREAD_NAME_LENGTH].rsplit(" ", 1)[0] or name[:THREAD_NAME_LENGTH]
+    return cut.rstrip(",.;:-") + "…"
+
+
+def _name_unnamed_thread(thread: Optional["models.AIThread"], text: str) -> None:
+    if thread is not None and not thread.name:
+        thread.name = thread_name_from(text)
 
 
 @router.post("/threads")
@@ -477,20 +492,40 @@ def create_thread(body: dict = Body(default={}), db: DBSession = Depends(get_db)
 
 @router.get("/threads")
 def list_threads(db: DBSession = Depends(get_db)):
-    threads = db.query(models.AIThread).order_by(models.AIThread.created_at.desc()).all()
-    result = []
-    for t in threads:
-        last_msg = db.query(models.CoachAIMessage).filter(
-            models.CoachAIMessage.thread_id == t.id
-        ).order_by(models.CoachAIMessage.created_at.desc()).first()
-        result.append({
-            "id": t.id,
-            "name": t.name,
-            "thread_type": t.thread_type or "general",
-            "macro_id": t.macro_id,
-            "created_at": t.created_at,
-            "last_message_at": last_msg.created_at if last_msg else t.created_at,
-        })
+    """Conversations, the most recently used first."""
+    activity = (
+        db.query(
+            models.CoachAIMessage.thread_id.label("thread_id"),
+            func.max(models.CoachAIMessage.created_at).label("last_message_at"),
+            func.count(models.CoachAIMessage.id).label("message_count"),
+        )
+        .group_by(models.CoachAIMessage.thread_id)
+        .subquery()
+    )
+    rows = (
+        db.query(models.AIThread, activity.c.last_message_at, activity.c.message_count)
+        .outerjoin(activity, activity.c.thread_id == models.AIThread.id)
+        .all()
+    )
+    result = [{
+        "id": t.id,
+        "name": t.name,
+        "thread_type": t.thread_type or "general",
+        "macro_id": t.macro_id,
+        "created_at": t.created_at,
+        "last_message_at": last or t.created_at,
+        "message_count": count or 0,
+    } for t, last, count in rows]
+
+    def recency(row):
+        when = row["last_message_at"]
+        if when is None:
+            return 0.0
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=timezone.utc)
+        return when.timestamp()
+
+    result.sort(key=lambda row: (recency(row), row["id"]), reverse=True)
     return result
 
 
@@ -1047,9 +1082,10 @@ def send_message(body: dict = Body(...), db: DBSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Message required")
 
     db.add(models.CoachAIMessage(role="user", message=text, thread_id=thread_id))
+    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
+    _name_unnamed_thread(thread_obj, text)
     db.commit()
 
-    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
     history_limit = _history_limit_for_thread(thread_obj)
     recent = (
         db.query(models.CoachAIMessage)
@@ -1934,10 +1970,11 @@ async def send_message_with_image(
     # Save user message (text only for history — image is transient)
     display_text = f"[Photo attached] {text}" if text != "Here's a session photo." else "[Photo: session whiteboard]"
     db.add(models.CoachAIMessage(role="user", message=display_text, thread_id=thread_id))
+    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
+    _name_unnamed_thread(thread_obj, display_text)
     db.commit()
 
     # Build history for this thread
-    thread_obj = db.query(models.AIThread).filter(models.AIThread.id == thread_id).first() if thread_id else None
     history_limit = MAX_HISTORY  # image/session planning keeps the richer planning window
     recent = (
         db.query(models.CoachAIMessage)
@@ -2384,6 +2421,9 @@ def clear_messages(thread_id: Optional[int] = None, db: DBSession = Depends(get_
             thread.rolling_summary = None
             thread.summarized_through_message_id = None
             thread.summary_updated_at = None
+            # A cleared conversation is named afresh by what's said next.
+            if (thread.thread_type or "general") == "general":
+                thread.name = None
     db.commit()
     return {"cleared": True}
 

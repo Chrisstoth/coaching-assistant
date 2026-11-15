@@ -1,19 +1,39 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { api } from '../api'
+import { api, wakeServer } from '../api'
 import { stashDraft } from '../planDrafts'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
+import SpeakButton from '../components/SpeakButton'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
-import useWhisperVoice from '../hooks/useWhisperVoice'
+import useWhisperVoice, { primeMicrophone } from '../hooks/useWhisperVoice'
+import { deskWeekStarts } from '../sessionProximity'
+import { stop as stopSpeaking } from '../staffSpeech'
+import {
+  PLANNING_THREADS, TRY_ASKING, actionCopy, conversationName, conversationTitle,
+  recentConversations, relativeTime, startSuggestions,
+} from '../chatStart'
 
-const STARTERS = [
-  "Which of my swimmers would benefit most from more aerobic base work right now?",
-  "How do I know if a swimmer is adapting to the training load or just accumulating fatigue?",
-  "How should I approach tapering for a swimmer with a history of peaking early?",
-  "I read that polarised training outperforms threshold-heavy approaches — does that apply here?",
-  "What energy systems are we targeting in a typical threshold session?",
-]
+// The page fills the space between the header and the bottom bar, so the
+// message box is always in reach and only the conversation scrolls.
+const PAGE_HEIGHT = 'calc(100dvh - 8rem - env(safe-area-inset-bottom, 0px))'
+
+// Holding the mic this long is push-to-talk (let go to send). A quicker tap
+// listens hands-free and sends when the coach stops talking.
+const HOLD_MS = 350
+
+// A reply within this long means the server is up; no need to check first.
+const AWAKE_FOR_MS = 120000
+
+const POOLSIDE_KEY = 'lanewatch.chat.poolside'
+
+function readPoolside() {
+  try { return localStorage.getItem(POOLSIDE_KEY) === '1' } catch { return false }
+}
+
+function savePoolside(on) {
+  try { localStorage.setItem(POOLSIDE_KEY, on ? '1' : '0') } catch { /* private window */ }
+}
 
 const INTENT_LABELS = {
   session_writing: { label: 'session', colour: 'teal' },
@@ -32,11 +52,25 @@ const INTENT_LABELS = {
   status_change: { label: 'status update', colour: 'amber' },
 }
 
+const ACTION_COLOURS = {
+  blue: 'border-blue-700/50 bg-blue-900/20 text-blue-300',
+  orange: 'border-orange-700/50 bg-orange-900/20 text-orange-300',
+  green: 'border-green-700/50 bg-green-900/20 text-green-300',
+  purple: 'border-purple-700/50 bg-purple-900/20 text-purple-300',
+  amber: 'border-amber-700/50 bg-amber-900/20 text-amber-300',
+  teal: 'border-teal-700/50 bg-teal-900/20 text-teal-300',
+  accent: 'border-accent-700/50 bg-accent-900/20 text-accent-300',
+}
+
 function getDefaultDates() {
   const today = new Date()
   const from = today.toISOString().slice(0, 10)
   const to = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
   return { from, to }
+}
+
+function plainText(text) {
+  return String(text || '').replace(/[*_`#>]/g, '').trim()
 }
 
 export default function CoachAI() {
@@ -45,12 +79,18 @@ export default function CoachAI() {
   const [threads, setThreads] = useState([])
   const [activeThreadId, setActiveThreadId] = useState(null)
   const [messages, setMessages] = useState([])
+  const [threadLoading, setThreadLoading] = useState(false)
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
+  const [waking, setWaking] = useState(false)
   const [loading, setLoading] = useState(true)
   const [context, setContext] = useState(null)
   const [lastInjected, setLastInjected] = useState([])
-  const [lastTopics, setLastTopics] = useState([])
+  const [startData, setStartData] = useState({ calendar: [], awaitingDebrief: [] })
+  const [opening, setOpening] = useState('')
+  const [startError, setStartError] = useState('')
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   // Intent / suggested action
   const [suggestedAction, setSuggestedAction] = useState(null)
@@ -63,9 +103,6 @@ export default function CoachAI() {
 
   // Register card
   const [registerData, setRegisterData] = useState(null) // { session_id, session_title, attendees, attendance }
-  const [registerInput, setRegisterInput] = useState('')
-  const [parsingRegister, setParsingRegister] = useState(false)
-  const [savingRegister, setSavingRegister] = useState(false)
   const [registerSaved, setRegisterSaved] = useState(false)
   const [cancellationData, setCancellationData] = useState(null)
   const [targetDraft, setTargetDraft] = useState(null)
@@ -81,19 +118,49 @@ export default function CoachAI() {
   const [attachedImage, setAttachedImage] = useState(null) // { file, preview }
   const [savedBenchmarksToast, setSavedBenchmarksToast] = useState(null) // [{swimmer_name, label}, ...]
   const [savedIntentsToast, setSavedIntentsToast] = useState(null) // [{swimmer_name, label}, ...]
-  const [speakingId, setSpeakingId] = useState(null)
-  const [poolside, setPoolside] = useState(false)
+  const [poolside, setPoolside] = useState(readPoolside)
   const [feedbackPrompt, setFeedbackPrompt] = useState(null) // post-register feedback
+  const [handsFree, setHandsFree] = useState(false)
+  const [voiceNote, setVoiceNote] = useState('')
+
   const fileInputRef = useRef(null)
-
-  const bottomRef = useRef(null)
   const textareaRef = useRef(null)
+  const listRef = useRef(null)
+  const bottomRef = useRef(null)
+  const lastReplyRef = useRef(null)
+  const scrollMode = useRef(null)
+  const loadToken = useRef(0)
+  const awakeAt = useRef(0)
+  const pressRef = useRef(null)
 
-  const { recording, transcribing, supported: voiceSupported, start: startVoice, stop: stopVoice, error: voiceError, clearError: clearVoiceError } = useWhisperVoice(
-    useCallback((transcript) => {
-      setInput(prev => prev ? `${prev} ${transcript}` : transcript)
-    }, [])
-  )
+  // The voice callback outlives renders; it reads the latest of these.
+  const inputRef = useRef('')
+  inputRef.current = input
+  const sendingRef = useRef(false)
+  sendingRef.current = sending
+  const sendRef = useRef(null)
+
+  // Said, not typed: send it straight away, as if the coach had pressed send.
+  // If they'd already typed something, or listening ended unsure, the words go
+  // in the box to check instead.
+  const onVoiceResult = useCallback((transcript, { unsure } = {}) => {
+    if (unsure || inputRef.current.trim() || sendingRef.current) {
+      setInput(previous => (previous ? `${previous} ${transcript}` : transcript))
+      setVoiceNote(unsure ? "Here's what I heard. Check it, then send." : '')
+      return
+    }
+    sendRef.current?.(transcript)
+  }, [])
+
+  const {
+    recording, transcribing, supported: voiceSupported, start: startVoice, stop: stopVoice,
+    cancel: cancelVoice, listenForPause, error: voiceError, clearError: clearVoiceError,
+  } = useWhisperVoice(onVoiceResult, {
+    onNoSpeech: () => setVoiceNote("I didn't catch anything. Try again."),
+    onCannotTell: () => setVoiceNote("Tap the mic when you've finished."),
+  })
+
+  useEffect(() => { if (!recording) setHandsFree(false) }, [recording])
 
   useEffect(() => {
     if (!registerSaved) return undefined
@@ -103,9 +170,9 @@ export default function CoachAI() {
     return () => window.clearTimeout(returnHome)
   }, [navigate, registerSaved])
 
-  const switchToThread = (threadId) => {
-    setActiveThreadId(threadId)
-    setMessages([])
+  // ---- Opening ----
+
+  const resetCards = () => {
     setSuggestedAction(null)
     setActionResult(null)
     setSessionDraft(null)
@@ -116,69 +183,117 @@ export default function CoachAI() {
     setRegisterSaved(false)
     setPinSaved(false)
     setFeedbackPrompt(null)
-    api.getAIChatMessages(threadId).then(setMessages).catch(() => {})
+    setLastInjected([])
+  }
+
+  const openThread = (threadId) => {
+    resetCards()
+    setSheetOpen(false)
+    setMenuOpen(false)
+    setActiveThreadId(threadId)
+    setMessages([])
+    setThreadLoading(true)
+    const token = ++loadToken.current
+    api.getAIChatMessages(threadId)
+      .then(stored => {
+        if (loadToken.current !== token) return
+        scrollMode.current = 'instant'
+        setMessages(stored)
+      })
+      .catch(() => {})
+      .finally(() => { if (loadToken.current === token) setThreadLoading(false) })
+  }
+
+  const newConversation = () => {
+    loadToken.current += 1
+    resetCards()
+    setSheetOpen(false)
+    setMenuOpen(false)
+    setActiveThreadId(null)
+    setMessages([])
+    setThreadLoading(false)
+    setVoiceNote('')
   }
 
   useEffect(() => {
     const initialMessage = location.state?.initialMessage
     const targetThreadId = location.state?.threadId
+    // Read once; going back to this page later shouldn't fill the box again.
+    if (location.state) navigate(location.pathname, { replace: true, state: null })
+
+    // Pressing the button wakes the server, so it's up by the time the coach
+    // has finished their first sentence.
+    wakeServer().then(awake => { if (awake) awakeAt.current = Date.now() })
+
     Promise.all([
       api.getAIChatThreads().catch(() => []),
       api.getAIContextStatus().catch(() => null),
-    ]).then(async ([threadList, ctx]) => {
+    ]).then(([threadList, ctx]) => {
       setThreads(threadList)
       setContext(ctx)
       if (initialMessage) {
-        // Open a fresh thread pre-seeded with the message
-        try {
-          const thread = await api.createAIChatThread()
-          setThreads(prev => [thread, ...prev])
-          switchToThread(thread.id)
-          setInput(initialMessage)
-          setTimeout(() => textareaRef.current?.focus(), 100)
-        } catch {
-          if (threadList.length > 0) {
-            switchToThread(threadList[0].id)
-          }
-          setInput(initialMessage)
-        }
+        setInput(initialMessage)
+        setTimeout(() => textareaRef.current?.focus(), 100)
       } else if (targetThreadId) {
-        const found = threadList.find(t => t.id === targetThreadId)
-        if (found) {
-          setActiveThreadId(targetThreadId)
-          api.getAIChatMessages(targetThreadId).then(msgs => {
-            setMessages(msgs)
-            requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: 'auto' }))
-          }).catch(() => {})
-        }
+        openThread(targetThreadId)
       }
-      // Default: start empty — no thread loaded on open
       setLoading(false)
     })
+
+    Promise.all([
+      Promise.all(deskWeekStarts().map(week => api.getCalendar(week))).then(weeks => weeks.flat()).catch(() => []),
+      api.getSessionsAwaitingDebrief().then(result => result?.items || []).catch(() => []),
+    ]).then(([calendar, awaitingDebrief]) => setStartData({ calendar, awaitingDebrief }))
   }, [])
 
-  const createThread = async () => {
-    const thread = await api.createAIChatThread()
-    setThreads(prev => [...prev, thread])
-    switchToThread(thread.id)
-  }
+  // ---- Scrolling ----
 
-  const deleteThread = async (threadId) => {
-    if (threads.length === 1) {
-      alert("You need at least one conversation.")
+  // A new message scrolls into view. A long reply is shown from its start,
+  // not its end, so it can be read from the top.
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const mode = scrollMode.current
+    scrollMode.current = null
+    if (mode === 'instant') {
+      list.scrollTop = list.scrollHeight
       return
     }
-    await api.deleteAIChatThread(threadId)
-    const remaining = threads.filter(t => t.id !== threadId)
-    setThreads(remaining)
-    if (activeThreadId === threadId) {
-      switchToThread(remaining[0].id)
+    const reply = lastReplyRef.current
+    if (mode === 'reply' && reply && reply.offsetHeight > list.clientHeight * 0.6) {
+      reply.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      return
     }
-  }
+    if (mode || sending) bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+  }, [messages, sending])
 
+  // Cards that arrive after the reply (the register, a target) come into view too.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'auto' })
-  }, [messages, suggestedAction])
+    if (registerData || targetDraft || sessionDraft || feedbackPrompt) {
+      bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
+    }
+  }, [registerData, targetDraft, sessionDraft, feedbackPrompt])
+
+  // The message box grows with what's typed, up to a few lines.
+  useLayoutEffect(() => {
+    const box = textareaRef.current
+    if (!box) return
+    box.style.height = 'auto'
+    box.style.height = `${Math.min(box.scrollHeight, 160)}px`
+  }, [input, recording, transcribing])
+
+  // ---- Sending ----
+
+  const ensureAwake = async () => {
+    if (Date.now() - awakeAt.current < AWAKE_FOR_MS) return
+    let done = false
+    const slow = window.setTimeout(() => { if (!done) setWaking(true) }, 700)
+    const awake = await wakeServer()
+    done = true
+    window.clearTimeout(slow)
+    setWaking(false)
+    if (awake) awakeAt.current = Date.now()
+  }
 
   const recoverSavedReply = async (threadId, expectedMessage, requestStartedAt, hasImage) => {
     const delays = [0, 1500, 3000, 5000]
@@ -196,6 +311,7 @@ export default function CoachAI() {
           return textMatches && savedAt >= requestStartedAt - 120000
         })
         if (expectedIndex >= 0 && stored.slice(expectedIndex + 1).some(message => message.role === 'assistant')) {
+          scrollMode.current = 'bottom'
           setMessages(stored)
           return true
         }
@@ -204,27 +320,177 @@ export default function CoachAI() {
     return false
   }
 
-  const send = async (text) => {
-    const msg = (text || input).trim()
-    const hasImage = Boolean(attachedImage)
-    if ((!msg && !hasImage) || sending) return
+  const markFailed = (id, text, photo) => {
+    setMessages(previous => previous.map(m => (m.id === id ? { ...m, failed: true, retry: { text, photo } } : m)))
+  }
 
-    // Ensure active thread — create one if starting fresh
-    let threadId = activeThreadId
-    if (!threadId) {
-      try {
-        const newThread = await api.createAIChatThread()
-        setThreads(prev => [newThread, ...prev])
-        setActiveThreadId(newThread.id)
-        threadId = newThread.id
-      } catch (e) {
-        setMessages(prev => [...prev, { role: 'assistant', message: `Error: ${e.message}`, id: Date.now() }])
-        return
-      }
+  // What came back alongside the reply: drafts to review, cards to fill in,
+  // somewhere to go next.
+  const handleReplyExtras = async (res, { msg, displayMsg, threadId, history }) => {
+    // Skill result — meso plan draft
+    if (res.skill_result?.type === 'meso_plan' && res.skill_result.draft) {
+      setSuggestedAction({
+        label: 'Review and save this block',
+        type: 'view_season_plan',
+        plan_type: 'meso',
+        meso_draft: res.skill_result.draft,
+      })
     }
 
-    setInput('')
-    setAttachedImage(null)
+    if (res.skill_result?.type === 'macro_plan' && res.skill_result.draft) {
+      setSuggestedAction({
+        label: 'Review and save this season plan',
+        type: 'view_season_plan',
+        plan_type: 'macro',
+        macro_draft: res.skill_result.draft,
+      })
+    }
+
+    // Year-level and pathway drafts are reviewed on the planning page, where the
+    // timeline they change is on screen.
+    if ((res.skill_result?.type === 'season_macros' || res.skill_result?.type === 'pathway_plan')
+        && res.skill_result.draft) {
+      setSuggestedAction({
+        label: res.skill_result.type === 'season_macros'
+          ? 'Review these macrocycles'
+          : 'Review these pathways',
+        type: 'view_planning',
+        plan_kind: res.skill_result.type,
+        plan_draft: res.skill_result.draft,
+      })
+    }
+
+    if (res.skill_result?.type === 'micro_plan' && res.skill_result.draft) {
+      setSuggestedAction({
+        label: 'Review and save this weekly plan',
+        type: 'view_season_plan',
+        plan_type: 'micro',
+        micro_draft: res.skill_result.draft,
+      })
+    }
+
+    // Skill result — race analysis (analysis already in reply; suggest viewing the meet)
+    if (res.skill_result?.type === 'race_analysis' && res.skill_result.meet_id) {
+      setSuggestedAction({
+        label: `View ${res.skill_result.meet_name || 'meet'} details`,
+        type: 'view_meet',
+        meet_id: res.skill_result.meet_id,
+        meet_name: res.skill_result.meet_name,
+      })
+    }
+
+    // Skill result — block review (analysis already in reply; suggest viewing season plan)
+    if (res.skill_result?.type === 'block_review' && res.skill_result.block_id) {
+      setSuggestedAction({
+        label: 'View Season Plan',
+        type: 'view_season_plan',
+        block_id: res.skill_result.block_id,
+        block_name: res.skill_result.block_name,
+      })
+    }
+
+    // Skill result — adaptation review (analysis already in reply; set suggested action to view profile)
+    if (res.skill_result?.type === 'adaptation_review' && res.skill_result.swimmer_id) {
+      setSuggestedAction({
+        label: `View ${res.skill_result.swimmer_name}'s full profile`,
+        type: 'view_swimmer',
+        swimmer_id: res.skill_result.swimmer_id,
+        swimmer_name: res.skill_result.swimmer_name,
+      })
+    }
+
+    // Skill result — taper plan
+    if (res.skill_result?.type === 'taper_plan' && res.skill_result.swimmer_id) {
+      setSuggestedAction({
+        label: `View ${res.skill_result.swimmer_name}'s profile`,
+        type: 'view_swimmer',
+        swimmer_id: res.skill_result.swimmer_id,
+        swimmer_name: res.skill_result.swimmer_name,
+      })
+    }
+
+    // Skill result — session plan draft
+    if (res.skill_result?.type === 'session_plan' && res.skill_result.draft) {
+      const d = res.skill_result.draft
+      const groupsDict = d.groups || {}
+      setSessionDraft({
+        title: d.title || '',
+        date: d.date || '',
+        coach_intent: d.coach_intent || '',
+        energy_system_focus: d.energy_system_focus || '',
+        groups: Object.entries(groupsDict).map(([num, g]) => ({
+          group_number: parseInt(num),
+          description: g.description || '',
+          sets: g.sets || '',
+          volume_breakdown: g.volume_breakdown || {},
+          sub_groups: [],
+        })),
+      })
+    }
+
+    if (res.saved_benchmarks?.length > 0) {
+      setSavedBenchmarksToast(res.saved_benchmarks)
+      setTimeout(() => setSavedBenchmarksToast(null), 5000)
+    }
+    if (res.saved_intents?.length > 0) {
+      setSavedIntentsToast(res.saved_intents)
+      setTimeout(() => setSavedIntentsToast(null), 7000)
+    }
+
+    // Auto-trigger register card if register topic detected
+    if (res.cancellation_data) {
+      setCancellationData(res.cancellation_data)
+    } else if ((res.topics_detected || []).includes('register')) {
+      // Newer backends resolve the slot as part of the deterministic chat
+      // response. Keep the fallback for clients talking to an older server.
+      const regData = res.register_data || await api.startRegister(msg, threadId)
+      if (regData.session_id) {
+        setRegisterData({ ...regData, attendance: null })
+      }
+    } else if (res.intent?.type === 'formal_target_capture' && res.intent?.swimmer_id) {
+      const targetConversation = [
+        ...history.map(message => `${message.role === 'user' ? 'Coach' : 'AI'}: ${message.message}`),
+        `Coach: ${displayMsg}`,
+        `AI: ${res.reply}`,
+      ].join('\n')
+      try {
+        const preview = await api.previewTargetFromChat(res.intent.swimmer_id, targetConversation)
+        setTargetDraft({
+          ...preview.target,
+          possible_duplicate_id: preview.possible_duplicate_id,
+        })
+      } catch (error) {
+        setMessages(previous => [...previous, {
+          role: 'assistant',
+          message: `I couldn't prepare a formal target yet: ${error.message}`,
+          id: Date.now() + 2,
+        }])
+      }
+    } else if (res.suggested_action) {
+      setSuggestedAction({
+        label: res.suggested_action,
+        type: res.intent?.type,
+        swimmer_id: res.intent?.swimmer_id,
+        swimmer_name: res.intent?.swimmer_name,
+        new_status: res.intent?.new_status,
+      })
+    }
+  }
+
+  // `text` from a chip, the voice or a retry; nothing means what's in the box.
+  const send = async (text, { image = null } = {}) => {
+    const fromBox = text === undefined
+    const msg = (fromBox ? input : text).trim()
+    const photo = fromBox ? attachedImage : image
+    if ((!msg && !photo) || sending) return
+
+    const history = messages
+    setVoiceNote('')
+    setStartError('')
+    if (fromBox) {
+      setInput('')
+      setAttachedImage(null)
+    }
     setSending(true)
     setSuggestedAction(null)
     setActionResult(null)
@@ -232,180 +498,59 @@ export default function CoachAI() {
     setSavedTarget(null)
     setPinSaved(false)
 
-    const displayMsg = hasImage ? `[Photo attached] ${msg || ''}`.trim() : msg
-    setMessages(prev => [...prev, {
-      role: 'user', message: displayMsg, id: Date.now(),
-      imagePreview: attachedImage?.preview,
+    const displayMsg = photo ? `[Photo attached] ${msg || ''}`.trim() : msg
+    const localId = `sent-${Date.now()}`
+    scrollMode.current = 'bottom'
+    setMessages(previous => [...previous, {
+      role: 'user', message: displayMsg, id: localId,
+      imagePreview: photo?.preview,
     }])
+
+    await ensureAwake()
+
+    // A conversation is only made once something is said in it.
+    let threadId = activeThreadId
+    if (!threadId) {
+      try {
+        const thread = await api.createAIChatThread()
+        threadId = thread.id
+        setThreads(previous => [{ thread_type: 'general', message_count: 0, ...thread }, ...previous])
+        setActiveThreadId(thread.id)
+      } catch {
+        markFailed(localId, msg, photo)
+        setSending(false)
+        return
+      }
+    }
+    // Named as the server names it, so the header and list show it at once.
+    setThreads(previous => previous.map(t => (t.id === threadId ? {
+      ...t,
+      name: t.name || conversationName(displayMsg),
+      last_message_at: new Date().toISOString(),
+      message_count: (t.message_count || 0) + 1,
+    } : t)))
 
     const requestStartedAt = Date.now()
     try {
-      const res = hasImage
-        ? await api.sendAIChatMessageWithImage(msg, attachedImage.file, threadId, poolside)
+      const res = photo
+        ? await api.sendAIChatMessageWithImage(msg, photo.file, threadId, poolside)
         : await api.sendAIChatMessage(msg, threadId, poolside)
+      awakeAt.current = Date.now()
       setLastInjected(res.context_injected || [])
-      setLastTopics(res.topics_detected || [])
-      setMessages(prev => [...prev, { role: 'assistant', message: res.reply, id: Date.now() + 1 }])
-
-      // Skill result — meso plan draft
-      if (res.skill_result?.type === 'meso_plan' && res.skill_result.draft) {
-        setSuggestedAction({
-          label: 'Review and save this block',
-          type: 'view_season_plan',
-          plan_type: 'meso',
-          meso_draft: res.skill_result.draft,
-        })
-      }
-
-      if (res.skill_result?.type === 'macro_plan' && res.skill_result.draft) {
-        setSuggestedAction({
-          label: 'Review and save this season plan',
-          type: 'view_season_plan',
-          plan_type: 'macro',
-          macro_draft: res.skill_result.draft,
-        })
-      }
-
-      // Year-level and pathway drafts are reviewed on the planning page, where the
-      // timeline they change is on screen.
-      if ((res.skill_result?.type === 'season_macros' || res.skill_result?.type === 'pathway_plan')
-          && res.skill_result.draft) {
-        setSuggestedAction({
-          label: res.skill_result.type === 'season_macros'
-            ? 'Review these macrocycles'
-            : 'Review these pathways',
-          type: 'view_planning',
-          plan_kind: res.skill_result.type,
-          plan_draft: res.skill_result.draft,
-        })
-      }
-
-      if (res.skill_result?.type === 'micro_plan' && res.skill_result.draft) {
-        setSuggestedAction({
-          label: 'Review and save this weekly plan',
-          type: 'view_season_plan',
-          plan_type: 'micro',
-          micro_draft: res.skill_result.draft,
-        })
-      }
-
-      // Skill result — race analysis (analysis already in reply; suggest viewing the meet)
-      if (res.skill_result?.type === 'race_analysis' && res.skill_result.meet_id) {
-        setSuggestedAction({
-          label: `View ${res.skill_result.meet_name || 'meet'} details`,
-          type: 'view_meet',
-          meet_id: res.skill_result.meet_id,
-          meet_name: res.skill_result.meet_name,
-        })
-      }
-
-      // Skill result — block review (analysis already in reply; suggest viewing season plan)
-      if (res.skill_result?.type === 'block_review' && res.skill_result.block_id) {
-        setSuggestedAction({
-          label: 'View Season Plan',
-          type: 'view_season_plan',
-          block_id: res.skill_result.block_id,
-          block_name: res.skill_result.block_name,
-        })
-      }
-
-      // Skill result — adaptation review (analysis already in reply; set suggested action to view profile)
-      if (res.skill_result?.type === 'adaptation_review' && res.skill_result.swimmer_id) {
-        setSuggestedAction({
-          label: `View ${res.skill_result.swimmer_name}'s full profile`,
-          type: 'view_swimmer',
-          swimmer_id: res.skill_result.swimmer_id,
-          swimmer_name: res.skill_result.swimmer_name,
-        })
-      }
-
-      // Skill result — taper plan
-      if (res.skill_result?.type === 'taper_plan' && res.skill_result.swimmer_id) {
-        setSuggestedAction({
-          label: `View ${res.skill_result.swimmer_name}'s profile`,
-          type: 'view_swimmer',
-          swimmer_id: res.skill_result.swimmer_id,
-          swimmer_name: res.skill_result.swimmer_name,
-        })
-      }
-
-      // Skill result — session plan draft
-      if (res.skill_result?.type === 'session_plan' && res.skill_result.draft) {
-        const d = res.skill_result.draft
-        const groupsDict = d.groups || {}
-        setSessionDraft({
-          title: d.title || '',
-          date: d.date || '',
-          coach_intent: d.coach_intent || '',
-          energy_system_focus: d.energy_system_focus || '',
-          groups: Object.entries(groupsDict).map(([num, g]) => ({
-            group_number: parseInt(num),
-            description: g.description || '',
-            sets: g.sets || '',
-            volume_breakdown: g.volume_breakdown || {},
-            sub_groups: [],
-          })),
-        })
-      }
-
-      if (res.saved_benchmarks?.length > 0) {
-        setSavedBenchmarksToast(res.saved_benchmarks)
-        setTimeout(() => setSavedBenchmarksToast(null), 5000)
-      }
-      if (res.saved_intents?.length > 0) {
-        setSavedIntentsToast(res.saved_intents)
-        setTimeout(() => setSavedIntentsToast(null), 7000)
-      }
-
-      // Auto-trigger register card if register topic detected
-      if (res.cancellation_data) {
-        setCancellationData(res.cancellation_data)
-      } else if ((res.topics_detected || []).includes('register')) {
-        // Newer backends resolve the slot as part of the deterministic chat
-        // response. Keep the fallback for clients talking to an older server.
-        const regData = res.register_data || await api.startRegister(msg, threadId)
-        if (regData.session_id) {
-          setRegisterData({ ...regData, attendance: null })
-        }
-      } else if (res.intent?.type === 'formal_target_capture' && res.intent?.swimmer_id) {
-        const targetConversation = [
-          ...messages.map(message => `${message.role === 'user' ? 'Coach' : 'AI'}: ${message.message}`),
-          `Coach: ${displayMsg}`,
-          `AI: ${res.reply}`,
-        ].join('\n')
-        try {
-          const preview = await api.previewTargetFromChat(res.intent.swimmer_id, targetConversation)
-          setTargetDraft({
-            ...preview.target,
-            possible_duplicate_id: preview.possible_duplicate_id,
-          })
-        } catch (error) {
-          setMessages(previous => [...previous, {
-            role: 'assistant',
-            message: `I couldn't prepare a formal target yet: ${error.message}`,
-            id: Date.now() + 2,
-          }])
-        }
-      } else if (res.suggested_action) {
-        setSuggestedAction({
-          label: res.suggested_action,
-          type: res.intent?.type,
-          swimmer_id: res.intent?.swimmer_id,
-          swimmer_name: res.intent?.swimmer_name,
-          new_status: res.intent?.new_status,
-        })
-      }
+      scrollMode.current = 'reply'
+      setMessages(previous => [...previous, { role: 'assistant', message: res.reply, id: `reply-${Date.now()}` }])
+      await handleReplyExtras(res, { msg, displayMsg, threadId, history })
     } catch (e) {
-      const recovered = await recoverSavedReply(threadId, msg, requestStartedAt, hasImage)
-      if (!recovered) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          message: 'The connection ended before the reply reached this screen. The conversation is saved; tap the conversation again in a moment to recover any completed reply.',
-          id: Date.now() + 1,
-        }])
-      }
+      const recovered = await recoverSavedReply(threadId, msg, requestStartedAt, Boolean(photo))
+      if (!recovered) markFailed(localId, msg, photo)
     }
     setSending(false)
+  }
+  sendRef.current = send
+
+  const retry = (message) => {
+    setMessages(previous => previous.filter(m => m.id !== message.id))
+    send(message.retry.text, { image: message.retry.photo })
   }
 
   const handleImagePick = (e) => {
@@ -415,6 +560,108 @@ export default function CoachAI() {
     setAttachedImage({ file, preview })
     e.target.value = ''
   }
+
+  // ---- The mic: hold to talk, or tap and talk ----
+
+  const settlePress = (press) => {
+    pressRef.current = null
+    if (press.up - press.at >= HOLD_MS) {
+      stopVoice()
+    } else {
+      setHandsFree(true)
+      listenForPause()
+    }
+  }
+
+  const micDown = async (event) => {
+    if (event.button !== undefined && event.button !== 0) return
+    event.preventDefault()
+    if (transcribing) return
+    // Listening hands-free: a tap sends now.
+    if (recording) {
+      stopVoice()
+      return
+    }
+    setVoiceNote('')
+    clearVoiceError()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    primeMicrophone()
+    const press = { at: Date.now(), up: 0, started: false }
+    pressRef.current = press
+    await startVoice()
+    press.started = true
+    // Let go while the mic was still opening (the first time, the phone asks).
+    if (press.up && pressRef.current === press) settlePress(press)
+  }
+
+  const micUp = () => {
+    const press = pressRef.current
+    if (!press || press.up) return
+    press.up = Date.now()
+    if (press.started) settlePress(press)
+  }
+
+  // ---- Start screen ----
+
+  const runSuggestion = async (suggestion) => {
+    if (suggestion.kind === 'plan') {
+      send(suggestion.message)
+      return
+    }
+    if (suggestion.kind === 'debrief') {
+      navigate(`/debrief?session=${suggestion.sessionId}`)
+      return
+    }
+    const register = suggestion.kind === 'register'
+    const to = id => (register ? `/sessions/${id}/register` : `/sessions/${id}`)
+    if (suggestion.session.session_id) {
+      navigate(to(suggestion.session.session_id))
+      return
+    }
+    // A timetabled session with no record yet gets one the first time it's opened.
+    setOpening(suggestion.kind)
+    setStartError('')
+    try {
+      const created = await api.startCalendarSession(
+        { pool_slot_id: suggestion.session.slot_id, date: suggestion.session.date },
+        { onWaking: () => setWaking(true) },
+      )
+      navigate(to(created.id))
+    } catch (error) {
+      setStartError(`Could not open ${register ? 'the register' : 'the session'}: ${error.message}. Check you have signal and try again.`)
+    }
+    setOpening('')
+    setWaking(false)
+  }
+
+  const openPlanningThread = async (kind) => {
+    try {
+      const thread = kind === 'season_plan'
+        ? await api.getOrCreateSeasonPlanThread()
+        : await api.getOrCreateAthletePlanThread()
+      setThreads(previous => (previous.some(t => t.id === thread.id)
+        ? previous
+        : [{ thread_type: kind, last_message_at: thread.created_at, ...thread }, ...previous]))
+      openThread(thread.id)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  const deleteThread = async (thread) => {
+    if (!window.confirm(`Delete "${conversationTitle(thread)}"? This can't be undone.`)) return
+    try {
+      await api.deleteAIChatThread(thread.id)
+    } catch (error) {
+      window.alert(`Could not delete it: ${error.message}`)
+      return
+    }
+    setThreads(previous => previous.filter(t => t.id !== thread.id))
+    if (activeThreadId === thread.id) newConversation()
+  }
+
+  // ---- The card under a reply ----
 
   const handleSuggestedAction = async () => {
     if (!suggestedAction || actioning) return
@@ -432,30 +679,10 @@ export default function CoachAI() {
       if (type === 'view_meet' && suggestedAction.meet_id) {
         navigate(`/meets/${suggestedAction.meet_id}`)
         return
-      } else if (type === 'open_season_plan_thread') {
-        try {
-          const spThread = await api.getOrCreateSeasonPlanThread()
-          if (!threads.find(t => t.id === spThread.id)) {
-            setThreads(prev => [spThread, ...prev])
-          }
-          switchToThread(spThread.id)
-        } catch (e) {
-          setActionResult('error')
-        }
-        setSuggestedAction(null)
-        return
-      } else if (type === 'open_athlete_plan_thread') {
-        try {
-          const apThread = await api.getOrCreateAthletePlanThread()
-          if (!threads.find(t => t.id === apThread.id)) {
-            setThreads(prev => [apThread, ...prev])
-          }
-          switchToThread(apThread.id)
-        } catch (e) {
-          setActionResult('error')
-        }
-        setSuggestedAction(null)
-        return
+      } else if (type === 'open_season_plan_thread' || type === 'open_athlete_plan_thread') {
+        const opened = await openPlanningThread(type === 'open_season_plan_thread' ? 'season_plan' : 'athlete_planning')
+        if (!opened) setActionResult('error')
+        else setSuggestedAction(null)
       } else if (type === 'view_planning') {
         stashDraft(suggestedAction.plan_kind, suggestedAction.plan_draft)
         navigate('/planning')
@@ -472,7 +699,6 @@ export default function CoachAI() {
       } else if (type === 'status_change' && swimmer_id && suggestedAction.new_status) {
         await api.updateSwimmer(swimmer_id, { status: suggestedAction.new_status })
         setActionResult('saved')
-        setSuggestedAction(null)
       } else if (type === 'benchmark_capture' && swimmer_id) {
         const result = await api.saveBenchmarkFromChat(swimmer_id, conversationContext)
         if (result.saved?.length > 0) {
@@ -480,7 +706,6 @@ export default function CoachAI() {
           setTimeout(() => setSavedBenchmarksToast(null), 5000)
         }
         setActionResult('saved')
-        setSuggestedAction(null)
       } else if (type === 'coaching_intent' && swimmer_id) {
         const result = await api.saveCoachingIntentFromChat(swimmer_id, conversationContext)
         if (result.saved?.length > 0) {
@@ -488,7 +713,6 @@ export default function CoachAI() {
           setTimeout(() => setSavedIntentsToast(null), 7000)
         }
         setActionResult('saved')
-        setSuggestedAction(null)
       } else if (type === 'athlete_profile_update' && swimmer_id) {
         await api.updateAthleteProfileFromChat(swimmer_id, conversationMessages)
         setActionResult('saved')
@@ -519,6 +743,7 @@ export default function CoachAI() {
         setActionResult('error')
       }
     } catch (e) {
+      setPinning(false)
       if (swimmer_id) {
         setActionResult('error_with_link')
       } else {
@@ -533,33 +758,27 @@ export default function CoachAI() {
     setActionResult(null)
   }
 
-  const speakMessage = (id, text) => {
-    window.speechSynthesis.cancel()
-    if (speakingId === id) { setSpeakingId(null); return }
-    const plainText = text.replace(/[*_`#>]/g, '').replace(/\n+/g, ' ').trim()
-    const utt = new SpeechSynthesisUtterance(plainText)
-    utt.lang = 'en-GB'
-    utt.rate = 1.05
-    utt.onend = () => setSpeakingId(null)
-    utt.onerror = () => setSpeakingId(null)
-    setSpeakingId(id)
-    window.speechSynthesis.speak(utt)
-  }
+  // ---- The menu ----
 
   const clear = async () => {
+    setMenuOpen(false)
     if (!window.confirm('Clear this conversation? This cannot be undone.')) return
-    window.speechSynthesis.cancel()
-    setSpeakingId(null)
+    stopSpeaking()
     await api.clearAIChat(activeThreadId)
     setMessages([])
+    setThreads(previous => previous.map(t => (t.id === activeThreadId && !PLANNING_THREADS[t.thread_type]
+      ? { ...t, name: null, message_count: 0 }
+      : t)))
     setSuggestedAction(null)
     setActionResult(null)
     setCancellationData(null)
     setTargetDraft(null)
     setPinSaved(false)
+    setLastInjected([])
   }
 
   const openPinModal = async () => {
+    setMenuOpen(false)
     setPinning(true)
     try {
       const result = await api.pinToSessions(activeThreadId)
@@ -593,84 +812,105 @@ export default function CoachAI() {
     setSaving(false)
   }
 
-  const actionColour = suggestedAction ? (INTENT_LABELS[suggestedAction.type]?.colour || 'accent') : 'accent'
-  const colourMap = {
-    blue: 'border-blue-700/50 bg-blue-900/20 text-blue-300',
-    orange: 'border-orange-700/50 bg-orange-900/20 text-orange-300',
-    'orange-dark': 'border-orange-700/50 bg-orange-900/20 text-orange-300',
-    green: 'border-green-700/50 bg-green-900/20 text-green-300',
-    purple: 'border-purple-700/50 bg-purple-900/20 text-purple-300',
-    amber: 'border-amber-700/50 bg-amber-900/20 text-amber-300',
-    teal: 'border-teal-700/50 bg-teal-900/20 text-teal-300',
-    accent: 'border-accent-700/50 bg-accent-900/20 text-accent-300',
+  const togglePoolside = () => {
+    setPoolside(on => {
+      savePoolside(!on)
+      return !on
+    })
   }
-  const actionCardClass = colourMap[actionColour]
+
+  // ---- Drawing ----
+
+  const activeThread = threads.find(t => t.id === activeThreadId) || null
+  const actionCardClass = ACTION_COLOURS[suggestedAction ? (INTENT_LABELS[suggestedAction.type]?.colour || 'accent') : 'accent']
+  const copy = actionCopy(suggestedAction)
+  const lastReplyIndex = messages.map(m => m.role).lastIndexOf('assistant')
+  const showStart = !loading && !activeThreadId && messages.length === 0
+  const listening = recording || transcribing
+  const showSend = !voiceSupported || (!listening && Boolean(input.trim() || attachedImage))
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col" style={{ height: PAGE_HEIGHT }}>
       {registerSaved && <RegisterSavedOverlay />}
 
       {/* Header */}
-      <div className="px-4 pt-4 pb-2 shrink-0 border-b border-pool-600">
-        <div className="flex items-center justify-between mb-2">
-          <h1 className="text-lg font-bold tracking-tight">LaneWatch AI</h1>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => setPoolside(p => !p)}
-              className={`text-xs font-semibold px-2.5 py-1 rounded-lg transition-colors ${
-                poolside
-                  ? 'bg-amber-600 text-white'
-                  : 'bg-pool-700 text-pool-400 hover:text-pool-200'
-              }`}
-              title="Poolside mode — brief responses only"
-            >
-              {poolside ? 'Poolside' : 'Poolside'}
-            </button>
-            {messages.length >= 2 && !sending && (
-              <button
-                onClick={openPinModal}
-                disabled={pinning}
-                className="text-xs text-accent-400 font-medium hover:text-accent-300 disabled:opacity-50"
-              >
-                {pinning ? 'Summarising…' : 'Pin to sessions'}
-              </button>
-            )}
-            {messages.length > 0 && (
-              <button onClick={clear} className="text-xs text-pool-500 hover:text-pool-400">Clear</button>
-            )}
-            <Link to="/context" className="text-xs text-accent-400 font-medium">Context →</Link>
-          </div>
+      <div className="shrink-0 h-12 px-2 flex items-center gap-1 border-b border-pool-700">
+        <button
+          type="button"
+          onClick={() => setSheetOpen(true)}
+          className="p-2 rounded-lg text-pool-300 hover:text-pool-100"
+          aria-label="Conversations"
+        >
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h10.5" />
+          </svg>
+        </button>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-pool-100 truncate">
+            {activeThread ? conversationTitle(activeThread) : 'LaneWatch AI'}
+          </p>
+          {poolside && <p className="text-[10px] text-amber-400 font-medium leading-tight">Poolside · short replies</p>}
         </div>
-
-        <div className="mt-2 pl-3.5 flex items-center gap-3 flex-wrap">
-          {context?.active ? (
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-              <span className="text-xs text-pool-400">
-                Context: <span className="text-pool-200">{context.title}</span>
-              </span>
-            </div>
-          ) : (
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-pool-600" />
-              <span className="text-xs text-pool-500">
-                No coaching context —{' '}
-                <Link to="/context" className="text-accent-400 underline">build one</Link>
-              </span>
-            </div>
-          )}
-          {poolside && (
-            <div className="flex items-center gap-1.5">
-              <div className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-              <span className="text-xs text-amber-400 font-medium">Brief responses</span>
-            </div>
-          )}
-          {lastTopics.length > 0 && (
-            <div className="flex items-center gap-1">
-              {lastTopics.map(t => (
-                <span key={t} className="text-xs bg-pool-700 text-pool-400 rounded px-1.5 py-0.5">{t}</span>
-              ))}
-            </div>
+        <button
+          type="button"
+          onClick={togglePoolside}
+          className={`text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-colors ${
+            poolside ? 'bg-amber-600 text-white' : 'bg-pool-700 text-pool-400 hover:text-pool-200'
+          }`}
+          aria-pressed={poolside}
+          title="Poolside mode: short replies"
+        >
+          Poolside
+        </button>
+        {(activeThreadId || messages.length > 0) && (
+          <button
+            type="button"
+            onClick={newConversation}
+            className="p-2 rounded-lg text-pool-300 hover:text-pool-100"
+            aria-label="New conversation"
+            title="New conversation"
+          >
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+            </svg>
+          </button>
+        )}
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setMenuOpen(open => !open)}
+            className="p-2 rounded-lg text-pool-300 hover:text-pool-100"
+            aria-label="More"
+            aria-expanded={menuOpen}
+          >
+            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+              <circle cx="12" cy="5" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="12" cy="19" r="1.6" />
+            </svg>
+          </button>
+          {menuOpen && (
+            <>
+              <button type="button" aria-label="Close menu" className="fixed inset-0 z-40 cursor-default" onClick={() => setMenuOpen(false)} />
+              <div className="absolute right-0 top-full mt-1 z-50 w-56 bg-pool-800 border border-pool-600 rounded-xl shadow-xl py-1 text-sm">
+                {activeThreadId && messages.length >= 2 && (
+                  <button type="button" onClick={openPinModal} disabled={pinning || sending}
+                    className="w-full text-left px-4 py-2.5 hover:bg-pool-700 disabled:opacity-50">
+                    {pinning ? 'Summarising…' : 'Pin to sessions'}
+                    <span className="block text-[11px] text-pool-500">Keep this in mind when planning</span>
+                  </button>
+                )}
+                {activeThreadId && messages.length > 0 && (
+                  <button type="button" onClick={clear} className="w-full text-left px-4 py-2.5 hover:bg-pool-700 text-red-300">
+                    Clear this conversation
+                  </button>
+                )}
+                <Link to="/context" onClick={() => setMenuOpen(false)} className="block px-4 py-2.5 hover:bg-pool-700">
+                  Coaching context
+                  <span className="block text-[11px] text-pool-500">
+                    {context?.active ? `Using: ${context.title}` : 'None yet: build one'}
+                  </span>
+                </Link>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -708,88 +948,72 @@ export default function CoachAI() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+      <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-3 space-y-3">
 
-        {!loading && messages.length === 0 && (
-          <div className="space-y-4 pt-2">
-            {threads.some(t => t.thread_type === 'general' || !t.thread_type) && (
-              <button
-                onClick={() => {
-                  const last = threads.find(t => t.thread_type === 'general' || !t.thread_type)
-                  if (last) switchToThread(last.id)
-                }}
-                className="w-full text-left bg-pool-800 hover:bg-pool-700 border border-pool-600 rounded-xl px-4 py-3 transition-colors flex items-center justify-between group"
-              >
-                <div>
-                  <p className="text-sm font-medium text-pool-200">Resume last conversation</p>
-                  <p className="text-xs text-pool-400 mt-0.5">Continue where you left off</p>
-                </div>
-                <svg className="w-4 h-4 text-pool-500 group-hover:text-pool-300" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            )}
-            <p className="text-pool-400 text-sm leading-relaxed">
-              Ask LaneWatch AI anything — swimmer profiles, session planning, competition prep, training science.
-              I know your squad and I'll pull in the right context as the conversation develops.
-            </p>
-            <div className="space-y-2">
-              <p className="text-xs text-pool-500 uppercase tracking-wide font-semibold">Try asking:</p>
-              {STARTERS.map((s, i) => (
-                <button
-                  key={i}
-                  onClick={() => send(s)}
-                  className="w-full text-left text-xs bg-pool-700 hover:bg-pool-600 border border-pool-600 hover:border-accent-600/50 rounded-xl px-3 py-2.5 text-pool-300 transition-all leading-relaxed"
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
+        {showStart && (
+          <ChatStart
+            suggestions={startSuggestions(startData)}
+            recent={recentConversations(threads, { limit: 3 })}
+            moreConversations={recentConversations(threads).length > 3}
+            context={context}
+            opening={opening}
+            waking={waking}
+            error={startError}
+            voiceSupported={voiceSupported}
+            onSuggestion={runSuggestion}
+            onOpenThread={openThread}
+            onShowAll={() => setSheetOpen(true)}
+            onAsk={text => send(text)}
+          />
         )}
 
-        {messages.map((m) => (
-          <div key={m.id} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'} group`}>
-            <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed space-y-2 ${
-              m.role === 'user'
-                ? 'bg-accent-700 text-white rounded-br-sm'
-                : 'bg-pool-700 text-pool-200 rounded-bl-sm'
-            }`}>
-              {m.imagePreview && (
-                <img src={m.imagePreview} alt="session" className="rounded-xl max-h-40 object-cover w-full" />
-              )}
-              <MessageContent text={m.role === 'user' && m.message.startsWith('[Photo attached] ')
-                ? m.message.replace('[Photo attached] ', '').trim() || 'Photo attached'
-                : m.message} />
-              {m.role === 'assistant' && (
-                <button
-                  onClick={() => speakMessage(m.id, m.message)}
-                  className={`mt-1 flex items-center gap-1 text-xs transition-colors ${
-                    speakingId === m.id ? 'text-accent-400' : 'text-pool-600 hover:text-pool-400'
-                  }`}
-                  aria-label={speakingId === m.id ? 'Stop speaking' : 'Listen'}
-                >
-                  {speakingId === m.id ? (
-                    <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                      <rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>
-                    </svg>
-                  ) : (
-                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.114 5.636a9 9 0 0 1 0 12.728M16.463 8.288a5.25 5.25 0 0 1 0 7.424M6.75 8.25l4.72-4.72a.75.75 0 0 1 1.28.53v15.88a.75.75 0 0 1-1.28.53l-4.72-4.72H4.51c-.88 0-1.704-.507-1.938-1.354A9.009 9.009 0 0 1 2.25 12c0-.83.112-1.633.322-2.396C2.806 8.756 3.63 8.25 4.51 8.25H6.75Z" />
-                    </svg>
-                  )}
-                </button>
-              )}
+        {threadLoading && messages.length === 0 && (
+          <p className="text-sm text-pool-500 pt-2">Opening the conversation…</p>
+        )}
+
+        {messages.map((m, index) => (
+          <div key={m.id} ref={index === lastReplyIndex ? lastReplyRef : undefined} className="space-y-1">
+            <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-relaxed space-y-2 ${
+                m.role === 'user'
+                  ? `bg-accent-700 text-white rounded-br-sm ${m.failed ? 'opacity-60' : ''}`
+                  : 'bg-pool-700 text-pool-200 rounded-bl-sm'
+              }`}>
+                {m.imagePreview && (
+                  <img src={m.imagePreview} alt="Attached" className="rounded-xl max-h-40 object-cover w-full" />
+                )}
+                <MessageContent text={m.role === 'user' && m.message.startsWith('[Photo attached] ')
+                  ? m.message.replace('[Photo attached] ', '').trim() || 'Photo attached'
+                  : m.message} />
+                {m.role === 'assistant' && (
+                  <SpeakButton text={plainText(m.message)} speaker="interviewer" speakKey={`chat-${m.id}`} className="pt-0.5" />
+                )}
+              </div>
             </div>
+            {m.failed && (
+              <div className="flex justify-end">
+                <button type="button" onClick={() => retry(m)} disabled={sending}
+                  className="text-xs text-red-300 hover:text-red-200 px-1 disabled:opacity-50">
+                  Didn't send. Tap to try again
+                </button>
+              </div>
+            )}
           </div>
         ))}
 
         {sending && (
           <div className="flex justify-start">
-            <div className="bg-pool-700 rounded-2xl rounded-bl-sm px-4 py-3">
+            <div className="bg-pool-700 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-2.5">
               <ThinkingDots />
+              {waking && <span className="text-xs text-pool-400">Waking the server…</span>}
             </div>
           </div>
+        )}
+
+        {lastInjected.length > 0 && !sending && (
+          <p className="text-[11px] text-pool-500 px-1">
+            Full profile loaded: <span className="text-pool-400">{lastInjected.join(', ')}</span>
+          </p>
         )}
 
         {/* Suggested action card */}
@@ -798,42 +1022,35 @@ export default function CoachAI() {
             {actionResult === null && (
               <>
                 <p className="text-xs font-semibold">{suggestedAction.label}</p>
-                <p className="text-xs opacity-75">
-                  {suggestedAction.type === 'session_writing'
-                    ? "I'll extract the session structure from our conversation, create it in history, and take you straight to the register."
-                    : suggestedAction.type === 'meet_creation'
-                    ? "I'll extract the meet details and swimmer entries from our conversation and create it — you can review and add targets on the meet page."
-                    : suggestedAction.type === 'athlete_profile_update'
-                    ? `Update ${suggestedAction.swimmer_name}'s stored physical and psychological coaching profile using the new details in this conversation.`
-                    : suggestedAction.swimmer_name
-                    ? `Save this conversation to ${suggestedAction.swimmer_name}'s profile — builds biological, technical, and performance summaries from what was discussed.`
-                    : "Ready to save this — it'll be used in future planning context."}
-                </p>
+                {copy.detail && <p className="text-xs opacity-75">{copy.detail}</p>}
                 <div className="flex gap-2">
                   <button
                     onClick={handleSuggestedAction}
                     disabled={actioning}
-                    className="flex-1 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded-lg py-2 text-xs font-semibold transition-colors"
+                    className="flex-1 bg-white/10 hover:bg-white/20 disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold transition-colors"
                   >
-                    {actioning ? 'Saving…' : 'Yes, save it'}
+                    {actioning ? copy.busy : copy.button}
                   </button>
                   <button
                     onClick={dismissAction}
                     className="px-3 py-2 text-xs opacity-60 hover:opacity-100"
                   >
-                    Not yet
+                    Not now
                   </button>
                 </div>
               </>
             )}
             {actionResult === 'saved' && (
-              <p className="text-xs font-semibold">Saved. The AI will use this in future context for this swimmer.</p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-semibold">{copy.done || 'Done.'}</p>
+                <button onClick={dismissAction} className="text-xs opacity-60 hover:opacity-100 shrink-0">OK</button>
+              </div>
             )}
             {actionResult === 'season' && (
-              <p className="text-xs">Season plan changes aren't auto-saved yet — take the key points to the Periodization section to update the plan.</p>
+              <p className="text-xs">Season plan changes aren't auto-saved yet. Take the key points to the season plan to update it.</p>
             )}
             {actionResult === 'error' && (
-              <p className="text-xs opacity-75">Couldn't save automatically — try from the swimmer's profile page.</p>
+              <p className="text-xs opacity-75">Couldn't do that from here. Try again, or do it from the page itself.</p>
             )}
             {actionResult === 'error_with_link' && (
               <div className="space-y-2">
@@ -949,186 +1166,138 @@ export default function CoachAI() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Context injection indicator */}
-      {lastInjected.length > 0 && !sending && (
-        <div className="px-4 py-1.5 shrink-0 flex items-center gap-1.5">
-          <div className="w-1.5 h-1.5 rounded-full bg-accent-500 shrink-0" />
-          <p className="text-xs text-pool-500">
-            Full profile loaded: <span className="text-pool-400">{lastInjected.join(', ')}</span>
-          </p>
-        </div>
-      )}
-
-      {/* Thread tabs */}
-      <div className="px-4 pt-2 shrink-0 flex items-center gap-1.5 overflow-x-auto scrollbar-none">
-        {threads.map((t, i) => {
-          const isSeasonPlan = t.thread_type === 'season_plan'
-          const isAthletePlan = t.thread_type === 'athlete_planning'
-          return (
-            <div key={t.id} className="flex items-center shrink-0">
-              <button
-                onClick={() => switchToThread(t.id)}
-                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
-                  activeThreadId === t.id
-                    ? isSeasonPlan ? 'bg-teal-600 text-white' : isAthletePlan ? 'bg-orange-600 text-white' : 'bg-accent-600 text-white'
-                    : isSeasonPlan ? 'bg-teal-900/50 text-teal-300 hover:text-teal-100 border border-teal-700/40' : isAthletePlan ? 'bg-orange-900/50 text-orange-300 hover:text-orange-100 border border-orange-700/40' : 'bg-pool-700 text-pool-400 hover:text-pool-200'
-                }`}
-                title={isSeasonPlan ? 'Season planning thread' : isAthletePlan ? 'Athlete planning thread' : undefined}
-              >
-                {isSeasonPlan && <span className="text-[10px] opacity-75">📋</span>}
-                {isAthletePlan && <span className="text-[10px] opacity-75">🏊</span>}
-                {t.name || `Chat ${i + 1}`}
-              </button>
-              {threads.length > 1 && (
-                <button
-                  onClick={() => deleteThread(t.id)}
-                  className="ml-0.5 text-pool-600 hover:text-red-400 text-xs w-4 h-4 flex items-center justify-center transition-colors"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          )
-        })}
-        <button
-          onClick={async () => {
-            try {
-              const spThread = await api.getOrCreateSeasonPlanThread()
-              if (!threads.find(t => t.id === spThread.id)) {
-                setThreads(prev => [spThread, ...prev])
-              }
-              switchToThread(spThread.id)
-            } catch {}
-          }}
-          className="shrink-0 text-xs text-teal-400 hover:text-teal-200 bg-teal-900/40 hover:bg-teal-800/60 border border-teal-700/40 px-2 py-1.5 rounded-lg transition-colors"
-          title="Open season planning chat"
-        >
-          📋 Season
-        </button>
-        <button
-          onClick={async () => {
-            try {
-              const apThread = await api.getOrCreateAthletePlanThread()
-              if (!threads.find(t => t.id === apThread.id)) {
-                setThreads(prev => [apThread, ...prev])
-              }
-              switchToThread(apThread.id)
-            } catch {}
-          }}
-          className="shrink-0 text-xs text-orange-400 hover:text-orange-200 bg-orange-900/40 hover:bg-orange-800/60 border border-orange-700/40 px-2 py-1.5 rounded-lg transition-colors"
-          title="Open athlete planning chat"
-        >
-          🏊 Athletes
-        </button>
-        <button
-          onClick={() => {
-            setActiveThreadId(null)
-            setMessages([])
-            setSuggestedAction(null)
-            setActionResult(null)
-            setSessionDraft(null)
-            setRegisterData(null)
-            setCancellationData(null)
-            setTargetDraft(null)
-            setSavedTarget(null)
-            setRegisterSaved(false)
-            setPinSaved(false)
-            setFeedbackPrompt(null)
-            setLastInjected([])
-            setLastTopics([])
-          }}
-          className="shrink-0 text-xs text-pool-500 hover:text-accent-400 bg-pool-700 hover:bg-pool-600 w-7 h-7 rounded-lg flex items-center justify-center transition-colors font-bold"
-          title="New conversation"
-        >
-          +
-        </button>
-      </div>
-
-      {/* Input */}
-      <div className="px-3 pb-4 pt-2 shrink-0 border-t border-pool-700">
+      {/* Message box */}
+      <div className="shrink-0 px-3 pt-2 pb-3 border-t border-pool-700">
         <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImagePick} />
         {voiceError && (
           <div className="mb-2 bg-red-900 border border-red-700 text-red-200 text-xs rounded-xl px-3 py-2 flex items-center justify-between gap-2">
             <span>{voiceError}</span>
-            <button onClick={clearVoiceError} className="text-red-400 hover:text-red-200 text-base leading-none shrink-0">×</button>
+            <button onClick={clearVoiceError} className="text-red-400 hover:text-red-200 text-base leading-none shrink-0" aria-label="Dismiss">×</button>
           </div>
         )}
-        {attachedImage && (
-          <div className="mb-2 relative inline-block">
-            <img src={attachedImage.preview} alt="attached" className="h-16 rounded-lg object-cover border border-pool-600" />
-            <button onClick={() => setAttachedImage(null)} className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-pool-600 rounded-full text-xs text-pool-200 flex items-center justify-center">×</button>
+        {voiceNote && !listening && (
+          <p className="mb-1.5 px-2 text-xs text-pool-400">{voiceNote}</p>
+        )}
+        {attachedImage && !listening && (
+          <div className="mb-2 ml-1 relative inline-block">
+            <img src={attachedImage.preview} alt="Attached" className="h-16 rounded-lg object-cover border border-pool-600" />
+            <button onClick={() => setAttachedImage(null)} aria-label="Remove photo"
+              className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-pool-600 rounded-full text-xs text-pool-200 flex items-center justify-center">×</button>
           </div>
         )}
-        {/* Single container — ChatGPT style */}
-        <div className={`flex flex-col bg-pool-700 border rounded-2xl transition-colors ${recording ? 'border-red-500' : transcribing ? 'border-yellow-500' : 'border-pool-600 focus-within:border-accent-500'}`}>
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send() } }}
-            placeholder={recording ? 'Recording…' : transcribing ? 'Transcribing…' : 'Ask LaneWatch AI…'}
-            rows={3}
-            className="bg-transparent px-4 pt-3 pb-1 text-sm focus:outline-none resize-none w-full"
-          />
-          <div className="flex items-center justify-between px-2 pb-2">
-            <div className="flex items-center gap-1">
-              {/* Camera */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="p-2 text-pool-500 hover:text-pool-300 transition-colors rounded-lg"
-                aria-label="Attach photo"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
-                </svg>
-              </button>
-              {/* Mic */}
-              {voiceSupported && (
+
+        <div className="flex items-end gap-2">
+          <div className={`flex-1 min-w-0 min-h-[44px] flex items-end rounded-3xl border transition-colors ${
+            recording ? 'bg-red-950/40 border-red-700/60'
+              : transcribing ? 'bg-pool-700 border-yellow-600/60'
+                : 'bg-pool-700 border-pool-600 focus-within:border-accent-500'
+          }`}>
+            {listening ? (
+              <div className="flex-1 flex items-center gap-2 pl-1 pr-3 min-h-[42px]">
+                {recording ? (
+                  <button type="button" onClick={cancelVoice} aria-label="Cancel"
+                    className="w-9 h-9 shrink-0 rounded-full text-pool-300 hover:text-pool-100 flex items-center justify-center">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                ) : (
+                  <span className="w-9 h-9 shrink-0 flex items-center justify-center">
+                    <svg className="w-4 h-4 animate-spin text-yellow-400" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                    </svg>
+                  </span>
+                )}
+                {recording && <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shrink-0" />}
+                <span className="text-sm text-pool-200 truncate">
+                  {transcribing ? 'Writing that down…'
+                    : handsFree ? "Listening. I'll send when you stop"
+                      : 'Listening… let go to send'}
+                </span>
+              </div>
+            ) : (
+              <>
                 <button
-                  onMouseDown={startVoice}
-                  onMouseUp={stopVoice}
-                  onMouseLeave={stopVoice}
-                  onTouchStart={(e) => { e.preventDefault(); startVoice() }}
-                  onTouchEnd={(e) => { e.preventDefault(); stopVoice() }}
-                  disabled={transcribing}
-                  className={`p-2 rounded-lg transition-all select-none ${
-                    recording ? 'text-red-400 animate-pulse' :
-                    transcribing ? 'text-yellow-400 animate-pulse' :
-                    'text-pool-500 hover:text-pool-300'
-                  }`}
-                  aria-label={recording ? 'Release to send' : transcribing ? 'Transcribing…' : 'Hold to speak'}
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-11 h-11 shrink-0 flex items-center justify-center text-pool-400 hover:text-pool-200 rounded-full"
+                  aria-label="Attach photo"
                 >
-                  {transcribing ? (
-                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
-                    </svg>
-                  )}
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
+                  </svg>
                 </button>
-              )}
-            </div>
-            {/* Send */}
+                <textarea
+                  ref={textareaRef}
+                  value={input}
+                  onChange={e => setInput(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); send() } }}
+                  placeholder={voiceSupported ? 'Message, or hold the mic' : 'Message LaneWatch AI'}
+                  rows={1}
+                  className="flex-1 min-w-0 bg-transparent py-2.5 pr-4 text-base leading-6 placeholder:text-pool-500 focus:outline-none resize-none"
+                />
+              </>
+            )}
+          </div>
+
+          {showSend ? (
             <button
+              type="button"
               onClick={() => send()}
               disabled={sending || (!input.trim() && !attachedImage)}
-              className="bg-accent-600 hover:bg-accent-500 active:bg-accent-700 disabled:opacity-30 rounded-xl w-9 h-9 flex items-center justify-center transition-colors shrink-0"
+              className="w-11 h-11 shrink-0 rounded-full bg-accent-600 hover:bg-accent-500 active:bg-accent-700 disabled:opacity-30 flex items-center justify-center transition-colors"
+              aria-label="Send"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" />
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
               </svg>
             </button>
-          </div>
+          ) : (
+            <button
+              type="button"
+              onPointerDown={micDown}
+              onPointerUp={micUp}
+              onPointerCancel={micUp}
+              onContextMenu={e => e.preventDefault()}
+              disabled={transcribing}
+              style={{ touchAction: 'none' }}
+              className={`relative w-11 h-11 shrink-0 rounded-full flex items-center justify-center select-none transition-all ${
+                recording ? 'bg-red-600 text-white scale-110' : 'bg-accent-600 hover:bg-accent-500 text-white disabled:opacity-40'
+              }`}
+              aria-label={recording ? (handsFree ? 'Send now' : 'Let go to send') : transcribing ? 'Writing that down' : 'Hold to talk, or tap and talk'}
+            >
+              {recording && <span className="absolute inset-0 rounded-full bg-red-500/40 animate-ping" />}
+              {recording && handsFree ? (
+                <svg className="relative w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 10.5 12 3m0 0 7.5 7.5M12 3v18" />
+                </svg>
+              ) : (
+                <svg className="relative w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+                </svg>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
+      {sheetOpen && (
+        <ConversationsSheet
+          threads={threads}
+          activeThreadId={activeThreadId}
+          onClose={() => setSheetOpen(false)}
+          onOpen={openThread}
+          onDelete={deleteThread}
+          onNew={newConversation}
+          onPlanning={openPlanningThread}
+        />
+      )}
+
       {/* Pin modal */}
       {pinModal && (
-        <div className="fixed inset-0 bg-black/70 z-50 flex items-end justify-center p-4">
+        <div className="fixed inset-0 bg-black/70 z-[60] flex items-end justify-center p-4">
           <div className="bg-pool-800 border border-pool-600 rounded-2xl w-full max-w-lg p-5 space-y-4">
             <div className="flex items-start justify-between gap-3">
               <h2 className="font-bold text-base">Pin to sessions</h2>
@@ -1195,6 +1364,186 @@ export default function CoachAI() {
         </div>
       )}
 
+    </div>
+  )
+}
+
+const SUGGESTION_DOTS = {
+  open: 'bg-accent-400',
+  register: 'bg-blue-400',
+  debrief: 'bg-teal-400',
+  plan: 'bg-amber-400',
+}
+
+function SectionLabel({ children }) {
+  return <p className="text-[11px] text-pool-500 uppercase tracking-wider font-semibold mb-2">{children}</p>
+}
+
+function Chevron() {
+  return (
+    <svg className="w-4 h-4 text-pool-500 shrink-0" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+    </svg>
+  )
+}
+
+// What the chat shows when it opens: what's on now, where the coach left off,
+// and a couple of things to ask.
+function ChatStart({
+  suggestions, recent, moreConversations, context, opening, waking, error, voiceSupported,
+  onSuggestion, onOpenThread, onShowAll, onAsk,
+}) {
+  return (
+    <div className="space-y-6 pt-2 pb-2">
+      <div>
+        <p className="text-lg font-semibold text-pool-100">What do you need?</p>
+        <p className="text-sm text-pool-400 mt-1 leading-relaxed">
+          {voiceSupported
+            ? 'Type, or hold the mic and talk. A quick tap on the mic listens until you stop.'
+            : 'Ask about a swimmer, a session, a gala or the plan.'}
+        </p>
+      </div>
+
+      {suggestions.length > 0 && (
+        <section>
+          <SectionLabel>Right now</SectionLabel>
+          <div className="space-y-2">
+            {suggestions.map(suggestion => (
+              <button
+                key={`${suggestion.kind}-${suggestion.title}`}
+                type="button"
+                onClick={() => onSuggestion(suggestion)}
+                disabled={Boolean(opening)}
+                className="w-full flex items-center gap-3 bg-pool-800 border border-pool-700 hover:border-accent-600/60 rounded-2xl px-4 py-3 text-left transition-colors disabled:opacity-60"
+              >
+                <span className={`w-2 h-2 rounded-full shrink-0 ${SUGGESTION_DOTS[suggestion.kind]}`} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-pool-100 truncate">{suggestion.title}</span>
+                  <span className="block text-xs text-pool-400 truncate">{suggestion.detail}</span>
+                </span>
+                {opening === suggestion.kind
+                  ? <span className="text-xs text-pool-400 shrink-0">{waking ? 'Waking…' : 'Opening…'}</span>
+                  : <Chevron />}
+              </button>
+            ))}
+          </div>
+          {error && <p className="text-xs text-red-300 mt-2">{error}</p>}
+        </section>
+      )}
+
+      {recent.length > 0 && (
+        <section>
+          <SectionLabel>Carry on</SectionLabel>
+          <div className="bg-pool-800 border border-pool-700 rounded-2xl divide-y divide-pool-700/70 overflow-hidden">
+            {recent.map(thread => (
+              <button
+                key={thread.id}
+                type="button"
+                onClick={() => onOpenThread(thread.id)}
+                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-pool-700/60 transition-colors"
+              >
+                <span className="flex-1 min-w-0 text-sm text-pool-200 truncate">{conversationTitle(thread)}</span>
+                <span className="text-xs text-pool-500 shrink-0">{relativeTime(thread.last_message_at)}</span>
+              </button>
+            ))}
+            {moreConversations && (
+              <button type="button" onClick={onShowAll}
+                className="w-full px-4 py-2.5 text-left text-xs font-medium text-accent-300 hover:bg-pool-700/60">
+                All conversations
+              </button>
+            )}
+          </div>
+        </section>
+      )}
+
+      <section>
+        <SectionLabel>Or ask</SectionLabel>
+        <div className="flex flex-wrap gap-2">
+          {TRY_ASKING.map(text => (
+            <button
+              key={text}
+              type="button"
+              onClick={() => onAsk(text)}
+              className="text-xs bg-pool-800 hover:bg-pool-700 border border-pool-700 hover:border-accent-600/50 rounded-full px-3 py-2 text-pool-300 transition-colors"
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <p className="text-xs text-pool-500 flex items-center gap-1.5">
+        <span className={`w-1.5 h-1.5 rounded-full ${context?.active ? 'bg-green-500' : 'bg-pool-600'}`} />
+        {context?.active
+          ? <span>Using your coaching context: <span className="text-pool-300">{context.title}</span></span>
+          : <span>No coaching context yet. <Link to="/context" className="text-accent-400 underline">Build one</Link></span>}
+      </p>
+    </div>
+  )
+}
+
+// Every conversation, newest first, with the planning conversations to hand.
+function ConversationsSheet({ threads, activeThreadId, onClose, onOpen, onDelete, onNew, onPlanning }) {
+  const list = recentConversations(threads)
+  const [planningError, setPlanningError] = useState('')
+
+  useEffect(() => {
+    const onKey = event => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const openPlanning = async (kind) => {
+    setPlanningError('')
+    if (!(await onPlanning(kind))) setPlanningError('Could not open that just now. Try again in a moment.')
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-end justify-center" role="dialog" aria-modal="true" aria-label="Conversations">
+      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/60 cursor-default" onClick={onClose} />
+      <div className="relative w-full max-w-lg bg-pool-800 border-t border-pool-600 rounded-t-2xl max-h-[80dvh] flex flex-col safe-bottom">
+        <div className="flex items-center justify-between px-4 pt-4 pb-3">
+          <h2 className="text-base font-semibold">Conversations</h2>
+          <button type="button" onClick={onClose} className="text-sm text-accent-300 px-2 py-1">Done</button>
+        </div>
+        <div className="px-4 pb-3 space-y-2">
+          <button type="button" onClick={onNew}
+            className="w-full bg-accent-600 hover:bg-accent-500 rounded-xl py-2.5 text-sm font-semibold transition-colors">
+            New conversation
+          </button>
+          <div className="flex gap-2">
+            {Object.entries(PLANNING_THREADS).map(([kind, label]) => (
+              <button key={kind} type="button" onClick={() => openPlanning(kind)}
+                className={`flex-1 rounded-xl py-2 text-xs font-medium border transition-colors ${
+                  kind === 'season_plan'
+                    ? 'text-teal-300 bg-teal-900/30 border-teal-700/40 hover:bg-teal-900/50'
+                    : 'text-orange-300 bg-orange-900/30 border-orange-700/40 hover:bg-orange-900/50'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {planningError && <p className="text-xs text-red-300">{planningError}</p>}
+        </div>
+        <div className="overflow-y-auto overscroll-contain px-2 pb-4 border-t border-pool-700/70 pt-2">
+          {list.length === 0 ? (
+            <p className="text-sm text-pool-500 px-3 py-4">Nothing yet. What you talk about will be kept here.</p>
+          ) : list.map(thread => (
+            <div key={thread.id} className={`flex items-center rounded-xl ${thread.id === activeThreadId ? 'bg-pool-700' : 'hover:bg-pool-700/50'}`}>
+              <button type="button" onClick={() => onOpen(thread.id)} className="flex-1 min-w-0 text-left px-3 py-2.5">
+                <span className="block text-sm text-pool-100 truncate">{conversationTitle(thread)}</span>
+                <span className="block text-xs text-pool-500 mt-0.5">{relativeTime(thread.last_message_at)}</span>
+              </button>
+              <button type="button" onClick={() => onDelete(thread)} aria-label={`Delete ${conversationTitle(thread)}`}
+                className="p-3 text-pool-600 hover:text-red-400 shrink-0">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
