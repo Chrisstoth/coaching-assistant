@@ -5,10 +5,67 @@ import { deskWeekStarts, isSessionNear, localDateKey, sessionEnded, weeklySessio
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import HelpLink from '../components/HelpLink'
 
+const DESK_ICON_PATHS = {
+  open: <path d="M5 12h14M13 6l6 6-6 6" />,
+  register: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9zM9 12h6M9 16h4" /></>,
+  done: <><rect x="5" y="4" width="14" height="17" rx="2" /><path d="M9 4h6v3H9zM9 14l2 2 4-4" /></>,
+  pool: <path d="M3 9c2 0 2-1.5 4.5-1.5S10 9 12 9s2-1.5 4.5-1.5S19 9 21 9M3 15c2 0 2-1.5 4.5-1.5S10 15 12 15s2-1.5 4.5-1.5S19 15 21 15" />,
+  write: <path d="M4 20h4L19 9l-4-4L4 16v4zM13.5 6.5l4 4" />,
+  more: <><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></>,
+  cancel: <><circle cx="12" cy="12" r="8.5" /><path d="M6 6l12 12" /></>,
+  hide: <path d="M6 6l12 12M18 6L6 18" />,
+}
+
+function DeskIcon({ name }) {
+  const filled = name === 'more'
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" fill={filled ? 'currentColor' : 'none'} stroke={filled ? 'none' : 'currentColor'}
+      strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+      {DESK_ICON_PATHS[name]}
+    </svg>
+  )
+}
+
+// The rarely-used card actions live behind one quiet ⋯ button. Both still ask before acting.
+function DeskMenu({ name, onCancel, onDismiss }) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!menuOpen) return
+    const close = (event) => { if (!ref.current?.contains(event.target)) setMenuOpen(false) }
+    const escape = (event) => { if (event.key === 'Escape') setMenuOpen(false) }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [menuOpen])
+  const pick = (action) => () => { setMenuOpen(false); action() }
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button type="button" className="desk-more" aria-haspopup="menu" aria-expanded={menuOpen}
+        aria-label={`More for ${name}`} onClick={() => setMenuOpen(value => !value)}>
+        <DeskIcon name="more" />
+      </button>
+      {menuOpen && (
+        <div role="menu" className="desk-menu">
+          <button role="menuitem" type="button" className="danger" onClick={pick(onCancel)}>
+            <DeskIcon name="cancel" />Record as cancelled
+          </button>
+          <button role="menuitem" type="button" onClick={pick(onDismiss)}>
+            <DeskIcon name="hide" />Dismiss from desk
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKey, busyLabel = 'Opening…', error, onRetry }) {
   if (sessions.length === 0) {
     return (
-      <section className="bg-pool-800/70 border border-pool-700 rounded-2xl p-4">
+      <section className="desk-card p-4">
         <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Session desk</p>
         {error ? (
           <>
@@ -51,11 +108,11 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
           const chaseRegister = finished && !session.registered && !covered
           const busy = busyKey && busyKey.startsWith(`${key}:`)
           return (
-            <article key={key} className={`rounded-2xl border p-3.5 ${current ? 'bg-accent-900/30 border-accent-600/50' : ready ? 'bg-pool-800 border-teal-700/60' : 'bg-pool-800 border-pool-700'}`}>
+            <article key={key} data-tone={current ? 'now' : chaseRegister ? 'chase' : ready ? 'ready' : undefined} className="desk-card p-4">
               <div className="flex items-start justify-between gap-3">
                 <button type="button" onClick={() => onOpen(session)} disabled={busy} className="min-w-0 text-left flex-1">
                   <span className="flex items-center gap-2">
-                    {current && <span className="w-2 h-2 rounded-full bg-accent-400" />}
+                    {current && <span className="w-2 h-2 rounded-full bg-accent-400 animate-pulse" />}
                     <span className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</span>
                     {ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded-full px-2 py-0.5 shrink-0">Ready ✓</span>}
                     {covered && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded-full px-2 py-0.5 shrink-0 truncate max-w-[9rem]">{session.taken_by ? `Taken by ${session.taken_by}` : 'Someone else'}</span>}
@@ -65,21 +122,15 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
                     {[day, session.time && `${session.time}${session.end_time ? `–${session.end_time}` : ''}`, session.squad].filter(Boolean).join(' · ')}
                   </span>
                 </button>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => onCancel(session)}
-                    className="w-7 h-7 rounded-full border border-red-800/70 bg-red-900/25 text-red-300 text-sm font-bold"
-                    aria-label={`Cancel ${session.title || session.label || 'session'}`}
-                    title="Record this session as cancelled"
-                  >
-                    !
-                  </button>
-                  <button onClick={() => onDismiss(session)} className="text-[11px] text-pool-500 hover:text-pool-300 py-1">Dismiss</button>
-                </div>
+                <DeskMenu
+                  name={session.title || session.label || 'session'}
+                  onCancel={() => onCancel(session)}
+                  onDismiss={() => onDismiss(session)}
+                />
               </div>
 
               {(session.coach_intent || session.coach_notes || groups.length > 0 || mods.length > 0) ? (
-                <div className="mt-3 border-t border-pool-700/70 pt-2.5 space-y-2">
+                <div className="mt-3 desk-rule pt-3 space-y-2">
                   {session.coach_intent && <p className="text-xs text-pool-300 whitespace-pre-line"><span className="text-pool-500">Aim · </span>{session.coach_intent}</p>}
                   {groups.map(group => (
                     <div key={group.group_number} className="text-xs">
@@ -92,30 +143,31 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
                   {mods.length > 0 && <p className="text-xs text-amber-300">{mods.length} individual note{mods.length === 1 ? '' : 's'} attached</p>}
                 </div>
               ) : (
-                <p className="text-xs text-pool-500 mt-3 border-t border-pool-700/70 pt-2.5">No session plan attached yet.</p>
+                <p className="text-xs text-pool-500 mt-3 desk-rule pt-3">No session plan attached yet.</p>
               )}
 
               {chaseRegister && (
-                <p className="text-xs text-amber-200 mt-3">Finished. Take the register while it's fresh: it's what the staff learn from.</p>
+                <p className="flex items-start gap-2 text-xs text-amber-200 mt-3">
+                  <span className="mt-1 w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                  Finished. Take the register while it's fresh: it's what the staff learn from.
+                </p>
               )}
-              <div className="grid grid-cols-3 gap-2 mt-3">
-                <button onClick={() => onOpen(session)} disabled={busy}
-                  className="bg-accent-600 disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold">
-                  {busyKey === `${key}:open` ? busyLabel : 'Open'}
+              <div className="grid grid-cols-3 gap-2 mt-3.5">
+                <button onClick={() => onOpen(session)} disabled={busy} className="desk-btn desk-btn--primary">
+                  {busyKey === `${key}:open` ? busyLabel : <><DeskIcon name="open" />Open</>}
                 </button>
                 <button onClick={() => onRegister(session)} disabled={busy}
-                  className={`${chaseRegister ? 'bg-amber-600 text-white' : 'bg-pool-700 border border-pool-600 text-pool-200'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
-                  {busyKey === `${key}:register` ? busyLabel : session.registered ? 'Register ✓' : 'Register'}
+                  className={`desk-btn ${chaseRegister ? 'desk-btn--warn' : session.registered ? 'desk-btn--done' : ''}`}>
+                  {busyKey === `${key}:register` ? busyLabel : <><DeskIcon name={session.registered ? 'done' : 'register'} />Register</>}
                 </button>
                 {written ? (
-                  <Link to={`/builder/${session.session_id}?view=pool`}
-                    className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
-                    Poolside
+                  <Link to={`/builder/${session.session_id}?view=pool`} className="desk-btn">
+                    <DeskIcon name="pool" />Poolside
                   </Link>
                 ) : (
                   <Link to={session.session_id ? `/builder/${session.session_id}` : `/builder/new?date=${session.date}&slot=${session.slot_id || ''}`}
-                    className="bg-pool-700 border border-pool-600 rounded-lg py-2.5 text-xs text-center font-semibold text-pool-200">
-                    Write it
+                    className="desk-btn">
+                    <DeskIcon name="write" />Write it
                   </Link>
                 )}
               </div>
