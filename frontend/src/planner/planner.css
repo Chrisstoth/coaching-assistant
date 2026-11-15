@@ -1,6 +1,6 @@
 /* Season Planner styles, scoped to .sp: the planner's layout dressed in the
-   LaneWatch look the rest of the app uses (Oxanium, the pool greys, rounded
-   cards, pill buttons and the family blue). */
+   LaneWatch look the rest of the app uses (Oxanium, the pool greys and the
+   family blue), squared off like Home's Session Desk (see the end of this file). */
 .sp {
   --bg:#121212; --surface:#1e1e1e; --surface-2:#2c2c2c; --ink:#e9ebed; --muted:#aeb3b9; --faint:#7f858c;
   --line:#333333; --line-2:#262626; --accent:#2196f3; --accent-2:#0d2c49; --accent-ink:#ffffff; --accent-soft:#64b5f6; --accent-label:#90caf9;
@@ -146,7 +146,11 @@
 .sp rect.ghostbar{fill:none;stroke:var(--bad);stroke-width:1.2;stroke-dasharray:3 2;pointer-events:none}
 .sp .away-t{font:700 9.5px var(--f-body);fill:var(--bad);pointer-events:none;letter-spacing:.3px}
 .sp .gstrip{opacity:.9} .sp .gstrip-t{font:700 8.5px var(--f-body);fill:#fff;pointer-events:none;letter-spacing:.3px}
-.sp .mini-out{fill:var(--surface-2);opacity:.85;pointer-events:none} .sp .mini.vis .mb{opacity:.55} .sp .mini-g{font:600 9px var(--f-body);fill:var(--muted);pointer-events:none}
+.sp .mini-out{fill:var(--surface-2);opacity:.85;pointer-events:none}
+/* a short-term group: the weeks it is not running are blanked out and cannot be edited */
+.offspan{fill:var(--surface-2);opacity:1}
+.offspan-t{font:600 10px var(--f-data);fill:var(--muted);pointer-events:none}
+.span-edge{pointer-events:none} .sp .mini.vis .mb{opacity:.55} .sp .mini-g{font:600 9px var(--f-body);fill:var(--muted);pointer-events:none}
 .sp .lab-mini.vis{font-style:italic} .sp .lab-mini.vis::before{content:"";position:absolute;left:12px;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--b);opacity:.5}
 .sp .awayb{color:var(--bad);font-weight:700}
 .sp .focus-banner .badge{white-space:normal;max-width:100%}
@@ -315,3 +319,45 @@
 .sp .timeline.slim .lab-grp{padding:0 4px 0 10px}
 .sp .timeline.slim .lab-mini{padding:0 4px 0 12px;font-size:11.5px}
 .sp .timeline.slim .lab-mini.dv::before,.sp .timeline.slim .lab-mini.vis::before{left:5px}
+
+/* ---- Squared off, like Home's Session Desk ----
+   Squared cards on a soft shadow, square buttons and chips, and no thick coloured
+   bars along card edges: a group's colour shows as a small square by its name. */
+.sp .card{border-radius:6px;background:linear-gradient(180deg,rgba(38,38,40,.78),rgba(26,26,28,.72));border:1px solid rgba(255,255,255,.07);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 4px rgba(0,0,0,.35),0 12px 28px -10px rgba(0,0,0,.75)}
+.sp .tool{border-radius:4px;background:rgba(255,255,255,.035);border:1px solid rgba(255,255,255,.07)}
+.sp .stile,.sp .nkey .lv,.sp details.tplcard,.sp .awrow,.sp .goalrow,.sp .bc-macros div,.sp .gtrack,.sp .sheet-prev{border-radius:4px}
+.sp .swc{border-radius:4px}
+.sp select.inp,.sp input.inp,.sp textarea.inp{border-radius:4px;border-color:rgba(255,255,255,.12)}
+.sp #tip{border-radius:4px}
+
+/* buttons and chips: square, firm, no pills */
+.sp .btn{border-radius:5px;background:rgba(255,255,255,.035);border-color:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.sp .btn:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.16)}
+.sp .btn:active{transform:translateY(1px)}
+.sp .btn.sm{border-radius:4px}
+.sp .btn.primary{background:linear-gradient(180deg,#2a95ea,#1873c8);border-color:rgba(144,202,249,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+.sp .btn.ghost,.sp .btn.icon{background:transparent;box-shadow:none}
+.sp .btn.icon{border-radius:4px}
+.sp .btn[data-armed="1"]{background:var(--bad);border-color:var(--bad)}
+.sp .chip,.sp .who,.sp .qstrip .pillq,.sp .namesbtn{border-radius:3px}
+.sp .vbadge{border-radius:3px}
+
+/* no coloured bars along card edges */
+.sp .bcard,.sp .qcard,.sp .scol{border-top:1px solid rgba(255,255,255,.07)}
+.sp .focus-banner{border-left:1px solid rgba(255,255,255,.07)}
+.sp .awrow,.sp .goalrow{border-left:1px solid var(--line)}
+/* ...the group's colour is a small square by its name instead */
+.sp .bc-head b::before,.sp .scol h3::before,.sp .qcard h2::before,.sp .focus-banner>div>b:first-child::before{
+  content:"";display:inline-block;width:9px;height:9px;margin-right:8px;vertical-align:.12em;background:var(--b,var(--qc));border-radius:1px}
+.sp .scol h3{justify-content:flex-start;align-items:center}
+.sp .scol h3 span{margin-left:auto}
+.sp .scol.over{outline-style:solid;outline-width:1px}
+.sp .awrow.t-Holiday,.sp .awrow.t-Away{border-left-color:var(--line)}
+/* timeline names: a small colour square by the group's name, not a bar down the side */
+.sp .lab-lane{padding-left:28px}
+.sp .lab-lane::before{left:12px;top:14px;bottom:auto;width:9px;height:9px;border-radius:1px}
+.sp .lab-mini.dv::before,.sp .lab-mini.vis::before{top:50%;bottom:auto;height:6px;width:6px;margin-top:-3px;border-radius:1px}
+.sp .timeline.slim .lab-lane{padding:24px 4px 8px 4px}
+.sp .timeline.slim .lab-lane::before{left:calc(50% - 4.5px);top:9px}
+.sp .tool .chips label.chip{white-space:normal}

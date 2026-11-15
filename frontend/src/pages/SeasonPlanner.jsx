@@ -46,7 +46,7 @@ export default function SeasonPlanner() {
           <div className="flex gap-2 overflow-x-auto">
             {squads.map(s => (
               <Link key={s} to={`/season/${encodeURIComponent(s)}`} style={{ minHeight: 0 }}
-                className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold border ${s === squad ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-700 text-pool-400'}`}>
+                className={`shrink-0 px-3 py-1.5 rounded text-xs font-semibold border ${s === squad ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-700 text-pool-400'}`}>
                 {s}
               </Link>
             ))}
