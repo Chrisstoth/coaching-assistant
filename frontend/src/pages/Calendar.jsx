@@ -30,6 +30,18 @@ const STATUS_CHIP = {
   unlogged:  { label: SESSION_STATUS_LABELS.unlogged,  cls: 'bg-amber-800 text-amber-200' },
 }
 
+// Where to write a session's plan: its own record if it has one, otherwise a
+// new one for that date and timetable slot.
+export function builderLink(item, dayDate) {
+  if (item.session_id) return `/builder/${item.session_id}`
+  return `/builder/new?date=${dayDate}&slot=${item.slot_id || ''}`
+}
+
+// Still to run, so there's a plan to write (or check) for it.
+function upcoming(item, dayDate, todayIso) {
+  return dayDate >= todayIso && ['planned', 'unlogged'].includes(item.status)
+}
+
 const CANCEL_REASONS = ['Pool unavailable', 'Public holiday', 'Coach unavailable', 'Low attendance', 'Weather', 'Other']
 const POOL_CONFIG_LABELS = { full_pool: 'Full pool', deep_end: 'Deep end', shallow_end: 'Shallow end' }
 
@@ -89,12 +101,21 @@ function SessionActionSheet({ item, dayDate, onClose, onDeleted, onStart, onCanc
           </button>
         )}
 
-        {(item.status === 'planned' || item.status === 'unlogged') && item.slot_id && (
+        {upcoming(item, dayDate, toIso(new Date())) && (item.slot_id || item.session_id) && (
+          <button
+            onClick={() => navigate(builderLink(item, dayDate))}
+            className={`w-full rounded-xl py-3 font-semibold text-sm ${isFuture ? 'bg-accent-600' : 'bg-pool-700 border border-pool-600'}`}
+          >
+            {item.has_plan ? 'Edit the plan' : 'Write it'}
+          </button>
+        )}
+
+        {(item.status === 'planned' || item.status === 'unlogged') && item.slot_id && !isFuture && (
           <button
             onClick={() => { onClose(); onStart() }}
             className="w-full bg-accent-600 rounded-xl py-3 font-semibold text-sm"
           >
-            {isFuture ? 'Start Early' : isPast ? 'Log Session' : 'Start Session'}
+            {isPast ? 'Log Session' : 'Start Session'}
           </button>
         )}
 
@@ -168,11 +189,12 @@ function SessionActionSheet({ item, dayDate, onClose, onDeleted, onStart, onCanc
 
 // ── Session card ──────────────────────────────────────────────────────────────
 
-function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onLongPress }) {
+function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onWrite, onLongPress }) {
   const style = STATUS_STYLES[item.status] || STATUS_STYLES.planned
   const chip  = STATUS_CHIP[item.status]  || STATUS_CHIP.planned
   const isPast   = dayDate < toIso(new Date())
   const isFuture = dayDate > toIso(new Date())
+  const toRun = upcoming(item, dayDate, toIso(new Date())) && (item.slot_id || item.session_id)
 
   const poolConfigLabel = item.pool_config
     ? `${POOL_CONFIG_LABELS[item.pool_config] || item.pool_config}${item.alternate_ends ? ' (alternating)' : ''}`
@@ -201,6 +223,8 @@ function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onLon
           <div className="flex items-center gap-2">
             <p className="font-medium text-sm truncate">{item.label}</p>
             {item.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{item.cycle_code}</span>}
+            {toRun && item.plan_ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded-full px-2 py-0.5 shrink-0">Ready ✓</span>}
+            {toRun && !item.plan_ready && item.has_plan && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded-full px-2 py-0.5 shrink-0">Written</span>}
           </div>
           <p className="text-pool-400 text-xs mt-0.5">
             {item.time}{item.end_time ? `–${item.end_time}` : ''}
@@ -218,6 +242,9 @@ function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onLon
       {item.status === 'cancelled' && item.cancel_reason && (
         <p className="text-pool-500 text-xs italic">{item.cancel_reason}</p>
       )}
+      {toRun && !item.has_plan && (
+        <p className="text-pool-500 text-xs">No plan written yet.</p>
+      )}
       {item.entry_count != null && (
         <p className="text-pool-400 text-xs">{item.entry_count} attended</p>
       )}
@@ -234,21 +261,31 @@ function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onLon
             Continue →
           </button>
         )}
+        {toRun && (
+          <button
+            onClick={onWrite}
+            className={`text-xs rounded-lg px-3 py-1.5 font-medium ${isFuture ? 'bg-accent-600' : 'bg-pool-700 border border-pool-600 text-pool-200'}`}
+          >
+            {item.has_plan ? 'Edit plan' : 'Write it'}
+          </button>
+        )}
         {(item.status === 'planned' || item.status === 'unlogged') && item.slot_id && (
           <>
-            <button
-              onClick={onStart}
-              disabled={starting}
-              className="text-xs bg-accent-600 disabled:opacity-40 rounded-lg px-3 py-1.5 font-medium"
-            >
-              {starting ? '…' : isFuture ? 'Start early' : isPast ? 'Log session' : 'Start'}
-            </button>
+            {!isFuture && (
+              <button
+                onClick={onStart}
+                disabled={starting}
+                className="text-xs bg-accent-600 disabled:opacity-40 rounded-lg px-3 py-1.5 font-medium"
+              >
+                {starting ? '…' : isPast ? 'Log session' : 'Start'}
+              </button>
+            )}
             <button onClick={onCancel} className="text-xs text-red-400 font-medium">
               Cancel
             </button>
           </>
         )}
-        {item.status === 'planned' && !item.slot_id && (
+        {item.status === 'planned' && !item.slot_id && !toRun && (
           <button onClick={onOpen} className="text-xs text-accent-400 font-medium">
             Open →
           </button>
@@ -337,6 +374,12 @@ export default function Calendar() {
 
   const activeDays = days.filter(d => d.items.length > 0)
 
+  // How much of the week ahead is written: handy before going away.
+  const toWrite = days.flatMap(day => day.items
+    .filter(item => upcoming(item, day.date, todayIso) && (item.slot_id || item.session_id)))
+  const writtenCount = toWrite.filter(item => item.has_plan).length
+  const readyCount = toWrite.filter(item => item.plan_ready).length
+
   return (
     <div className="p-4 space-y-4">
       {/* Header */}
@@ -355,6 +398,15 @@ export default function Calendar() {
         <span className="text-sm font-medium text-pool-200">{fmtWeekRange(monday)}</span>
         <button onClick={nextWeek} className="text-pool-300 text-lg px-2">›</button>
       </div>
+
+      {!loading && toWrite.length > 0 && (
+        <p className="text-xs text-pool-400 px-1">
+          {writtenCount === toWrite.length
+            ? `All ${toWrite.length} session${toWrite.length === 1 ? '' : 's'} still to run are written`
+            : `${writtenCount} of ${toWrite.length} session${toWrite.length === 1 ? '' : 's'} still to run written`}
+          {readyCount > 0 ? ` · ${readyCount} ready` : ''}
+        </p>
+      )}
 
       {loading && <p className="text-center text-pool-400 text-sm py-8">Loading…</p>}
 
@@ -383,6 +435,7 @@ export default function Calendar() {
                   onStart={() => handleStart({ ...item, date: day.date })}
                   onCancel={() => openCancel(item, day.date)}
                   onOpen={() => item.session_id && navigate(`/sessions/${item.session_id}`, { state: { from: 'calendar' } })}
+                  onWrite={() => navigate(builderLink(item, day.date))}
                   onLongPress={() => setActiveSheet({ item, dayDate: day.date })}
                 />
               ))}

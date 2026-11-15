@@ -61,11 +61,34 @@ export function weekStartKey(now = new Date()) {
   return localDateKey(mondayFor(now))
 }
 
-export function weeklySessionQueue(calendar, now = new Date()) {
+// How far ahead the desk always looks, so the next couple of days are there
+// to plan even when they fall in next week (Sunday night planning Monday AM).
+export const DESK_LOOKAHEAD_DAYS = 2
+
+// The desk runs from this week's Monday to this Sunday, or to the end of the
+// look-ahead if that reaches into next week.
+export function deskWindow(now = new Date()) {
   const from = weekStartKey(now)
   const sunday = new Date(`${from}T12:00:00`)
   sunday.setDate(sunday.getDate() + 6)
-  const to = localDateKey(sunday)
+  const ahead = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12)
+  ahead.setDate(ahead.getDate() + DESK_LOOKAHEAD_DAYS)
+  const to = localDateKey(ahead > sunday ? ahead : sunday)
+  return { from, to }
+}
+
+// The calendar weeks the desk needs, by Monday: this week, plus next week
+// once the look-ahead reaches into it.
+export function deskWeekStarts(now = new Date()) {
+  const { from, to } = deskWindow(now)
+  const weeks = [from]
+  const last = weekStartKey(new Date(`${to}T12:00:00`))
+  if (last !== from) weeks.push(last)
+  return weeks
+}
+
+export function weeklySessionQueue(calendar, now = new Date()) {
+  const { from, to } = deskWindow(now)
   return calendarSessions(calendar)
     .filter(item => item.date >= from && item.date <= to)
     .filter(item => !['cancelled', 'completed', 'dismissed'].includes(item.status))

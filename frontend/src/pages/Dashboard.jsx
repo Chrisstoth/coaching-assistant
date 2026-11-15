@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import { isSessionNear, localDateKey, sessionEnded, weekStartKey, weeklySessionQueue } from '../sessionProximity'
+import { deskWeekStarts, isSessionNear, localDateKey, sessionEnded, weeklySessionQueue } from '../sessionProximity'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import HelpLink from '../components/HelpLink'
 
@@ -32,7 +32,7 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
       <div className="flex items-end justify-between px-0.5">
         <div>
           <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Session desk</p>
-          <p className="text-[11px] text-pool-500 mt-0.5">Everything still to handle this week</p>
+          <p className="text-[11px] text-pool-500 mt-0.5">Everything still to handle this week and the next couple of days</p>
         </div>
         <span className="text-xs text-pool-500">{sessions.length} remaining</span>
       </div>
@@ -827,18 +827,19 @@ export default function Dashboard() {
   const [reload, setReload] = useState(0)
   const firstLoad = useRef(true)
 
-  // The desk only ever shows the current week, so ask for it by name: a cached
-  // reply from a previous week can then never be served in its place.
-  const weekStart = weekStartKey()
+  // The desk shows this week (plus the start of next week near the weekend),
+  // so ask for each week by name: a cached reply from a previous week can then
+  // never be served in its place.
+  const deskWeeks = deskWeekStarts().join(',')
 
   // A phone left on the home screen keeps this component mounted for days.
   // Re-fetch whenever the coach comes back to it so the week stays current.
   useEffect(() => {
     let lastLoad = Date.now()
-    let lastWeek = weekStartKey()
+    let lastWeek = deskWeekStarts().join(',')
     const refresh = () => {
       if (document.hidden) return
-      const week = weekStartKey()
+      const week = deskWeekStarts().join(',')
       if (week === lastWeek && Date.now() - lastLoad < 60000) return
       lastWeek = week
       lastLoad = Date.now()
@@ -856,10 +857,12 @@ export default function Dashboard() {
     if (firstLoad.current) setLoading(true)
     setCalendarError('')
     Promise.all([
-      api.getCalendar(weekStart).catch(error => {
-        setCalendarError(error.message || 'Could not reach the server.')
-        return []
-      }),
+      Promise.all(deskWeeks.split(',').map(week => api.getCalendar(week)))
+        .then(weeks => weeks.flat())
+        .catch(error => {
+          setCalendarError(error.message || 'Could not reach the server.')
+          return []
+        }),
       api.getCoachingNotes().catch(() => []),
       api.getAIContextStatus().catch(() => null),
       api.getSquadPulse().catch(() => []),
@@ -883,7 +886,7 @@ export default function Dashboard() {
       firstLoad.current = false
       setLoading(false)
     })
-  }, [weekStart, reload])
+  }, [deskWeeks, reload])
 
   const dismissResultsPrompt = async (item) => {
     setBusyResultsMeetId(item.meet_id)

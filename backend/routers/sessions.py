@@ -1509,6 +1509,10 @@ def _session_summary(s: models.Session, planned_ids: Optional[set[int]] = None) 
 def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) -> dict:
     if session:
         status = session.status or "completed"
+        # Written ahead in the Session Builder (which saves as "active"): it
+        # hasn't started, so it's still planned until its day comes.
+        if status == "active" and day_date > today:
+            status = "planned"
     elif day_date > today:
         status = "planned"
     else:

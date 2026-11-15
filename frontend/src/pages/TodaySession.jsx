@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { api } from '../api'
-import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, weekStartKey, weeklySessionQueue } from '../sessionProximity'
+import { calendarSessions, localDateKey, matchingWeeklySessions, proximateSessions, deskWeekStarts, weeklySessionQueue } from '../sessionProximity'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 import SetRows from '../components/SetRows'
@@ -107,7 +107,7 @@ export default function TodaySession() {
     setError('')
     try {
       const [cal, coachingNotes, weeks] = await Promise.all([
-        api.getCalendar(weekStartKey()),
+        Promise.all(deskWeekStarts().map(week => api.getCalendar(week))).then(weeks => weeks.flat()),
         api.getCoachingNotes().catch(() => []),
         api.getMicrocycles().catch(() => []),
       ])

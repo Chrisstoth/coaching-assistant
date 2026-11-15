@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { isSessionNear, localDateKey, matchingWeeklySessions, proximateSessions, weekStartKey, weeklySessionQueue } from '../src/sessionProximity.js'
+import { deskWeekStarts, deskWindow, isSessionNear, localDateKey, matchingWeeklySessions, proximateSessions, weekStartKey, weeklySessionQueue } from '../src/sessionProximity.js'
 
 const mondayMorning = new Date(2026, 7, 24, 9, 30)
 const mondayEvening = new Date(2026, 7, 24, 18, 0)
@@ -52,6 +52,27 @@ assert.equal(weekStartKey(new Date(2026, 8, 13, 6, 0)), '2026-09-07')  // Sunday
 
 const staleWeek = [{ date: '2026-08-31', items: [{ slot_id: 9, time: '06:00', status: 'unlogged' }] }]
 assert.deepEqual(weeklySessionQueue(staleWeek, new Date(2026, 8, 8, 7, 0)), [])
+
+// Sunday night planning Monday AM: the desk looks a couple of days ahead,
+// into next week when it needs to.
+const sundayNight = new Date(2026, 10, 15, 20, 30)
+assert.deepEqual(deskWindow(sundayNight), { from: '2026-11-09', to: '2026-11-17' })
+assert.deepEqual(deskWeekStarts(sundayNight), ['2026-11-09', '2026-11-16'])
+const acrossWeeks = [
+  { date: '2026-11-15', items: [{ slot_id: 1, time: '08:00', status: 'completed' }] },
+  { date: '2026-11-16', items: [{ slot_id: 2, time: '05:30', status: 'unlogged' }] },
+  { date: '2026-11-17', items: [{ slot_id: 3, time: '18:00', status: 'unlogged' }] },
+  { date: '2026-11-18', items: [{ slot_id: 4, time: '18:00', status: 'unlogged' }] },
+]
+assert.deepEqual(weeklySessionQueue(acrossWeeks, sundayNight).map(item => item.slot_id), [2, 3])
+// Saturday reaches Monday; midweek stays inside the week.
+assert.deepEqual(deskWindow(new Date(2026, 10, 14, 9, 0)), { from: '2026-11-09', to: '2026-11-16' })
+assert.deepEqual(deskWeekStarts(new Date(2026, 10, 11, 9, 0)), ['2026-11-09'])
+
+for (const page of ['../src/pages/Dashboard.jsx', '../src/pages/TodaySession.jsx']) {
+  const source = readFileSync(new URL(page, import.meta.url), 'utf8')
+  assert.match(source, /getCalendar\(week/, `${page} must request the calendar by week start`)
+}
 
 // Someone else took it: it stays on the desk until it's over, then there's nothing to chase.
 const covered = [{ date: '2026-08-24', items: [
