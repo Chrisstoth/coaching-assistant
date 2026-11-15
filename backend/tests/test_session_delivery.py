@@ -5,7 +5,7 @@ record; the debrief reads them and proposes records for the coach to confirm.
 """
 import os
 import unittest
-from datetime import date
+from datetime import date, timedelta
 
 os.environ.setdefault("APP_PASSWORD", "test-password")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
@@ -82,6 +82,57 @@ class SessionDeliveryTests(unittest.TestCase):
                       json={"date": FRIDAY.isoformat(), "session_id": sid, "reason": "Pool closed"})
             r = http.put(f"/sessions/{sid}/ready", headers=h, json={"ready": True})
             self.assertEqual(r.status_code, 409)
+
+    def test_the_coach_can_say_someone_else_took_a_session_and_take_it_back(self):
+        http, h = self.client()
+        with http:
+            sid = self.new_session(http, h)
+            self.assertFalse(self.calendar_item(http, h, sid)["taken_by_other"])
+
+            r = http.put(f"/sessions/{sid}/taken-by", headers=h, json={"other": True, "name": "  Sam  "})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertEqual(r.json(), {"id": sid, "taken_by_other": True, "taken_by": "Sam"})
+            item = self.calendar_item(http, h, sid)
+            self.assertTrue(item["taken_by_other"], "Home knows not to chase it")
+            self.assertEqual(item["taken_by"], "Sam")
+            self.assertTrue(http.get(f"/sessions/{sid}", headers=h).json()["taken_by_other"])
+
+            r = http.put(f"/sessions/{sid}/taken-by", headers=h, json={"other": False, "name": "Sam"})
+            self.assertEqual(r.json(), {"id": sid, "taken_by_other": False, "taken_by": None})
+
+    def _finished_session(self, db, day, taken_by_other=False, marks=None):
+        s = models.Session(date=day, squad="Silver 1", title="Covered" if taken_by_other else "Mine",
+                           status="completed", taken_by_other=taken_by_other)
+        db.add(s)
+        db.flush()
+        for name, attended in (marks or {}).items():
+            db.add(models.SessionEntry(session_id=s.id, swimmer_id=self.swimmers[name], attended=attended))
+        return s.id
+
+    def test_no_debrief_is_asked_for_a_session_someone_else_took(self):
+        yesterday = date.today() - timedelta(days=1)
+        with SessionLocal() as db:
+            mine = self._finished_session(db, yesterday, marks={"Amy": True})
+            covered = self._finished_session(db, yesterday, taken_by_other=True, marks={"Amy": True})
+            db.commit()
+        http, h = self.client()
+        with http:
+            asked = {i["session_id"] for i in http.get("/dashboard/sessions-awaiting-debrief", headers=h).json()["items"]}
+        self.assertIn(mine, asked)
+        self.assertNotIn(covered, asked)
+
+    def test_absences_on_a_covered_register_dont_count_against_a_swimmer(self):
+        from backend.services.claude_service import build_attendance_stats
+        with SessionLocal() as db:
+            self._finished_session(db, date(2026, 11, 2), marks={"Amy": True, "Ben": True})
+            self._finished_session(db, date(2026, 11, 3), marks={"Amy": False, "Ben": True})
+            # Sam took this one and only marked who they knew.
+            self._finished_session(db, date(2026, 11, 4), taken_by_other=True, marks={"Amy": False, "Ben": True})
+            db.commit()
+            amy = build_attendance_stats(self.swimmers["Amy"], db)
+            ben = build_attendance_stats(self.swimmers["Ben"], db)
+        self.assertEqual((amy["overall_attended"], amy["overall_total"]), (1, 2), "the covered absence isn't counted")
+        self.assertEqual((ben["overall_attended"], ben["overall_total"]), (3, 3), "being there still counts")
 
     def test_notes_are_about_the_session_a_set_or_swimmers_and_a_retried_save_is_kept_once(self):
         http, h = self.client()

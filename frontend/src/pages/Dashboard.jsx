@@ -47,6 +47,8 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
           const written = Boolean(session.session_id && (groups.some(g => g.sets) || session.coach_intent))
           const ready = Boolean(session.plan_ready)
           const finished = sessionEnded(session)
+          const covered = Boolean(session.taken_by_other)
+          const chaseRegister = finished && !session.registered && !covered
           const busy = busyKey && busyKey.startsWith(`${key}:`)
           return (
             <article key={key} className={`rounded-2xl border p-3.5 ${current ? 'bg-accent-900/30 border-accent-600/50' : ready ? 'bg-pool-800 border-teal-700/60' : 'bg-pool-800 border-pool-700'}`}>
@@ -56,6 +58,7 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
                     {current && <span className="w-2 h-2 rounded-full bg-accent-400" />}
                     <span className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</span>
                     {ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded-full px-2 py-0.5 shrink-0">Ready ✓</span>}
+                    {covered && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded-full px-2 py-0.5 shrink-0 truncate max-w-[9rem]">{session.taken_by ? `Taken by ${session.taken_by}` : 'Someone else'}</span>}
                     {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{session.cycle_code}</span>}
                   </span>
                   <span className="block text-xs text-pool-400 mt-1">
@@ -92,7 +95,7 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
                 <p className="text-xs text-pool-500 mt-3 border-t border-pool-700/70 pt-2.5">No session plan attached yet.</p>
               )}
 
-              {finished && !session.registered && (
+              {chaseRegister && (
                 <p className="text-xs text-amber-200 mt-3">Finished. Take the register while it's fresh: it's what the staff learn from.</p>
               )}
               <div className="grid grid-cols-3 gap-2 mt-3">
@@ -101,7 +104,7 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
                   {busyKey === `${key}:open` ? busyLabel : 'Open'}
                 </button>
                 <button onClick={() => onRegister(session)} disabled={busy}
-                  className={`${finished && !session.registered ? 'bg-amber-600 text-white' : 'bg-pool-700 border border-pool-600 text-pool-200'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
+                  className={`${chaseRegister ? 'bg-amber-600 text-white' : 'bg-pool-700 border border-pool-600 text-pool-200'} disabled:opacity-50 rounded-lg py-2.5 text-xs font-semibold`}>
                   {busyKey === `${key}:register` ? busyLabel : session.registered ? 'Register ✓' : 'Register'}
                 </button>
                 {written ? (

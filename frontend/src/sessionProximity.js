@@ -69,6 +69,8 @@ export function weeklySessionQueue(calendar, now = new Date()) {
   return calendarSessions(calendar)
     .filter(item => item.date >= from && item.date <= to)
     .filter(item => !['cancelled', 'completed', 'dismissed'].includes(item.status))
+    // Someone else took it: once it's over there's nothing left for the coach to do.
+    .filter(item => !(item.taken_by_other && sessionEnded(item, now)))
     .sort((a, b) => {
       if (a.status === 'active' && b.status !== 'active') return -1
       if (b.status === 'active' && a.status !== 'active') return 1

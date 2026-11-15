@@ -232,6 +232,11 @@ class Session(Base):
     # When the coach said the plan was written and ready to run. Editing stays open;
     # this only tells Home (and the coach) that the writing is finished.
     plan_ready_at = Column(DateTime(timezone=True), nullable=True)
+    # Someone else took this session (the coach was away). Home then doesn't
+    # chase its register or debrief, and absences on its register (if one was
+    # taken at all) aren't counted against swimmers. ``taken_by`` is who it was.
+    taken_by_other = Column(Boolean, nullable=False, default=False)
+    taken_by = Column(String, nullable=True)
 
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 

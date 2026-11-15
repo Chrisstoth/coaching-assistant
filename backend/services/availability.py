@@ -26,6 +26,20 @@ REASON_LABELS = {
 }
 
 
+def counts_on_register():
+    """
+    Filter for register rows that count towards attendance.
+
+    When someone else took a session the coach can't vouch for its register, so
+    a swimmer marked absent there (or never marked) isn't held against them.
+    Being marked in still counts: they swam it. Use with a query joined to Session.
+    """
+    return or_(
+        models.SessionEntry.attended.is_(True),
+        models.Session.taken_by_other.isnot(True),
+    )
+
+
 def normalise_reason(reason: str | None) -> str:
     value = (reason or "other").strip().lower().replace(" ", "_").replace("-", "_")
     if value == "taper":

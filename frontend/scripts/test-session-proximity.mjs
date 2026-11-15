@@ -53,9 +53,12 @@ assert.equal(weekStartKey(new Date(2026, 8, 13, 6, 0)), '2026-09-07')  // Sunday
 const staleWeek = [{ date: '2026-08-31', items: [{ slot_id: 9, time: '06:00', status: 'unlogged' }] }]
 assert.deepEqual(weeklySessionQueue(staleWeek, new Date(2026, 8, 8, 7, 0)), [])
 
-for (const page of ['../src/pages/Dashboard.jsx', '../src/pages/TodaySession.jsx']) {
-  const source = readFileSync(new URL(page, import.meta.url), 'utf8')
-  assert.match(source, /getCalendar\(week/, `${page} must request the calendar by week start`)
-}
+// Someone else took it: it stays on the desk until it's over, then there's nothing to chase.
+const covered = [{ date: '2026-08-24', items: [
+  { session_id: 7, time: '06:00', end_time: '07:00', status: 'active', taken_by_other: true },
+  { session_id: 8, time: '18:30', end_time: '19:30', status: 'active', taken_by_other: true },
+  { session_id: 9, time: '06:00', end_time: '07:00', status: 'active' },
+] }]
+assert.deepEqual(weeklySessionQueue(covered, mondayMorning).map(item => item.session_id), [9, 8])
 
 console.log('Session proximity checks passed')

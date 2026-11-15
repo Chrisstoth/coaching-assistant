@@ -78,6 +78,8 @@ def _apply_migrations():
             add_col("sessions", "as_swum", "JSON")
             add_col("sessions", "targets", "JSON")
             add_col("sessions", "plan_ready_at", "DATETIME")
+            add_col("sessions", "taken_by_other", "BOOLEAN DEFAULT 0")
+            add_col("sessions", "taken_by", "VARCHAR")
 
         if "session_entries" in insp.get_table_names():
             add_col("session_entries", "response", "VARCHAR")

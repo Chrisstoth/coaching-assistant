@@ -115,6 +115,8 @@ def sessions_awaiting_debrief(db: DBSession = Depends(get_db)):
         models.Session.date >= window_start,
         models.Session.date <= today,
         models.Session.status == "completed",
+        # Nobody expects a debrief of a session someone else took.
+        models.Session.taken_by_other.isnot(True),
     ).order_by(models.Session.date.desc()).all()
 
     items = []
@@ -266,6 +268,7 @@ def squad_pulse(db: DBSession = Depends(get_db)):
             models.SessionEntry.swimmer_id,
             models.SessionEntry.attended,
             models.Session.date,
+            models.Session.taken_by_other,
         ).join(
             models.Session, models.SessionEntry.session_id == models.Session.id,
         ).filter(
@@ -279,7 +282,9 @@ def squad_pulse(db: DBSession = Depends(get_db)):
     attended_by_swimmer = defaultdict(int)
     recorded_by_swimmer = defaultdict(int)
     excused_by_swimmer = defaultdict(int)
-    for sw_id, attended, session_date in attendance_rows:
+    for sw_id, attended, session_date, taken_by_other in attendance_rows:
+        if not attended and taken_by_other:
+            continue  # someone else took it: their register isn't the coach's to vouch for
         if not attended and is_excused(availability, sw_id, session_date):
             excused_by_swimmer[sw_id] += 1
             continue

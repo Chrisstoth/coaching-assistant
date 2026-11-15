@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session as DBSession
 from backend import models
 from backend.services import groups as group_svc
 from backend.services import pathways as pathway_svc
+from backend.services.availability import counts_on_register
 from backend.services.training_load import HIGH_INTENSITY, VOLUME_KEYS
 
 UNGROUPED = "Not in a group"
@@ -176,6 +177,7 @@ def build_grid(db: DBSession, macro_id: int, today: Optional[date] = None) -> Op
     for entry, session in db.query(models.SessionEntry, models.Session).join(
             models.Session, models.SessionEntry.session_id == models.Session.id).filter(
             models.SessionEntry.swimmer_id.in_(ids), models.SessionEntry.attended.is_not(None),
+            counts_on_register(),
             models.Session.date >= first, models.Session.date <= min(end, today),
             models.Session.status != "cancelled").all():
         cell = cells[entry.swimmer_id][week_of(session.date)]

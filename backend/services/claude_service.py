@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend import models
 from backend.services import groups as group_svc
-from backend.services.availability import availability_ranges, is_excused
+from backend.services.availability import availability_ranges, counts_on_register, is_excused
 from backend.services.event_normalizer import canonicalize_event, event_parts
 from backend.services.profile_status import (
     FOUNDATION_KEY_ALIASES,
@@ -2518,6 +2518,8 @@ def build_recent_sessions_summary(db: DBSession, weeks: int = 3) -> str:
         focus = f" [{s.energy_system_focus}]" if s.energy_system_focus and s.energy_system_focus not in title else ""
         intent = f" — {s.coach_intent[:80]}" if s.coach_intent else ""
         reg_status = f" [register taken — {attendance} attended]" if entry_count > 0 else " [no register yet]"
+        if s.taken_by_other:
+            reg_status += f" [taken by {s.taken_by or 'another coach'} — register may be incomplete]"
         lines.append(f"  {s.date} | {title}{focus}{reg_status}{intent}")
 
     return "\n".join(lines)
@@ -3101,6 +3103,11 @@ def build_session_writing_context(db: DBSession, slot_hint: dict = None) -> str:
                 if register_count
                 else "NO REGISTER SUBMITTED — do not infer attendance"
             )
+            if s.taken_by_other:
+                register_state += (
+                    f" | TAKEN BY {s.taken_by or 'ANOTHER COACH'}, not the head coach — "
+                    "the register may be incomplete; do not read absences from it"
+                )
             lines.append(f"  {s.date} | {s.title or 'Session'}{focus}{intent} | {register_state}")
 
         # Energy system distribution across those sessions
@@ -3379,6 +3386,7 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
         .filter(
             models.SessionEntry.swimmer_id == swimmer_id,
             models.SessionEntry.attended.is_not(None),
+            counts_on_register(),
             models.Session.status != 'cancelled',
         )
         .all()
@@ -3408,6 +3416,7 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
             .filter(
                 models.SessionEntry.swimmer_id == swimmer_id,
                 models.SessionEntry.attended.is_not(None),
+                counts_on_register(),
                 models.Session.date >= monitoring_start,
                 models.Session.date <= today,
                 models.Session.status != 'cancelled',
@@ -3457,6 +3466,7 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
                 models.SessionEntry.swimmer_id == swimmer_id,
                 models.SessionEntry.session_id.in_(session_ids),
                 models.SessionEntry.attended.is_not(None),
+                counts_on_register(),
             )
             .all()
         )
@@ -3484,6 +3494,7 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
             .filter(
                 models.SessionEntry.swimmer_id == swimmer_id,
                 models.SessionEntry.attended.is_not(None),
+                counts_on_register(),
                 models.Session.date >= weekly_start,
                 models.Session.date <= today,
                 models.Session.status != 'cancelled',
@@ -6907,6 +6918,12 @@ def build_session_debrief_context(debrief, db: DBSession) -> str:
             f"Energy focus: {session.energy_system_focus or 'not recorded'}\n"
             + (f"PLAN:\n{plan_summary}" if plan_summary else "No written plan for this session.")
         )
+        if session.taken_by_other:
+            parts.append(
+                f"{session.taken_by or 'Another coach'} took this session, not the coach you're talking to. "
+                "Anything they tell you is second-hand: don't ask what they saw on deck, and "
+                "don't read absences from the register."
+            )
         from backend.services.target_times import session_context_text
         targets = session_context_text(session, db)
         if targets:

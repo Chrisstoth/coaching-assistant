@@ -395,6 +395,7 @@ export const api = {
 
   // Running a session: the plan marked ready, and notes taken poolside
   setSessionReady: (sessionId, ready = true) => request('PUT', `/sessions/${sessionId}/ready`, { ready }),
+  setSessionTakenBy: (sessionId, other, name = null) => request('PUT', `/sessions/${sessionId}/taken-by`, { other, name }),
   getSessionNotes: (sessionId) => request('GET', `/sessions/${sessionId}/notes`),
   addSessionNote: saveSessionNoteWithOfflineFallback,
   editSessionNote: (sessionId, noteId, data) => request('PUT', `/sessions/${sessionId}/notes/${noteId}`, data),

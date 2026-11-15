@@ -16,13 +16,53 @@ function dayLabel(iso) {
   return new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 }
 
-function StatusChip({ cancelled, done, ready, written }) {
+function StatusChip({ cancelled, done, covered, ready, written }) {
   const [text, style] = cancelled ? ['Cancelled', 'text-red-300 bg-red-900/30 border-red-800/50']
     : done ? ['Done', 'text-emerald-300 bg-emerald-900/30 border-emerald-700/50']
+      : covered ? ['Someone else', 'text-pool-300 bg-pool-800 border-pool-600']
       : ready ? ['Ready ✓', 'text-teal-200 bg-teal-900/40 border-teal-600/50']
         : written ? ['Written', 'text-pool-300 bg-pool-800 border-pool-600']
           : ['Not written yet', 'text-amber-300 bg-amber-900/25 border-amber-700/40']
   return <span className={`text-[11px] font-semibold rounded-full border px-2.5 py-1 shrink-0 ${style}`}>{text}</span>
+}
+
+// "I didn't take this session": no register or debrief is expected of the coach,
+// and absences on its register don't count against swimmers.
+function TakenByOther({ sessionId, session, onChange }) {
+  const covered = Boolean(session.taken_by_other)
+  const [name, setName] = useState(session.taken_by || '')
+  const [busy, setBusy] = useState(false)
+  const save = async (other, who) => {
+    setBusy(true)
+    try {
+      const res = await api.setSessionTakenBy(sessionId, other, who || null)
+      onChange(res)
+      setName(res.taken_by || '')
+    } catch (e) {
+      window.alert(e.message || 'Could not change that.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className={`rounded-xl px-3.5 py-2.5 ${covered ? 'bg-pool-800 border border-pool-700' : ''}`}>
+      <label className="flex items-center gap-2.5 text-sm text-pool-300 cursor-pointer">
+        <input type="checkbox" checked={covered} disabled={busy} onChange={e => save(e.target.checked, name.trim())}
+          className="w-4 h-4 accent-teal-500" />
+        I didn't take this session
+      </label>
+      {covered && (
+        <div className="mt-2 space-y-1.5">
+          <input value={name} onChange={e => setName(e.target.value)} disabled={busy}
+            onBlur={() => { if (name.trim() !== (session.taken_by || '')) save(true, name.trim()) }}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+            placeholder="Who took it? (optional)" maxLength={80}
+            className="w-full bg-pool-900 border border-pool-700 rounded-lg px-3 py-2 text-sm text-pool-100 placeholder:text-pool-500" />
+          <p className="text-xs text-pool-500">No register or debrief expected from you. If a register is taken, anyone marked out won't count against them.</p>
+        </div>
+      )}
+    </div>
+  )
 }
 
 // What's in the written session, at a glance: aims, each group's metres and time, the blocks.
@@ -116,9 +156,11 @@ function Hub({ id }) {
   const written = Boolean(summary?.written)
   const ready = Boolean(session.plan_ready)
   const ended = sessionEnded(session)
+  const covered = Boolean(session.taken_by_other)
 
   const marked = register.filter(r => r.attended === true || r.attended === false)
   const taken = marked.length > 0
+  const chaseRegister = ended && !taken && !covered
   const inCount = marked.filter(r => r.attended).length
   const expectedOf = r => Boolean(r.usual_for_slot || r.group_planned != null) && !r.exception_reason
   const expectedCount = register.filter(expectedOf).length
@@ -169,7 +211,7 @@ function Hub({ id }) {
           <h1 className="text-lg font-bold leading-tight">{title}</h1>
           <p className="text-xs text-pool-400 mt-1">{when}</p>
         </div>
-        <StatusChip cancelled={cancelled} done={done} ready={ready} written={written} />
+        <StatusChip cancelled={cancelled} done={done} covered={covered} ready={ready} written={written} />
       </header>
 
       {cancelled && (
@@ -200,17 +242,21 @@ function Hub({ id }) {
           )}
 
           <Link to={`/sessions/${id}/register`} state={{ from: 'session' }}
-            className={`flex items-center justify-between rounded-2xl border px-4 py-3.5 active:opacity-80 ${ended && !taken ? 'bg-amber-900/25 border-amber-600/60' : 'bg-pool-800 border-pool-700'}`}>
+            className={`flex items-center justify-between rounded-2xl border px-4 py-3.5 active:opacity-80 ${chaseRegister ? 'bg-amber-900/25 border-amber-600/60' : 'bg-pool-800 border-pool-700'}`}>
             <span>
               <span className="block text-sm font-semibold text-pool-100">Register</span>
-              <span className={`block text-xs mt-0.5 ${ended && !taken ? 'text-amber-200' : 'text-pool-400'}`}>
+              <span className={`block text-xs mt-0.5 ${chaseRegister ? 'text-amber-200' : 'text-pool-400'}`}>
                 {taken ? `${inCount} in · ${marked.length - inCount} out`
+                  : covered ? 'Not taken · not expected from you'
                   : ended ? "Not taken yet. Take it while it's fresh."
                     : `Not taken yet${expectedCount ? ` · ${expectedCount} expected` : ''}`}
               </span>
             </span>
             <span className="text-xl text-pool-500" aria-hidden="true">›</span>
           </Link>
+
+          <TakenByOther sessionId={id} session={session}
+            onChange={res => setSession(s => ({ ...s, taken_by_other: res.taken_by_other, taken_by: res.taken_by }))} />
 
           {written && (
             <div className="grid grid-cols-2 gap-2">
@@ -242,7 +288,15 @@ function Hub({ id }) {
         </section>
       )}
 
-      {!cancelled && (ended || taken || done) && (
+      {!cancelled && covered && (ended || taken || done) && (
+        <p className="text-xs text-pool-500 px-0.5">
+          No debrief expected.{' '}
+          <Link to={`/debrief?session=${id}`} className="font-semibold text-teal-300">Debrief it anyway</Link>
+          {noteCount ? ` (your ${noteCount} note${noteCount === 1 ? ' is' : 's are'} in)` : ''}
+        </p>
+      )}
+
+      {!cancelled && !covered && (ended || taken || done) && (
         <Link to={`/debrief?session=${id}`}
           className="flex items-center justify-between rounded-2xl border border-teal-700/50 bg-teal-950/35 px-4 py-3.5 active:opacity-80">
           <span>

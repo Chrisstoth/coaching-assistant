@@ -25,7 +25,7 @@ from typing import Optional
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
-from backend.services.availability import availability_ranges, is_excused
+from backend.services.availability import availability_ranges, counts_on_register, is_excused
 
 VOLUME_KEYS = ["aerobic", "threshold", "vo2", "race_pace", "lact_tol", "short_race_pace", "kicking", "sprint"]
 HIGH_INTENSITY = ("vo2", "race_pace", "lact_tol", "short_race_pace", "sprint")
@@ -120,6 +120,7 @@ def load_profiles(db: DBSession, swimmers: list, today: Optional[date] = None,
         .filter(
             models.SessionEntry.swimmer_id.in_(ids),
             models.SessionEntry.attended.is_not(None),
+            counts_on_register(),
             models.Session.date >= window_from,
             models.Session.date <= today,
             models.Session.status != "cancelled",

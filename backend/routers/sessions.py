@@ -1119,6 +1119,11 @@ class PlanReady(BaseModel):
     ready: bool = True
 
 
+class TakenBy(BaseModel):
+    other: bool = True
+    name: Optional[str] = None
+
+
 class SessionNoteIn(BaseModel):
     text: str
     client_id: Optional[str] = None
@@ -1146,6 +1151,22 @@ def set_plan_ready(session_id: int, body: PlanReady, db: DBSession = Depends(get
         session.plan_ready_at = None
     db.commit()
     return {"id": session.id, "plan_ready": bool(session.plan_ready_at), "plan_ready_at": session.plan_ready_at}
+
+
+@router.put("/{session_id}/taken-by")
+def set_taken_by(session_id: int, body: TakenBy, db: DBSession = Depends(get_db)):
+    """
+    Someone else took this session (or the coach takes that back).
+
+    Home then stops asking for its register and debrief, and absences on its
+    register aren't held against swimmers: the coach wasn't there to vouch for it.
+    """
+    session = _get_or_404(session_id, db)
+    session.taken_by_other = bool(body.other)
+    name = (body.name or "").strip()[:80]
+    session.taken_by = (name or None) if body.other else None
+    db.commit()
+    return {"id": session.id, **_taken_by_out(session)}
 
 
 def _get_note_or_404(session_id: int, note_id: int, db: DBSession) -> models.SessionNote:
@@ -1449,6 +1470,13 @@ def _has_plan(s: models.Session, planned_ids: Optional[set[int]] = None) -> bool
     return s.id in planned_ids if planned_ids is not None else bool(s.groups)
 
 
+def _taken_by_out(s: Optional[models.Session]) -> dict:
+    return {
+        "taken_by_other": bool(s and s.taken_by_other),
+        "taken_by": (s.taken_by if s and s.taken_by_other else None),
+    }
+
+
 def _session_summary(s: models.Session, planned_ids: Optional[set[int]] = None) -> dict:
     context = cycle_context(s)
     return {
@@ -1474,6 +1502,7 @@ def _session_summary(s: models.Session, planned_ids: Optional[set[int]] = None) 
         "has_plan": _has_plan(s, planned_ids),
         "plan_ready": bool(s.plan_ready_at),
         "plan_ready_at": s.plan_ready_at,
+        **_taken_by_out(s),
     }
 
 
@@ -1529,6 +1558,7 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
             session.coach_intent or session.coach_notes or session.planned_content or groups
         )),
         "plan_ready": bool(session and session.plan_ready_at),
+        **_taken_by_out(session),
         "course": (session.course if session else None) or (slot.course if slot else None),
         "lanes": slot.lanes if slot else None,
         "has_blocks": slot.has_blocks if slot else None,
