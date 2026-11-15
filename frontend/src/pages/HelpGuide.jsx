@@ -149,6 +149,7 @@ export default function HelpGuide() {
 
       <Section id="swimmers" title="Swimmers and groups">
         <p>Groups, and who is in each, are set on the <b>Squad tab of the Season Planner</b>: add or remove swimmers, change groups, or move someone between groups from a set week. The rest of the app follows it.</p>
+        <p>For a few swimmers who need a different few weeks (say a target meet a weekend later), open their group and choose <b>New short-term group</b>. Set the weeks it runs, tick who's in it, and change only the weeks that differ. Outside those weeks its lane is blank; when it finishes, its swimmers go back to the group they were in, and it's put away. Their own plans keep those weeks.</p>
         <p>Swimmers under <b>Not planned</b> (uni or visiting swimmers who come out of term) stay on the register so you can mark them in, but the staff don't plan for them. A swimmer removed from the planner is kept in the app as inactive, with their history.</p>
         <Link to="/season" className="text-xs text-accent-400">Open the Season Planner ›</Link>
       </Section>

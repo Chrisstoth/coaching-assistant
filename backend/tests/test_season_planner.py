@@ -25,6 +25,15 @@ PLAN = json.loads((DIR / "sample-plan.json").read_text(encoding="utf8"))
 ROSTER = json.loads((DIR / "sample-roster.json").read_text(encoding="utf8"))
 
 
+def with_short_group():
+    """The sample plan with a short-term group (weeks 7-9) and two swimmers who join it."""
+    extra = json.loads((DIR / "short-group.json").read_text(encoding="utf8"))
+    plan, roster = json.loads(json.dumps(PLAN)), json.loads(json.dumps(ROSTER))
+    plan["branches"].append(extra["branch"])
+    roster["swimmers"].extend(extra["swimmers"])
+    return plan, roster
+
+
 class PlannerTwinTests(unittest.TestCase):
     def test_every_week_matches_the_planner(self):
         cases = json.loads((DIR / "cases.json").read_text(encoding="utf8"))
@@ -40,6 +49,24 @@ class PlannerTwinTests(unittest.TestCase):
                     if bid.startswith("sw:"):
                         self.assertEqual(mine["group"], ref["group"])
         self.assertEqual(len(cases), 6, "three groups and the three swimmers on the plan")
+
+    def test_a_short_term_group_matches_the_planner(self):
+        plan, roster = with_short_group()
+        P = SP.Plan(plan, roster)
+        cases = json.loads((DIR / "cases-short-group.json").read_text(encoding="utf8"))
+        for bid, weeks in cases.items():
+            for mine, ref in zip(P.timeline(bid), weeks):
+                with self.subTest(bid=bid, week=ref["i"]):
+                    self.assertEqual((mine["p"], mine["code"]), (ref["p"], ref["code"]))
+                    self.assertTrue(math.isclose(mine["load"], ref["load"], abs_tol=1e-9), (mine["load"], ref["load"]))
+                    if bid.startswith("sw:"):
+                        self.assertEqual(mine["group"], ref["group"])
+        fay, gus = P.swimmers["s5"], P.swimmers["s6"]
+        self.assertEqual([P.group_at(fay, i) for i in range(12)], ["girls"] * 7 + ["late"] * 3 + ["girls"] * 2,
+                         "joins on its first week, back to her group when it finishes")
+        self.assertEqual([P.group_at(gus, i) for i in range(12)], ["core"] * 8 + ["late"] * 2 + ["core"] * 2,
+                         "back to the group he came from, not the one it follows")
+        self.assertEqual((P.span("late"), P.runs_in("late", 6), P.runs_in("late", 9), P.ended("late", 10)), ((7, 9), False, True, True))
 
     def test_intensity_carries_over_by_colour(self):
         self.assertEqual((SP.planner_level(16), SP.to_common(16)), ("Red", 17))     # the planner's Red is the common Red
@@ -131,6 +158,34 @@ class PlannerInTheAppTests(unittest.TestCase):
             with SessionLocal() as db:
                 self.assertTrue(db.query(models.Swimmer).filter_by(name="Cam Test").one().active, "put back, active again")
                 self.assertEqual(db.query(models.Swimmer).filter_by(name="Cam Test").count(), 1, "never duplicated")
+
+    def test_a_short_term_group_runs_for_its_weeks_and_then_is_put_away(self):
+        plan, roster = with_short_group()
+        http = TestClient(app)
+        with http:
+            h = {"Authorization": f"Bearer {http.post('/auth/login', json={'password': 'test-password'}).json()['token']}"}
+            http.put("/season-planner/Test Squad/docs/plan", headers=h, json={"data": plan})
+            http.put("/season-planner/Test Squad/docs/roster", headers=h, json={"data": roster})
+            self.assertNotIn("Girls late meet", [g["name"] for g in http.get("/season-planner/Test Squad/groups", headers=h).json()],
+                             "once finished it can't be picked")
+        with SessionLocal() as db:
+            ids = lambda d: [g["id"] for g in SP.week(db, "Test Squad", d)["groups"]]   # noqa: E731
+            self.assertNotIn("late", ids(date(2026, 10, 5)), "not on Home before it starts")
+            self.assertIn("late", ids(date(2026, 10, 19)))
+            self.assertNotIn("late", ids(date(2026, 11, 2)), "nor after it ends")
+            fay = db.query(models.Swimmer).filter_by(name="Fay Test").one()
+            self.assertEqual(SP.swimmer_week(db, fay, date(2026, 10, 19))["group"]["name"], "Girls late meet")
+            self.assertEqual(SP.swimmer_week(db, fay, date(2026, 11, 2))["group"]["name"], "Girls group", "back in her group")
+            groups = {g.name: g for g in db.query(models.TrainingGroup).filter_by(squad="Test Squad")}
+            self.assertFalse(groups["Girls late meet"].active, "put away in the app once its weeks are over")
+            self.assertTrue(groups["Girls group"].active)
+            runs = [(m.group_id, m.date_from, m.date_to) for m in db.query(models.GroupMembership).filter_by(swimmer_id=fay.id)
+                    .order_by(models.GroupMembership.date_from)]
+            self.assertEqual(runs, [(groups["Girls group"].id, date(2026, 8, 24), date(2026, 10, 11)),
+                                    (groups["Girls late meet"].id, date(2026, 10, 12), date(2026, 11, 1)),
+                                    (groups["Girls group"].id, date(2026, 11, 2), None)], "her group history in the app")
+            with self.assertRaises(ValueError):
+                SP.place_swimmer(db, "Test Squad", fay, "late")
 
     def test_a_swimmer_added_in_the_app_gets_a_group_and_the_plan(self):
         http = TestClient(app)

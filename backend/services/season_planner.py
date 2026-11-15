@@ -89,12 +89,38 @@ class Plan:
         return self.start + timedelta(weeks=i)
 
     # ---- groups through the season
+    def span(self, bid: Optional[str]) -> Optional[tuple]:
+        """A short-term group's first and last week (both included); None for a group that runs all season."""
+        b = self.branches.get(bid) if bid else None
+        s = (b or {}).get("span") or {}
+        if not b or not b.get("parent") or s.get("a") is None or s.get("b") is None:
+            return None
+        return int(s["a"]), int(s["b"])
+
+    def runs_in(self, bid: Optional[str], i: int) -> bool:
+        s = self.span(bid)
+        return not s or s[0] <= i <= s[1]
+
+    def ended(self, bid: str, i: int) -> bool:
+        s = self.span(bid)
+        return bool(s) and i > s[1]
+
     def group_at(self, sw: dict, i: int) -> Optional[str]:
-        g = sw.get("branch")
+        """The planner's groupAt(): outside a short-term group's weeks a swimmer is back in
+        the group they were in before it, or failing that the group it follows."""
+        hist = [sw.get("branch")]
         for m in sw.get("moves") or []:
             if i >= m["w"] and m["to"] in self.branches:
-                g = m["to"]
-        return g
+                hist.append(m["to"])
+        for g in reversed(hist):
+            if g not in self.branches or self.runs_in(g, i):
+                return g
+        g = hist[-1]
+        for _ in range(50):
+            if not g or self.runs_in(g, i):
+                break
+            g = self.branches[g].get("parent")
+        return g if g in self.branches else hist[-1]
 
     def _pers(self, sid: str) -> dict:
         return (self.p.get("personal") or {}).get(str(sid)) or {}
@@ -264,6 +290,8 @@ def week(db: DBSession, squad: str, on: date) -> Optional[dict]:
         return None
     groups = []
     for bid, b in plan.branches.items():
+        if not plan.runs_in(bid, i):          # a short-term group outside its weeks
+            continue
         w = plan.timeline(bid)[i]
         groups.append({"id": bid, "name": b.get("name"), "parent": b.get("parent"), **w, "targets": plan.targets(w["template"])})
     ids = app_ids(db, plan)
@@ -319,6 +347,8 @@ def after_save(db: DBSession, squad: str) -> dict:
             g = models.TrainingGroup(squad=squad, name=b.get("name") or bid, description=b.get("note") or None, active=True)
             db.add(g)
             db.flush()
+        if plan.span(bid):                    # a short-term group is put away once its weeks are over
+            g.active = not plan.ended(bid, plan.week_of(date.today()))
         groups[bid] = g
     ids = app_ids(db, plan)
     moved = 0
@@ -436,7 +466,10 @@ def _planner_event(event: str) -> Optional[str]:
 
 def groups_of(db: DBSession, squad: str) -> list:
     plan = load(db, squad)
-    return [{"id": bid, "name": b.get("name") or bid} for bid, b in plan.branches.items()] if plan else []
+    if not plan:
+        return []
+    now = plan.week_of(date.today())
+    return [{"id": bid, "name": b.get("name") or bid} for bid, b in plan.branches.items() if not plan.ended(bid, now)]
 
 
 def place_swimmer(db: DBSession, squad: str, swimmer: models.Swimmer, group: str, on: Optional[date] = None) -> Optional[dict]:
@@ -451,6 +484,8 @@ def place_swimmer(db: DBSession, squad: str, swimmer: models.Swimmer, group: str
         raise ValueError(f"{squad} has no season plan yet")
     if group and group not in plan.branches:
         raise ValueError("That group isn't in the season plan")
+    if group and plan.ended(group, plan.week_of(on or date.today())):
+        raise ValueError("That short-term group has finished")
     before = doc.data or {}
     data = copy.deepcopy(before)
     roster = data.setdefault("swimmers", [])

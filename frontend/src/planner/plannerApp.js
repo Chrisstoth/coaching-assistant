@@ -126,7 +126,14 @@ function BR(id){if(!id)return null;
 const swBid=sw=>'sw:'+sw.id;
 /* group history: sw.branch is the group at the start of the season; sw.moves = [{w:weekIndex,to:groupId}] change it from that week on */
 const nowWk=()=>Math.max(0,Math.min(NW()-1,weekOf(today())));
-function groupAt(sw,i){let g=sw.branch;(sw.moves||[]).forEach(m=>{if(i>=m.w&&S.plan.branches.some(b=>b.id===m.to))g=m.to;});return g;}
+/* a short-term group runs only for b.span = {a,b} (week indexes, both included). Outside those weeks its swimmers are
+   back in the group they were in before it, or, failing that, the group it follows. */
+const spanOf=b=>b&&b.parent&&b.span&&b.span.a!=null&&b.span.b!=null?b.span:null;
+const runsIn=(b,i)=>{const s=spanOf(b);return !s||(i>=s.a&&i<=s.b);};
+const spanTag=b=>{const s=spanOf(b);return s?` (${fd(wkS(s.a))}–${fd(wkE(s.b))})`:'';};
+function groupAt(sw,i){const hist=[sw.branch];(sw.moves||[]).forEach(m=>{if(i>=m.w&&S.plan.branches.some(b=>b.id===m.to))hist.push(m.to);});
+  for(let k=hist.length-1;k>=0;k--){const b=S.plan.branches.find(x=>x.id===hist[k]);if(!b||runsIn(b,i))return hist[k];}
+  let b=S.plan.branches.find(x=>x.id===hist[hist.length-1]);for(let n=0;b&&!runsIn(b,i)&&n<50;n++)b=S.plan.branches.find(x=>x.id===b.parent);return b?b.id:hist[hist.length-1];}
 const curGroup=sw=>groupAt(sw,nowWk());
 function normMoves(sw){const ms=(sw.moves||[]).filter(m=>m&&m.to&&m.w>0&&m.w<NW()).sort((a,b)=>a.w-b.w);const out=[];let g=sw.branch;
   ms.forEach(m=>{if(out.length&&out[out.length-1].w===m.w)out.pop();const prev=out.length?out[out.length-1].to:sw.branch;if(m.to!==prev)out.push({w:m.w,to:m.to});});sw.moves=out;}
@@ -564,6 +571,10 @@ function drawLane(svg,b,y0,cw){
   if(isX(b.id)){let yy=yC+L.CODE+L.PAD;COMPS.forEach(cp=>{sv('line',{x1:0,x2:n*cw,y1:yy,y2:yy,class:'comp-sep'},g);const top=yy+12,hh=CH-18;
       [.5,1].forEach(v=>{const y=top+hh-v/LMAX*hh;sv('line',{x1:0,x2:n*cw,y1:y,y2:y,class:v===1?'grid g100':'grid'},g);});
       chart(top,hh,cp.k,w=>w.c[cp.k],w=>w.pc?w.pc[cp.k]:0,w=>w.cd[cp.k],()=>'cbar c-'+cp.k);yy+=CH;});}
+  const sp=spanOf(b);if(sp){const H=laneH(b.id)-2,over=nowWk()>sp.b;
+    [[0,sp.a],[sp.b+1,n]].forEach(([a,z],k)=>{if(z<=a)return;const r=sv('rect',{x:a*cw,y:y0+1,width:(z-a)*cw,height:H,class:'offspan'},g);stitle(r,`${b.name} runs ${range(wkS(sp.a),wkE(sp.b))} only`);
+      if((z-a)*cw>60)stext(g,a*cw+8,y0+24,fit(k?(over?'Finished':'Ends '+fd(wkE(sp.b))):'Starts '+fd(wkS(sp.a)),(z-a)*cw-16,6),'offspan-t');});
+    [sp.a,sp.b+1].forEach(i=>{if(i>0&&i<n){const l=sv('rect',{x:i*cw-1.5,y:y0+1,width:3,height:H,rx:1.5,class:'span-edge'},g);l.style.fill=b.color;}});}
   if(b.kind==='swimmer'){const ring=sv('rect',{x:1,y:y0+1,width:n*cw-2,height:laneH(b.id)-2,rx:6,class:'focus-ring'},g);ring.style.stroke=b.color;}
 }
 function shortName(sw){const p=String(sw.name||'').trim().split(/\s+/);const f=p[0]||'';const dup=allSw().some(s=>s!==sw&&String(s.name||'').trim().split(/\s+/)[0]===f);return dup&&p.length>1?f+' '+p[p.length-1][0]:f;}
@@ -581,7 +592,7 @@ function renderLabels(rs){
         <div class="acts"><button class="btn sm" data-cmd="sheet" data-id="${esc(sw.id)}">Plan sheet</button><button class="btn ghost sm" data-cmd="focus" data-id="">Close</button>${xbtn(b.id)}</div>${rowsLbl(b.id)}</div>`;}
     else if(r.t==='lane'){const dr=b.parent?TL(b.id).filter(w=>w.diff).length:0;
       h+=`<div class="lab-lane" style="height:${r.h}px;--b:${esc(b.color)}"><button class="lab-name" data-cmd="selbranch" data-id="${esc(b.id)}">${esc(b.name)}</button>
-        <div class="lab-meta">group · ${members(b.id).length} swimmer${members(b.id).length===1?'':'s'}</div>
+        ${spanOf(b)?(()=>{const sp=spanOf(b),k=allSw().filter(s=>planned(s)&&groupRuns(s).some(r=>r.g===b.id)).length;return `<div class="lab-meta">short-term · ${esc(range(wkS(sp.a),wkE(sp.b)))} · ${k} swimmer${k===1?'':'s'}</div>`;})():`<div class="lab-meta">group · ${members(b.id).length} swimmer${members(b.id).length===1?'':'s'}</div>`}
         <div class="lab-meta">${b.parent?(dr?`${dr} wk differ from ${esc(BR(b.parent).name)}`:`same as ${esc(BR(b.parent).name)}`):'root plan'}</div><div class="acts">${xbtn(b.id)}</div>${rowsLbl(b.id)}</div>`;}
     else if(r.t==='grp'){h+=`<div class="lab-grp" style="height:${r.h}px"><button class="grp-tog" data-cmd="togglegroup" data-id="${esc(r.bid)}" aria-expanded="${r.open}">${r.open?'▾':'▸'} ${r.n}<span class="full"> swimmer${r.n===1?'':'s'}${r.v?` <span class="small muted">+${r.v} part-season</span>`:''}</span></button><span class="small muted full">${r.k?r.k+' personal':''}</span></div>`;}
     else if(r.vis){const rr=groupRuns(r.sw).filter(x=>x.g===r.vis);h+=`<div class="lab-mini vis" style="height:${r.h}px;--b:${esc(BR(r.vis).color)}"><button data-cmd="selperson" data-id="${esc(r.sw.id)}" title="${esc(r.sw.name)}: ${esc(groupStory(r.sw))}">${nameSpans(r.sw)}</button><span>${rr.map(x=>fd(wkS(x.a))+'–'+fd(wkE(x.b))).join(', ')}</span></div>`;}
@@ -742,7 +753,7 @@ function detailPersonal(d,s){
   const cg=curGroup(sw),g=BR(cg),vb=swBid(sw),dr=diffRanges(vb),me=macroEnds(vb),PX=persOf(sw.id),hasOwn=!!(PX.own||PX.ownPrio);
   const cal=[...S.plan.calendar].sort((a,b)=>a.start.localeCompare(b.start)).filter(c=>iso(c.end)>=today()-14*DAY);const first=sw.name.split(' ')[0];
   const gr=groupRuns(sw),mv=sw.moves||[],aw=awayFor(sw.id);const wk=Array.from({length:NW()-1},(_,i)=>i+1);
-  const gsel=(cur,attrs)=>`<select class="inp" style="width:auto" ${attrs}>${lanes().map(b=>opt(b.id,cur,b.name)).join('')}</select>`;
+  const gsel=(cur,attrs)=>`<select class="inp" style="width:auto" ${attrs}>${lanes().map(b=>opt(b.id,cur,b.name+spanTag(b))).join('')}</select>`;
   const other=(lanes().find(b=>b.id!==cg)||g).id;const ML={load:'Volume',aer:'Aerobic',ana:'Ana end',spd:'Ana speed'};
   const hit=a=>{let n=0;if(!a.from)return 0;const A=iso(a.from),Z=iso(a.to||a.from);for(let i=Math.max(0,weekOf(A));i<=Math.min(NW()-1,weekOf(Z));i++)S.plan.sessions.forEach(x=>{const t=wkS(i)+x.day*DAY;if(t>=A&&t<=Z)n++;});return n;};
   d.innerHTML=`<div class="d-head"><div><span class="label">Personal plan · ${esc(gName(g))}${gr.length>1?' this week':''}</span><h2>${esc(sw.name)}</h2>
@@ -783,8 +794,16 @@ function detailPersonal(d,s){
   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Meet</th><th>Dates</th><th>Group</th><th>${esc(first)}</th></tr></thead><tbody>
   ${cal.map(c=>{const gm=BR(groupAt(sw,meetWk(c)))||g;const gp=(c.prio||{})[gm.id]||'—',own=ownPrio(sw,c);return `<tr><td>${esc(c.name)}</td><td style="white-space:nowrap">${range(iso(c.start),iso(c.end))}</td><td>${esc(gp)} <span class="small muted">${esc(gm.name)}</span></td><td><select class="inp" data-k="pprio" data-id="${esc(sw.id)}" data-c="${esc(c.id)}"${own&&own!==gp?' style="border-color:'+esc(gm.color)+';font-weight:600"':''}>${opt('',own,'As group ('+gp+')')}${['A','B','C','—'].map(p=>opt(p,own,p)).join('')}</select></td></tr>`;}).join('')}</tbody></table></div>`;
 }
+/* the week a group's "who's in" ticks act from: this week, or the first week of a short-term group not started yet */
+function memberWk(b){const sp=spanOf(b);return sp&&nowWk()<sp.a?sp.a:nowWk();}
+function spanTool(b){const sp=spanOf(b);
+  if(!sp)return `<div class="tool"><b>Short-term group</b><span class="small muted">Run ${esc(b.name)} for a few weeks only, e.g. for a later target meet. When it finishes its swimmers go back to the group they were in.</span><div class="row"><button class="btn sm edit" data-cmd="spanon" data-id="${esc(b.id)}">Give it start and end weeks</button></div></div>`;
+  const wk=Array.from({length:NW()},(_,i)=>i);const sel=(f,v)=>`<select class="inp edit" data-k="brspan" data-id="${esc(b.id)}" data-f="${f}" style="width:auto">${wk.map(i=>opt(i,v,f==='a'?'w/c '+fd(wkS(i)):'w/e '+fd(wkE(i)))).join('')}</select>`;
+  return `<div class="tool"><b>Short-term group</b><div class="row"><span class="small muted">Runs from</span>${sel('a',sp.a)}<span class="small muted">until</span>${sel('b',sp.b)}</div>
+    <span class="small muted">${sp.b-sp.a+1} wk. ${nowWk()>sp.b?'Finished: ':''}Outside these weeks the lane is blank and its swimmers are in the group they were in before (${esc(BR(b.parent).name)} unless they came from elsewhere).</span>
+    <div class="row"><button class="btn sm edit" data-cmd="spanoff" data-id="${esc(b.id)}">Run it all season instead</button></div></div>`;}
 function detailBranch(d,s){
-  const b=BR(s.bid);if(!b){S.sel=null;return renderDetail();}const dr=diffRanges(b.id);const me=macroEnds(b.id);const kids=S.plan.branches.filter(x=>x.parent===b.id);
+  const b=BR(s.bid);if(!b){S.sel=null;return renderDetail();}const dr=diffRanges(b.id);const me=macroEnds(b.id);const kids=S.plan.branches.filter(x=>x.parent===b.id);const sp=spanOf(b),refW=memberWk(b),over=!!(sp&&nowWk()>sp.b);
   const desc=new Set();(function walk(id){S.plan.branches.filter(x=>x.parent===id).forEach(x=>{desc.add(x.id);walk(x.id);});})(b.id);
   const all=S.roster?S.roster.swimmers.filter(planned).sort((a,c)=>a.name.localeCompare(c.name)):[];
   d.innerHTML=`<div class="d-head"><div><span class="label">Group${b.parent?' · follows '+esc(BR(b.parent).name):' · root plan'}</span><h2 style="color:${esc(b.color)}">${esc(b.name)}</h2>
@@ -795,11 +814,12 @@ function detailBranch(d,s){
     ${b.parent?`<label>Follows<select class="inp" data-k="brparent" data-id="${esc(b.id)}">${lanes().filter(x=>x.id!==b.id&&!desc.has(x.id)).map(x=>opt(x.id,b.parent,x.name)).join('')}</select></label>`:''}
     <label class="wide">Who and why<textarea class="inp" data-k="br" data-id="${esc(b.id)}" data-f="note">${esc(b.note||'')}</textarea></label></div>
   <div class="tools">
-    <div class="tool"><b>Who's in ${esc(b.name)} this week (${members(b.id).length})</b><span class="small muted">Tick to move a swimmer in from w/c ${fd(wkS(nowWk()))}; untick to move them back to ${b.parent?esc(BR(b.parent).name):'the first group'}. Weeks before stay as they were. To plan a move for later, open the swimmer.</span>
-      <div class="chips">${all.map(m=>{const cur=curGroup(m)===b.id;const part=!cur&&groupRuns(m).some(r=>r.g===b.id);return `<label class="chip" style="cursor:pointer${cur?';font-weight:600;border-color:'+esc(b.color):''}"><input type="checkbox" data-k="brmember" data-bid="${esc(b.id)}" data-id="${esc(m.id)}"${cur?' checked':''}> ${esc(m.name)}${!cur?` <span class="small muted">· ${esc((BR(curGroup(m))||{}).name||'')}${part?', here '+groupRuns(m).filter(r=>r.g===b.id).map(r=>fd(wkS(r.a))+'–'+fd(wkE(r.b))).join(', '):''}</span>`:''}</label>`;}).join('')}</div></div>
+    <div class="tool"><b>${over?`Who was in ${esc(b.name)}`:`Who's in ${esc(b.name)} ${refW>nowWk()?'when it starts':'this week'} (${all.filter(m=>groupAt(m,refW)===b.id).length})`}</b><span class="small muted">${over?`It finished w/e ${fd(wkE(sp.b))} and its swimmers went back to their groups. Change its weeks to run it again.`:sp?`Tick to put a swimmer in from w/c ${fd(wkS(refW))}; untick to take them out. After ${fd(wkE(sp.b))} they go back to the group they were in.`:`Tick to move a swimmer in from w/c ${fd(wkS(nowWk()))}; untick to move them back to ${b.parent?esc(BR(b.parent).name):'the first group'}. Weeks before stay as they were. To plan a move for later, open the swimmer.`}</span>
+      <div class="chips">${(over?all.filter(m=>groupRuns(m).some(r=>r.g===b.id)):all).map(m=>{const cur=groupAt(m,refW)===b.id;const part=!cur&&groupRuns(m).some(r=>r.g===b.id);return `<label class="chip" style="cursor:pointer${cur?';font-weight:600;border-color:'+esc(b.color):''}"><input type="checkbox" data-k="brmember" data-bid="${esc(b.id)}" data-id="${esc(m.id)}"${cur||over?' checked':''}${over?' disabled':''}> ${esc(m.name)}${!cur?` <span class="small muted">· ${esc((BR(curGroup(m))||{}).name||'')}${part?', here '+groupRuns(m).filter(r=>r.g===b.id).map(r=>fd(wkS(r.a))+'–'+fd(wkE(r.b))).join(', '):''}</span>`:''}</label>`;}).join('')}</div></div>
+    ${b.parent?spanTool(b):''}
     ${b.parent?copyTool(b.id):''}
     ${b.parent?`<div class="tool"><b>Where it differs from ${esc(BR(b.parent).name)}</b>${dr.length?dr.map(r=>`<div class="row"><span>${range(wkS(r.a),wkE(r.b))} · ${r.b-r.a+1} wk</span><button class="btn sm edit" data-cmd="resetrange" data-bid="${esc(b.id)}" data-a="${r.a}" data-b="${r.b}">Reset</button></div>`).join(''):'<span class="small muted">Identical to its parent. Drag a boundary or the bars in this lane to fork it.</span>'}</div>`:''}
-    <div class="tool"><b>Group actions</b><div class="row"><button class="btn sm edit" data-cmd="addbranch" data-id="${esc(b.id)}">New group that follows ${esc(b.name)}</button></div>
+    <div class="tool"><b>Group actions</b><div class="row"><button class="btn sm edit" data-cmd="addbranch" data-id="${esc(b.id)}">New group that follows ${esc(b.name)}</button><button class="btn sm edit" data-cmd="addshort" data-id="${esc(b.id)}" title="A group that follows ${esc(b.name)} for a few weeks only">New short-term group</button></div>
       ${b.parent?`<div class="row"><button class="btn sm danger edit" data-cmd="delbranch" data-id="${esc(b.id)}" ${kids.length?'disabled title="Delete the groups that follow it first"':''}>Delete group</button></div><span class="small muted">Deleting moves its swimmers to ${esc(BR(b.parent).name)}; their personal changes stay.</span>`:''}</div>
   </div>`;
 }
@@ -1186,6 +1206,9 @@ document.addEventListener('click',e=>{
   case 'merge':commit(()=>{const arr=TL(ds.bid);const rr=runs(arr,w=>w.p);const ri=rr.findIndex(x=>x.start===+ds.start);const r=rr[ri],o=rr[ri+(+ds.d)];for(let i=r.start;i<=r.end;i++)setWeek(ds.bid,i,Object.assign(rawC(arr[i].raw),{p:o.k,load:arr[i].plan}));S.sel={type:'run',bid:ds.bid,start:Math.min(r.start,o.start)};});break;
   case 'resetrange':commit(()=>{for(let i=+ds.a;i<=+ds.b;i++)clearWeek(ds.bid,i);});break;
   case 'forkphase':commit(()=>{const r=runAt(ds.bid,+ds.start);const id=uid('p');const b=BR(ds.bid);S.plan.phases[id]=Object.assign(clone(S.plan.phases[r.k]),{name:S.plan.phases[r.k].name+' · '+b.name});const arr=TL(ds.bid);for(let i=r.start;i<=r.end;i++)setWeek(ds.bid,i,Object.assign(rawC(arr[i].raw),{p:id,load:arr[i].plan}));});break;
+  case 'addshort':commit(()=>{const id=uid('b');const used=S.plan.branches.map(b=>b.color);const a=nowWk();S.plan.branches.push({id,name:'Short-term group',parent:ds.id,color:PAL.find(p=>!used.includes(p))||PAL[0],note:'',weeks:{},span:{a,b:Math.min(NW()-1,a+2)}});S.sel={type:'branch',bid:id};});break;
+  case 'spanon':commit(()=>{const a=nowWk();BR(ds.id).span={a,b:Math.min(NW()-1,a+2)};});break;
+  case 'spanoff':commit(()=>{delete BR(ds.id).span;});break;
   case 'addbranch':commit(()=>{const id=uid('b');const used=S.plan.branches.map(b=>b.color);S.plan.branches.push({id,name:'New group',parent:ds.id,color:PAL.find(p=>!used.includes(p))||PAL[0],note:'',weeks:{}});S.sel={type:'branch',bid:id};});break;
   case 'delbranch':arm(t,()=>commit(()=>{const b=BR(ds.id);Object.values(S.plan.personal||{}).forEach(P=>{['own','ownPrio','ownSess'].forEach(f=>{const o=P[f];if(!o||!o[b.id])return;o[b.parent]=Object.assign({},o[b.id],o[b.parent]||{});delete o[b.id];});});S.roster&&S.roster.swimmers.forEach(s=>{if(s.branch===b.id)s.branch=b.parent;(s.moves||[]).forEach(m=>{if(m.to===b.id)m.to=b.parent;});normMoves(s);});S.plan.calendar.forEach(c=>{if(c.prio)delete c.prio[b.id];});S.plan.branches=S.plan.branches.filter(x=>x.id!==b.id);S.sel=null;if(focusBranch()===b.id)S.focus='';},'both'));break;
   case 'addmeet':commit(()=>{const id=uid('c');const d=toISO(today());const prio={};lanes().forEach(b=>prio[b.id]='C');S.plan.calendar.push({id,start:d,end:d,name:'New meet',short:'New meet',venue:'',course:'25m',level:'',prio,note:''});});break;
@@ -1243,7 +1266,12 @@ document.addEventListener('change',e=>{
   if(k==='campatt')return commit(()=>{const e=S.plan.events.find(x=>x.id===ds.ev);e.camp=e.camp||{};const a=new Set(e.camp.attendees||[]);if(t.checked)a.add(ds.id);else a.delete(ds.id);e.camp.attendees=[...a];});
   if(k==='campf')return commit(()=>{const e=S.plan.events.find(x=>x.id===ds.ev);e.camp=e.camp||{};const v=t.value.trim();if(ds.f==='km'){if(v==='')delete e.camp.load;else e.camp.load=r2((+v*1000)/peakVol());}else{if(v==='')delete e.camp[ds.f];else e.camp[ds.f]=Math.max(0,+v)/100;}});
   if(k==='campsch')return commit(()=>{const e=S.plan.events.find(x=>x.id===ds.ev);e.camp.schedule[+ds.n][ds.f]=t.value;});
-  if(k==='brmember')return commit(()=>{const sw=S.roster.swimmers.find(s=>s.id===ds.id);const b=BR(ds.bid);if(t.checked)moveNow(sw,b.id);else if(curGroup(sw)===b.id)moveNow(sw,b.parent||rootId());},'roster');
+  if(k==='brmember')return commit(()=>{const sw=S.roster.swimmers.find(s=>s.id===ds.id);const b=BR(ds.bid);
+    if(!spanOf(b)){if(t.checked)moveNow(sw,b.id);else if(curGroup(sw)===b.id)moveNow(sw,b.parent||rootId());return;}
+    const w=memberWk(b);if(t.checked){if(!planned(sw)||w<=0){sw.branch=b.id;sw.moves=[];}else assignFrom(sw,b.id,w);return;}
+    if(groupAt(sw,w)!==b.id)return;const m=[...(sw.moves||[])].reverse().find(x=>x.to===b.id&&x.w<=w);
+    if(m&&m.w===w){sw.moves=sw.moves.filter(x=>x!==m);normMoves(sw);}else assignFrom(sw,m&&m.w>0?groupAt(sw,m.w-1):b.parent,w);},'roster');
+  if(k==='brspan')return commit(()=>{const b=BR(ds.id);const v=+t.value;b.span=Object.assign({},b.span);b.span[ds.f]=v;if(b.span.a>b.span.b){if(ds.f==='a')b.span.b=v;else b.span.a=v;}});
   if(k==='brparent')return commit(()=>{BR(ds.id).parent=t.value;});
   if(k==='pprio')return commit(()=>{S.plan.personal=S.plan.personal||{};const P=S.plan.personal[ds.id]=S.plan.personal[ds.id]||{};const sw=S.roster.swimmers.find(x=>x.id===ds.id);const c=S.plan.calendar.find(x=>x.id===ds.c);const g=groupAt(sw,meetWk(c));P.ownPrio=P.ownPrio||{};const o=P.ownPrio[g]=P.ownPrio[g]||{};if(t.value)o[ds.c]=t.value;else delete o[ds.c];});
   if(k==='swtime'){const v=pt(t.value);if(Number.isNaN(v)){t.style.borderColor='var(--bad)';t.title='Use 26.31 or 1:02.45';return;}return commit(()=>{const sw=S.roster.swimmers.find(s=>s.id===ds.id);sw.events[+ds.n][ds.f]=v;},'roster');}

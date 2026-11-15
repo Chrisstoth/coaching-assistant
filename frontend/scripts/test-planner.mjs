@@ -5,11 +5,18 @@ import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { JSDOM } from 'jsdom'
-import { buildCases } from './build-planner-cases.mjs'
+import { buildCases, withShortGroup } from './build-planner-cases.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const dir = join(here, '..', '..', 'shared', 'planner')
 assert.deepEqual(JSON.parse(JSON.stringify(buildCases())), JSON.parse(readFileSync(join(dir, 'cases.json'), 'utf8')), 'planner week logic changed')
+// A short-term group runs weeks 7-9 only; afterwards its swimmers are back where they came from.
+const short = JSON.parse(JSON.stringify(buildCases(true)))
+assert.deepEqual(short, JSON.parse(readFileSync(join(dir, 'cases-short-group.json'), 'utf8')), 'short-term group logic changed')
+const groups = id => short[id].map(w => w.group).join(' ')
+assert.equal(groups('sw:s5'), 'girls girls girls girls girls girls girls late late late girls girls', 'moved in before it starts: joins on its first week, back to Girls after')
+assert.equal(groups('sw:s6'), 'core core core core core core core core late late core core', 'back to the group he came from, not the one it follows')
+assert.equal(short['sw:s5'][10].load, short.girls[10].load, "after it ends the swimmer has their own group's plan")
 
 const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { url: 'http://localhost/', pretendToBeVisual: true })
 for (const k of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'KeyboardEvent', 'MouseEvent', 'Event', 'getComputedStyle', 'localStorage', 'SVGElement']) {
@@ -19,6 +26,8 @@ dom.window.scrollTo = () => {}
 globalThis.requestAnimationFrame = fn => setTimeout(fn, 0)
 globalThis.ResizeObserver = class { observe(){} disconnect(){} unobserve(){} }
 dom.window.ResizeObserver = globalThis.ResizeObserver
+globalThis.matchMedia = dom.window.matchMedia = () => ({ matches: false, addEventListener(){}, removeEventListener(){}, addListener(){}, removeListener(){} })
+dom.window.HTMLElement.prototype.scrollIntoView = function () {}
 
 const { mountPlanner } = await import('../src/planner/plannerApp.js')
 const plan = JSON.parse(readFileSync(join(dir, 'sample-plan.json'), 'utf8'))
@@ -50,5 +59,23 @@ const src = readFileSync(new URL('../src/planner/plannerApp.js', import.meta.url
 assert.match(src, /if\(e\.pointerType==='mouse'\)\{if\(tapAct\(t\)\)return;/, 'only a mouse opens things on press; a finger opens them on a tap')
 app.destroy()
 assert.equal(root.innerHTML, '')
+
+// A short-term group: its lane says when it runs, is blank outside those weeks, and its panel lets the coach set them.
+const sp = withShortGroup(JSON.parse(JSON.stringify(plan)), JSON.parse(JSON.stringify(roster)))
+sp.roster.qts.nats = {}   // the branch panel reads the Nationals times
+const shortStore = { ...store, getDocs: async () => ({ plan: { data: sp.plan }, roster: { data: sp.roster } }) }
+app = mountPlanner(root, { store: shortStore, squad: 'Test Squad', mark: 'BPSC' })
+await new Promise(r => setTimeout(r, 50))
+assert.match(root.textContent, /short-term · 12 Oct – 1 Nov/, 'the lane label gives its weeks')
+assert.ok(root.querySelectorAll('#tl .offspan').length >= 1, 'weeks outside it are blanked')
+;[...root.querySelectorAll('[data-cmd="selbranch"]')].find(b => b.textContent === 'Girls late meet').click()
+await new Promise(r => setTimeout(r, 10))
+const detail = root.querySelector('#detail').textContent
+assert.match(detail, /Short-term group/)
+assert.match(detail, /Runs from/)
+assert.match(detail, /Who was in Girls late meet/, 'once its weeks are over it is a record of who was in it')
+assert.ok([...root.querySelectorAll('#detail [data-k="brmember"]')].every(c => c.disabled), 'a finished group cannot take swimmers')
+assert.ok(root.querySelector('#detail [data-cmd="addshort"]'), 'a short-term group can be made in one tap')
+app.destroy()
 console.log('Season planner checks passed')
 process.exit(0)

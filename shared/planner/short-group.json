@@ -1,0 +1,9 @@
+{
+ "_about": "Added to the sample plan for the short-term group checks: a group that runs weeks 7-9 only, a girl who joins it from her group, and a boy who joins it from Regionals. Both go back to where they came from after week 9.",
+ "branch": {"id": "late", "name": "Girls late meet", "parent": "girls", "color": "#3A7D44", "note": "Target meet a weekend later", "span": {"a": 7, "b": 9},
+            "weeks": {"8": {"p": "bld", "load": 0.85}, "9": {"p": "bld", "load": 0.7}, "10": {"p": "tap", "load": 0.3}}},
+ "swimmers": [
+  {"id": "s5", "name": "Fay Test", "g": "F", "dob": "2012-03-01", "branch": "girls", "moves": [{"w": 6, "to": "late"}], "camp": "", "note": "", "tag": "Test", "events": []},
+  {"id": "s6", "name": "Gus Test", "g": "M", "dob": "2011-05-01", "branch": "core", "moves": [{"w": 8, "to": "late"}], "camp": "", "note": "", "tag": "Test", "events": []}
+ ]
+}

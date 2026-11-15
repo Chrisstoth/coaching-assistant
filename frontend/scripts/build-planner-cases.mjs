@@ -18,10 +18,19 @@ export function plannerModel(){
   return new Function('document', body + '\nreturn { S, TL, inval };')({ createElementNS(){ return {} } })
 }
 
-export function buildCases(){
+// The sample plan with a short-term group added (shared/planner/short-group.json).
+export function withShortGroup(plan, roster){
+  const extra = JSON.parse(readFileSync(join(dir, 'short-group.json'), 'utf8'))
+  plan.branches.push(extra.branch)
+  roster.swimmers.push(...extra.swimmers)
+  return { plan, roster }
+}
+
+export function buildCases(short = false){
   const M = plannerModel()
   M.S.plan = JSON.parse(readFileSync(join(dir, 'sample-plan.json'), 'utf8'))
   M.S.roster = JSON.parse(readFileSync(join(dir, 'sample-roster.json'), 'utf8'))
+  if (short) withShortGroup(M.S.plan, M.S.roster)
   M.inval()
   const out = {}
   const ids = M.S.plan.branches.map(b => b.id).concat(M.S.roster.swimmers.filter(s => s.branch).map(s => 'sw:' + s.id))
@@ -33,4 +42,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const cases = buildCases()
   writeFileSync(join(dir, 'cases.json'), JSON.stringify(cases, null, 1) + '\n')
   console.log(`Wrote ${Object.keys(cases).length} planner timelines to shared/planner/cases.json`)
+  const short = buildCases(true)
+  writeFileSync(join(dir, 'cases-short-group.json'), JSON.stringify(short, null, 1) + '\n')
+  console.log(`Wrote ${Object.keys(short).length} planner timelines to shared/planner/cases-short-group.json`)
 }
