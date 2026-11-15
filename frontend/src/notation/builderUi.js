@@ -127,9 +127,11 @@ function talkHTML(n){
     `<input class="cell num int talkt" id="f-${n.id}-talk" data-f="talk" value="${esc(fmtTime(n.talk))}" placeholder="m:ss" inputmode="decimal" aria-label="How long the talk takes" title="How long you’ll talk before the set: 2, 2:00, 90s or 2 min" autocomplete="off">` +
     `<span class="tgap"></span><span class="tgap"></span>` +
     `<span class="tot" data-tot="${n.id}">${totHTML(nodeStats(n), n)}</span>` +
-    `<button class="kebab" type="button" data-act="menu" data-for="${n.id}" aria-label="Talk options" aria-haspopup="menu">${ICON.dots}</button>` +
+    `<button class="kebab toff" type="button" data-act="del-talk" aria-label="Remove this talk" title="Remove this talk">×</button>` +
     `</div>`;
 }
+// the gap before a set: one click turns a talk on there, and the cursor goes to its time
+const talkSlotHTML = n => `<div class="tadd"><button type="button" data-act="add-talk" data-before="${n.id}" aria-label="Add talk time before this ${n.t === 'round' ? 'round' : 'set'}" title="Time to explain the next set">${ICON.talk}<span>+ Talk</span></button></div>`;
 function blockTotHTML(b, st, starts){
   const a = avgEff(st); const s = S(); let clock = '';
   if (starts && starts.length && s.start) {
@@ -241,7 +243,9 @@ function roundHTML(n){
       quickHTML(n.id, 'Add to this round · backspace on empty to step out') +
     `</div></div></div>`;
 }
-const itemsHTML = items => (items || []).map(n => n.t === 'round' ? roundHTML(n) : lineHTML(n)).join('');
+// a "+ Talk" slot sits before each set or round, unless a talk is already there
+const itemsHTML = items => (items || []).map((n, i, arr) =>
+  (isTalkLine(n) || isTalkLine(arr[i - 1]) ? '' : talkSlotHTML(n)) + (n.t === 'round' ? roundHTML(n) : lineHTML(n))).join('');
 function blockHTML(b, starts){
   if (b.kind === 'notes') {
     const rows = Math.max(3, String(b.text || '').split('\n').length + 1);
@@ -311,7 +315,7 @@ function renderBlocks(focus){
   initSortables();
   if (keep) {
     const el = document.getElementById(keep.id);
-    if (el) { el.focus({ preventScroll: !!keep.noScroll }); if (keep.pos != null && el.setSelectionRange && el.type !== 'number') { try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) {} } }
+    if (el) { el.focus({ preventScroll: !!keep.noScroll }); if (keep.select && el.select) el.select(); else if (keep.pos != null && el.setSelectionRange && el.type !== 'number') { try { el.setSelectionRange(keep.pos, keep.pos); } catch (e) {} } }
   }
   renderSummary();
   renderSelbar();
@@ -574,12 +578,11 @@ function openMenu(btn, id){
     html = (isN ? '' : `<button data-op="btext">${textMode.has(id) ? 'Back to rows' : 'Edit as text'}</button>`) +
       `<button data-op="up" ${vi <= 0 ? 'disabled' : ''}>Move ${what} up</button>` +
       `<button data-op="down" ${vi === vis.length - 1 ? 'disabled' : ''}>Move ${what} down</button>` +
-      `<button data-op="dup">Duplicate ${what}</button>` + (isN ? '' : `<button data-op="talk-start">Talk at the start</button><button data-op="notes-after">Add notes below</button>`) + `<hr>` + fork + copies + `<button data-op="del" class="danger">Delete ${what}</button>`;
+      `<button data-op="dup">Duplicate ${what}</button>` + (isN ? '' : `<button data-op="notes-after">Add notes below</button>`) + `<hr>` + fork + copies + `<button data-op="del" class="danger">Delete ${what}</button>`;
   } else {
     const prev = l.arr[l.index - 1];
     const canIn = prev && prev.t === 'round', canOut = l.parent && l.parent.t === 'round';
-    html = (isTalkLine(l.node) ? '' : `<button data-op="talk-before">Talk before this ${l.node.t === 'round' ? 'round' : 'set'}</button><hr>`) +
-      `<button data-op="wrap" data-times="2">Wrap in 2× round</button><button data-op="wrap" data-times="3">Wrap in 3× round</button>` +
+    html = `<button data-op="wrap" data-times="2">Wrap in 2× round</button><button data-op="wrap" data-times="3">Wrap in 3× round</button>` +
       `<button data-op="indent" ${canIn ? '' : 'disabled'}>Into round above <kbd>${mod} ]</kbd></button>` +
       `<button data-op="outdent" ${canOut ? '' : 'disabled'}>Out of this round <kbd>${mod} [</kbd></button>` +
       (l.node.t === 'round' ? `<button data-op="unwrap">Remove round, keep sets</button>` : '') + `<hr>` +
@@ -613,13 +616,11 @@ pop.addEventListener('click', e => {
   if (op === 'copyto') return opCopyTo(id, b.dataset.gid);
   if (op === 'notes-after') { pushUndo(); const nb = newNotes(curGroup ? [curGroup] : (l.node.groups || [])); l.arr.splice(l.index + 1, 0, nb); renderBlocks({ id: `f-${nb.id}-text` }); markDirty(); return; }
   if (op === 'fork') return opFork(id, curGroup);
-  if (op === 'talk-before') return addTalk(l.arr, l.index);
-  if (op === 'talk-start') return addTalk(l.node.items, 0);
 });
-// a talk goes in just before the set it explains; the note gets the cursor
+// a talk goes in just before the set it explains, with its time picked ready to type over
 function addTalk(arr, index){
   pushUndo(); const n = newLine({ talk: TALK_DEFAULT }); arr.splice(index, 0, n);
-  renderBlocks({ id: `f-${n.id}-desc` }); markDirty();
+  renderBlocks({ id: `f-${n.id}-talk`, select: true }); markDirty();
 }
 pop.addEventListener('change', e => {
   const t = e.target; if (!t.dataset.gtoggle && t.dataset.gtoggle !== '') return;
@@ -891,6 +892,8 @@ document.addEventListener('click', e => {
   const b = e.target.closest('[data-act]'); if (!b || !S()) return;
   const act = b.dataset.act;
   if (act === 'sel') { if (Date.now() - lastDragEnd < 300) return; const host = b.closest('.node[data-id]'); if (host) toggleSel(host.dataset.id, e.shiftKey); return; }
+  if (act === 'add-talk') { const l = locate(b.dataset.before); if (l) addTalk(l.arr, l.index); return; }
+  if (act === 'del-talk') { const host = b.closest('.node[data-id]'); if (host) opDel(host.dataset.id); return; }
   if (act === 'menu') { const id = b.dataset.for; if (!pop.hidden && pop.dataset.for === id) closeMenu(); else openMenu(b, id); return; }
   if (act === 'wrap-sel') return opWrap([...sel], +b.dataset.times);
   if (act === 'del-sel') { const ids = [...sel]; pushUndo(); ids.forEach(id => { const l = locate(id); if (l) l.arr.splice(l.arr.indexOf(l.node), 1); }); sel.clear(); renderBlocks(); markDirty(); toast(`Deleted ${ids.length}`, 'Undo', undo); return; }

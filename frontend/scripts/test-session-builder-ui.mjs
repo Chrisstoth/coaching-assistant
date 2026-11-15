@@ -85,20 +85,25 @@ assert.ok(cell.classList.contains('bad'))
 assert.equal(api.getSession().blocks[0].items.at(-1).talk, 90, 'an unreadable time keeps the last good one')
 cell.dispatchEvent(new window.FocusEvent('focusout', { bubbles: true }))
 assert.equal(cell.value, '1:30')
-// "Talk before this set" from a set's menu puts a 2:00 talk just above it
+// the × on a talk row turns it off again, and that can be undone
+click(root.querySelector(`.node.talk[data-id="${talk.id}"] [data-act="del-talk"]`))
+assert.ok(!api.getSession().blocks[0].items.some(n => n.talk != null))
+key(window.document.body, 'z', { ctrlKey: true })
+assert.equal(api.getSession().blocks[0].items.at(-1).id, talk.id)
 key(window.document.body, 'z', { ctrlKey: true })   // the cell edits aren't undo steps: this takes the typed talk back out
 assert.ok(!api.getSession().blocks[0].items.some(n => n.talk != null))
+// every gap before a set has a "+ Talk" slot; one click puts a 2:00 talk there with its time ready to type over
 const setBefore = api.getSession().blocks[0].items[0]
-click(root.querySelector(`.node[data-id="${setBefore.id}"] .kebab`))
-click(root.querySelector('#pop [data-op="talk-before"]'))
+assert.equal($$(`.block[data-id="${firstBlock.id}"] .items[data-parent="${firstBlock.id}"] > .tadd`).length, api.getSession().blocks[0].items.length)
+click(root.querySelector(`[data-act="add-talk"][data-before="${setBefore.id}"]`))
 talk = api.getSession().blocks[0].items[0]
 assert.equal(talk.talk, 120)
 assert.equal(api.getSession().blocks[0].items[1].id, setBefore.id)
-assert.equal(window.document.activeElement.id, `f-${talk.id}-desc`, 'the cursor goes to what the talk covers')
-// a block's menu puts one at the start of the block
+assert.equal(window.document.activeElement.id, `f-${talk.id}-talk`, 'the cursor goes to the talk’s time')
+assert.ok(!root.querySelector(`[data-act="add-talk"][data-before="${setBefore.id}"]`), 'no second slot once a talk is there')
+// the slot before a block's first set is the talk between blocks
 const blk = api.getSession().blocks[1]
-click(root.querySelector(`.block[data-id="${blk.id}"] .bhead .kebab`))
-click(root.querySelector('#pop [data-op="talk-start"]'))
+click(root.querySelector(`[data-act="add-talk"][data-before="${blk.items[0].id}"]`))
 assert.equal(api.getSession().blocks[1].items[0].talk, 120)
 // poolside shows it, with its time
 click($('#vPool'))

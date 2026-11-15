@@ -242,6 +242,7 @@
   .sb .round-head>.grip{grid-area:g}.sb .round-head>.times{grid-area:n}.sb .round-head>.note{grid-area:o}.sb .round-head>.tot{grid-area:t}.sb .round-head>.kebab{grid-area:k}
   .sb .round-body{grid-template-columns:14px minmax(0,1fr);padding-left:6px}
   .sb .quick{padding-left:4px}
+  .sb .tadd{padding-left:26px}
   /* on a phone: TALK and its time on top, what it covers full width underneath */
   .sb .line.talk{grid-template-areas:"g l l i . k" "g s s s s s"}
   .sb .line.talk .tlab{grid-area:l}.sb .line.talk .talkt{grid-area:i;text-align:right}.sb .line.talk .tgap{display:none}
@@ -288,6 +289,14 @@
 .sb .tlab svg{flex:0 0 14px;width:14px;height:14px}
 .sb .line.talk .desc{font-style:italic}
 .sb .talkt{color:var(--accent-text)}
+.sb .toff{font-size:20px;line-height:1}
+/* the "+ Talk" slot between sets: one click turns talk time on there */
+.sb .tadd{display:flex;align-items:center;height:14px;padding-left:30px}
+.sb .tadd button{display:inline-flex;align-items:center;gap:4px;height:18px;padding:0 8px;border:0;border-radius:999px;background:transparent;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);opacity:0;transition:opacity .12s}
+.sb .tadd button svg{width:11px;height:11px}
+.sb .items:hover>.tadd button,.sb .round-inner:hover .tadd button{opacity:.7}
+.sb .tadd button:hover,.sb .tadd button:focus-visible{opacity:1!important;color:var(--accent-text);background:var(--accent-soft)}
+@media (hover:none){.sb .tadd{height:24px}.sb .tadd button{opacity:.8;height:24px}}
 
 /* ---------- popover menu ---------- */
 .sb .pop{position:fixed;z-index:50;min-width:220px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 30px rgba(0,0,0,.18);padding:5px;display:grid}
