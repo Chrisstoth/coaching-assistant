@@ -528,6 +528,19 @@ function opMove(id, dir){
   const j = l.index + dir; if (j < 0 || j >= l.arr.length) return;
   pushUndo(); [l.arr[l.index], l.arr[j]] = [l.arr[j], l.arr[l.index]]; renderBlocks(); markDirty();
 }
+// straight to the top or bottom of its level (a block: of the blocks this group can see)
+function opMoveEnd(id, toEnd){
+  const l = locate(id); if (!l) return;
+  if (l.kind === 'block') {
+    const vis = visibleBlocks(), target = toEnd ? vis[vis.length - 1] : vis[0];
+    if (!target || target === l.node) return;
+    const blocks = S().blocks;
+    pushUndo(); blocks.splice(blocks.indexOf(l.node), 1);
+    blocks.splice(blocks.indexOf(target) + (toEnd ? 1 : 0), 0, l.node); renderBlocks(); markDirty(); return;
+  }
+  const j = toEnd ? l.arr.length - 1 : 0; if (l.index === j) return;
+  pushUndo(); l.arr.splice(l.index, 1); l.arr.splice(j, 0, l.node); renderBlocks(); markDirty();
+}
 function opWrap(ids, times){
   const locs = ids.map(locate).filter(Boolean);
   if (!locs.length) return;
@@ -576,8 +589,10 @@ function openMenu(btn, id){
     const copies = gs.length ? gs.map(g => `<button data-op="copyto" data-gid="${g.id}">Copy for ${esc(g.name)}</button>`).join('') + '<hr>' : '';
     const isN = l.node.kind === 'notes', what = isN ? 'notes' : 'block';
     html = (isN ? '' : `<button data-op="btext">${textMode.has(id) ? 'Back to rows' : 'Edit as text'}</button>`) +
+      `<button data-op="top" ${vi <= 0 ? 'disabled' : ''}>Move ${what} to top</button>` +
       `<button data-op="up" ${vi <= 0 ? 'disabled' : ''}>Move ${what} up</button>` +
       `<button data-op="down" ${vi === vis.length - 1 ? 'disabled' : ''}>Move ${what} down</button>` +
+      `<button data-op="bottom" ${vi === vis.length - 1 ? 'disabled' : ''}>Move ${what} to bottom</button>` +
       `<button data-op="dup">Duplicate ${what}</button>` + (isN ? '' : `<button data-op="notes-after">Add notes below</button>`) + `<hr>` + fork + copies + `<button data-op="del" class="danger">Delete ${what}</button>`;
   } else {
     const prev = l.arr[l.index - 1];
@@ -586,8 +601,10 @@ function openMenu(btn, id){
       `<button data-op="indent" ${canIn ? '' : 'disabled'}>Into round above <kbd>${mod} ]</kbd></button>` +
       `<button data-op="outdent" ${canOut ? '' : 'disabled'}>Out of this round <kbd>${mod} [</kbd></button>` +
       (l.node.t === 'round' ? `<button data-op="unwrap">Remove round, keep sets</button>` : '') + `<hr>` +
+      `<button data-op="top" ${l.index === 0 ? 'disabled' : ''}>Move to top <kbd>Alt ⇧ ↑</kbd></button>` +
       `<button data-op="up" ${l.index === 0 ? 'disabled' : ''}>Move up <kbd>Alt ↑</kbd></button>` +
       `<button data-op="down" ${l.index === l.arr.length - 1 ? 'disabled' : ''}>Move down <kbd>Alt ↓</kbd></button>` +
+      `<button data-op="bottom" ${l.index === l.arr.length - 1 ? 'disabled' : ''}>Move to bottom <kbd>Alt ⇧ ↓</kbd></button>` +
       `<button data-op="dup">Duplicate <kbd>${mod} D</kbd></button><hr>` +
       `<button data-op="del" class="danger">${l.node.t === 'round' ? 'Delete round and its sets' : isTalkLine(l.node) ? 'Delete talk' : 'Delete set'}</button>`;
   }
@@ -607,6 +624,8 @@ pop.addEventListener('click', e => {
   if (op === 'btext') { if (textMode.has(id)) textMode.delete(id); else textMode.add(id); renderBlocks(textMode.has(id) ? { id: 't-' + id } : null); return; }
   if (op === 'up') return opMove(id, -1);
   if (op === 'down') return opMove(id, 1);
+  if (op === 'top') return opMoveEnd(id, false);
+  if (op === 'bottom') return opMoveEnd(id, true);
   if (op === 'dup') return opDup(id);
   if (op === 'del') return opDel(id);
   if (op === 'wrap') return opWrap([id], +b.dataset.times);
@@ -879,7 +898,11 @@ document.addEventListener('keydown', e => {
     if (mod && e.key === ']') { e.preventDefault(); opIndent(id); return; }
     if (mod && e.key === '[') { e.preventDefault(); opOutdent(id); return; }
     if (mod && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); opDup(id); return; }
-    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); opMove(id, e.key === 'ArrowUp' ? -1 : 1); return; }
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      if (e.shiftKey) opMoveEnd(id, e.key === 'ArrowDown'); else opMove(id, e.key === 'ArrowUp' ? -1 : 1);
+      return;
+    }
   }
   if (mod && !e.shiftKey && (e.key === 'z' || e.key === 'Z') && !(t.matches && t.matches('input,textarea,select'))) { e.preventDefault(); undo(); }
 });
