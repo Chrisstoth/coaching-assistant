@@ -330,6 +330,7 @@ function Builder({ id }) {
       scales: payload.scales,
       customScales: payload.custom_scales,
       view: openInPool(params.get('view'), payload.session) ? 'pool' : 'edit',
+      pinTop: 48, // the app's fixed header (h-12): poolside group buttons pin below it
       brand: club.name || 'Session Builder',
       logo: club.logo || null,
       pdfHeader: `${squad ? squad + ' · ' : ''}Session plan`,

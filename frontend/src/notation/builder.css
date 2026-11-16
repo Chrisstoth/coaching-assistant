@@ -447,6 +447,10 @@
 .sb .meta-grid label,.sb .glabel,.sb .gpick span.lab,.sb .bgroup span{color:#90caf9;letter-spacing:.1em}
 .sb .gname{font-size:16px}
 .sb .gtabs{position:static}
+/* Poolside: pinned under the app header once scrolled past, one row that swipes sideways. */
+.sb .ptabs.stuck{position:fixed;z-index:30;flex-wrap:nowrap;overflow-x:auto;scrollbar-width:none;padding:8px 0;background:var(--bg);border-bottom:1px solid rgba(255,255,255,.08);box-shadow:0 6px 12px rgba(0,0,0,.35)}
+.sb .ptabs.stuck::-webkit-scrollbar{display:none}
+.sb .ptabs.stuck button{flex:0 0 auto;padding:9px 16px;font-size:14px}
 .sb .gtabs button{padding:6px 14px;font-size:13px}
 .sb .gtabs button[aria-pressed="true"]{background:#1e88e5;color:#fff;border-color:#1e88e5}
 .sb .gchip input{width:auto;max-width:22ch}

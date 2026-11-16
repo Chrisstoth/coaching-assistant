@@ -421,7 +421,7 @@ function renderPool(){
   const kick = [s.date ? new Date(s.date + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '', s.slot, s.start && s.end ? `${s.start}–${s.end}` : ''].filter(Boolean).join(' · ');
   const aims = (s.aims || []).filter(a => a && a.trim());
   $('#pool').innerHTML =
-    ((all.groups || []).length ? `<nav class="gtabs" style="position:static">` + `<button type="button" data-act="tab" data-gid="" aria-pressed="${!curGroup}">All groups</button>` + all.groups.map(g => `<button type="button" data-act="tab" data-gid="${g.id}" aria-pressed="${curGroup === g.id}" style="--gc:${groupColor(all, g.id)}"><i></i>${esc(g.name)}</button>`).join('') + `</nav>` : '') +
+    ((all.groups || []).length ? `<div class="ptabs-slot"><nav class="gtabs ptabs" aria-label="Groups">` + `<button type="button" data-act="tab" data-gid="" aria-pressed="${!curGroup}">All groups</button>` + all.groups.map(g => `<button type="button" data-act="tab" data-gid="${g.id}" aria-pressed="${curGroup === g.id}" style="--gc:${groupColor(all, g.id)}"><i></i>${esc(g.name)}</button>`).join('') + `</nav></div>` : '') +
     `<header class="phead"><div class="pkicker">${esc(kick)}${s._group ? ' · ' + esc(s._group) : ''}</div><h1>${esc(displayTitle(s))}</h1>` +
     `<div class="pmeta">${esc([s.venue, s.weekKey ? 'Week ' + s.weekKey : '', s.coach].filter(Boolean).join(' · '))}</div>` +
     (aims.length ? `<ul class="paims">${aims.map(a => `<li>${esc(a)}</li>`).join('')}</ul>` : '') + `</header>` +
@@ -431,7 +431,26 @@ function renderPool(){
       if (b.kind === 'notes') return hasNoteText(b) ? `<section class="pblock pnotes"><div class="pbh"><h2>${esc(b.name || 'Notes')}</h2>${gn.length ? `<span class="pchips">${gn.map(x => `<span class="pchip">${esc(x)}</span>`).join('')}</span>` : ''}</div><div class="pnote">${esc(String(b.text).trim())}</div></section>` : '';
       return `<section class="pblock"><div class="pbh"><h2>${esc(b.name || 'Block')}</h2>${gn.length ? `<span class="pchips">${gn.map(n => `<span class="pchip">${esc(n)}</span>`).join('')}</span>` : ''}<span class="ptot">${fmtDist(st.dist)} m · ${timeText(st)}</span></div>${poolItems(b.items) || '<div class="pl"><span class="pd" style="color:var(--muted)">No sets yet</span></div>'}</section>`;
     }).join('') + `</div>`;
+  pinTabs();
 }
+/* Poolside, the group buttons stay pinned under the app's header once the coach
+   scrolls down to the sets. Done by hand because the app's page wrapper stops
+   CSS sticky from working; opts.pinTop is the height of whatever is fixed above. */
+function pinTabs(){
+  const slot = view === 'pool' ? $('#pool .ptabs-slot') : null; if (!slot) return;
+  const nav = slot.firstElementChild, top = opts.pinTop || 0;
+  if (!nav.classList.contains('stuck')) slot.style.minHeight = nav.offsetHeight + 'px';
+  const r = slot.getBoundingClientRect(), stuck = r.top < top;
+  nav.classList.toggle('stuck', stuck);
+  // Full width, so the sets don't show either side; the buttons stay lined up with the page.
+  nav.style.top = stuck ? top + 'px' : '';
+  nav.style.left = stuck ? '0px' : '';
+  nav.style.right = stuck ? '0px' : '';
+  nav.style.paddingLeft = stuck ? Math.max(0, r.left) + 'px' : '';
+  nav.style.paddingRight = stuck ? Math.max(0, globalThis.innerWidth - r.right) + 'px' : '';
+}
+window.addEventListener('scroll', pinTabs, { passive: true, capture: true });
+window.addEventListener('resize', pinTabs, { passive: true });
 async function setView(v){
   view = v;
   if (opts.onView) opts.onView(v);
@@ -921,7 +940,17 @@ document.addEventListener('click', e => {
   if (act === 'wrap-sel') return opWrap([...sel], +b.dataset.times);
   if (act === 'del-sel') { const ids = [...sel]; pushUndo(); ids.forEach(id => { const l = locate(id); if (l) l.arr.splice(l.arr.indexOf(l.node), 1); }); sel.clear(); renderBlocks(); markDirty(); toast(`Deleted ${ids.length}`, 'Undo', undo); return; }
   if (act === 'clear-sel') { sel.clear(); renderBlocks(); return; }
-  if (act === 'tab') { curGroup = b.dataset.gid || ''; sel.clear(); renderBlocks(); refreshTotals(); if (view === 'pool') renderPool(); return; }
+  if (act === 'tab') {
+    const pinned = view === 'pool' && Boolean(b.closest('.ptabs.stuck'));
+    curGroup = b.dataset.gid || ''; sel.clear(); renderBlocks(); refreshTotals();
+    if (view === 'pool') {
+      renderPool();
+      // Changed group from the pinned buttons: go to the top of that group's sets.
+      const run = pinned && $('#pool .prun'), nav = $('#pool .ptabs');
+      if (run) { run.style.scrollMarginTop = ((opts.pinTop || 0) + (nav ? nav.offsetHeight : 0) + 8) + 'px'; run.scrollIntoView({ block: 'start' }); }
+    }
+    return;
+  }
   if (act === 'add-group') return addGroup();
   if (act === 'del-group') return deleteGroup(b.dataset.gid);
   if (act === 'who') { if (opts.onWho) opts.onWho(b.dataset.gid); return; }
