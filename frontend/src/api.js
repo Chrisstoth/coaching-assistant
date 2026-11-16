@@ -511,9 +511,11 @@ export const api = {
   deleteQualificationSet: (id) => request('DELETE', `/qualification-standards/${id}`),
 
   // Voice
-  transcribeAudio: (audioBlob) => {
+  // `prompt`: optional spelling help, e.g. the squad's names for a spoken register.
+  transcribeAudio: (audioBlob, prompt = '') => {
     const fd = new FormData()
     fd.append('audio', audioBlob, audioBlob.type?.includes('mp4') ? 'audio.mp4' : 'audio.webm')
+    if (prompt) fd.append('prompt', prompt)
     return request('POST', '/ai-chat/transcribe', fd, true)
   },
 
@@ -568,6 +570,11 @@ export const api = {
   startRegister: (message, threadId) => request('POST', '/ai-chat/start-register', { message, thread_id: threadId }),
   parseRegister: (data) => request('POST', '/ai-chat/parse-register', data),
   submitChatRegister: (data) => request('POST', '/ai-chat/submit-register', data),
+  // The spoken register: names the coach has taught it, and the quick model's
+  // suggestions for words it couldn't place.
+  getRegisterAliases: () => request('GET', '/ai-chat/register-aliases'),
+  saveRegisterAlias: (heard, swimmerId) => request('POST', '/ai-chat/register-aliases', { heard, swimmer_id: swimmerId }),
+  tidyRegisterTalk: (data) => request('POST', '/ai-chat/register-tidy', data),
   sendAIChatMessageWithImage: (message, imageFile, threadId, brief = false) => {
     const fd = new FormData()
     fd.append('message', message || '')

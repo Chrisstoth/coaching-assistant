@@ -160,8 +160,9 @@ function watchForPause(stream, { onPause, onNothing, onDeaf }) {
  * `onNoSpeech` - the recording really was empty.
  * `onCannotTell` - this phone is not letting the pause detection hear, so the
  * coach finishes with a tap instead; recording carries on.
+ * `prompt` - optional words to help the spelling, e.g. swimmers' names.
  */
-export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } = {}) {
+export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell, prompt = '' } = {}) {
   const [recording, setRecording] = useState(false)
   const [transcribing, setTranscribing] = useState(false)
   const [error, setError] = useState(null)
@@ -175,6 +176,9 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
   const cannotTellRef = useRef(onCannotTell)
   cannotTellRef.current = onCannotTell
   const unsureRef = useRef(false)
+  // Spelling help sent with each recording (names the coach is likely to say).
+  const promptRef = useRef(prompt)
+  promptRef.current = prompt
   const supported = Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder)
 
   const finish = useCallback((discard = false, unsure = false) => {
@@ -234,7 +238,7 @@ export default function useWhisperVoice(onResult, { onNoSpeech, onCannotTell } =
         setTranscribing(true)
         const unsure = unsureRef.current
         try {
-          const result = await api.transcribeAudio(blob)
+          const result = await api.transcribeAudio(blob, promptRef.current)
           if (result?.text?.trim()) onResult(result.text, { unsure })
           else if (unsure) noSpeechRef.current?.()
         } catch (e) {

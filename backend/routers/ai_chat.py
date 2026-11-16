@@ -932,12 +932,8 @@ def _register_reply(result: dict) -> str:
     time_label = _register_option(
         result["session_title"], result.get("session_time"), result.get("session_end_time")
     )
-    squad_count = len(result.get("attendees", []))
-    usual_count = sum(1 for attendee in result.get("attendees", []) if attendee.get("usual_for_slot"))
-    suffix = f"The register is ready below with all {squad_count} active swimmers."
-    if usual_count:
-        suffix += f" {usual_count} are marked as usually attending this slot."
-    return f"Found {time_label} on {date_label}. {suffix}"
+    # The app opens the session's register page straight after this reply.
+    return f"Found {time_label} on {date_label}. Opening the register."
 
 
 def _is_session_cancellation_request(text: str) -> bool:
@@ -2271,6 +2267,99 @@ Rules:
     return {"session_id": session_id, "attendance": result}
 
 
+def _alias_key(heard: str) -> str:
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", (heard or "").lower()).split())
+
+
+@router.get("/register-aliases")
+def register_aliases(db: DBSession = Depends(get_db)):
+    """Names the coach has taught the spoken register ("Neve" is Niamh)."""
+    rows = db.query(models.SwimmerNameAlias).order_by(models.SwimmerNameAlias.heard).all()
+    return [{"heard": row.heard, "swimmer_id": row.swimmer_id} for row in rows]
+
+
+@router.post("/register-aliases")
+def save_register_alias(body: dict = Body(...), db: DBSession = Depends(get_db)):
+    """Remember what the phone wrote for a swimmer, so it is ticked next time.
+    A swimmer's own first name or surname is never taken over by an alias."""
+    heard = _alias_key(body.get("heard", ""))
+    swimmer_id = body.get("swimmer_id")
+    if not heard or len(heard) > 60:
+        raise HTTPException(status_code=400, detail="Say what was heard")
+    swimmer = db.get(models.Swimmer, swimmer_id) if isinstance(swimmer_id, int) else None
+    if swimmer is None:
+        raise HTTPException(status_code=404, detail="Swimmer not found")
+    real_names = {
+        part
+        for (name,) in db.query(models.Swimmer.name).filter(models.Swimmer.status == "active").all()
+        for part in _alias_key(name).split()
+    }
+    if heard in real_names:
+        raise HTTPException(status_code=409, detail="That is already a swimmer's name")
+    row = db.query(models.SwimmerNameAlias).filter(models.SwimmerNameAlias.heard == heard).first()
+    if row is None:
+        row = models.SwimmerNameAlias(heard=heard, swimmer_id=swimmer.id)
+        db.add(row)
+    else:
+        row.swimmer_id = swimmer.id
+    db.commit()
+    return {"heard": heard, "swimmer_id": swimmer.id}
+
+
+@router.post("/register-tidy")
+def register_tidy(body: dict = Body(...)):
+    """The words the spoken register couldn't place, matched by the quick model.
+
+    Only the leftovers and the squad's names are sent, never audio. The answer
+    is a suggestion each for the coach to tap: nothing is ticked from here."""
+    words = [str(w).strip() for w in (body.get("words") or []) if str(w).strip()][:12]
+    swimmers = [s for s in (body.get("swimmers") or []) if isinstance(s, dict) and s.get("id") and s.get("name")][:80]
+    transcript = str(body.get("transcript") or "")[:1500]
+    if not words or not swimmers:
+        return {"matches": []}
+
+    roster = "\n".join(f"- {s['id']}: {s['name']}" for s in swimmers)
+    prompt = f"""A swimming coach took the register by voice. Phone speech recognition wrote these
+words, which might be swimmers' names misheard, misspelled or shortened (nicknames):
+{json.dumps(words)}
+
+What the coach said, as the phone wrote it:
+"{transcript}"
+
+The squad (id: name):
+{roster}
+
+For each word, give the swimmer it most likely means, judged by sound, spelling and common
+nicknames (Olly = Oliver, Neve = Niamh). Use null when it is not a name or you are not fairly sure.
+Return only JSON: {{"matches": [{{"heard": "word", "swimmer_id": 12 or null}}]}}"""
+
+    try:
+        response = get_client().messages.create(
+            model=FAST_MODEL,
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        usage = getattr(response, "usage", None)
+        record_ai_usage(
+            "anthropic", FAST_MODEL, "register_tidy",
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+        )
+        data = json.loads(_strip_json(response.content[0].text))
+    except Exception:
+        return {"matches": []}
+
+    valid_ids = {s["id"] for s in swimmers}
+    asked = {w.lower(): w for w in words}
+    matches = []
+    for item in data.get("matches") or []:
+        heard = asked.get(str(item.get("heard", "")).strip().lower())
+        swimmer_id = item.get("swimmer_id")
+        if heard and swimmer_id in valid_ids:
+            matches.append({"heard": heard, "swimmer_id": swimmer_id})
+    return {"matches": matches}
+
+
 @router.post("/submit-register")
 def submit_register(body: dict = Body(...), db: DBSession = Depends(get_db)):
     """Save a confirmed attendance list as SessionEntry records."""
@@ -2372,8 +2461,11 @@ Return only valid JSON."""
 
 
 @router.post("/transcribe")
-async def transcribe_audio(audio: UploadFile = File(...)):
-    """Transcribe an audio file using OpenAI Whisper. Returns {text: '...'}."""
+async def transcribe_audio(audio: UploadFile = File(...), prompt: Optional[str] = Form(None)):
+    """Transcribe an audio file using OpenAI Whisper. Returns {text: '...'}.
+
+    `prompt` is optional context for spelling, e.g. the squad's names and the
+    session's group names when the coach is taking a register by voice."""
     import io, os
     import openai as _openai
 
@@ -2391,7 +2483,8 @@ async def transcribe_audio(audio: UploadFile = File(...)):
         client = _openai.OpenAI(api_key=api_key)
         buf = io.BytesIO(audio_bytes)
         buf.name = filename
-        transcript = client.audio.transcriptions.create(model=TRANSCRIPTION_MODEL, file=buf)
+        extra = {"prompt": prompt.strip()[:800]} if prompt and prompt.strip() else {}
+        transcript = client.audio.transcriptions.create(model=TRANSCRIPTION_MODEL, file=buf, **extra)
         usage = getattr(transcript, "usage", None)
         record_ai_usage(
             "openai",

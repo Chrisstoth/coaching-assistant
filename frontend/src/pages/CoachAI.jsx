@@ -3,7 +3,6 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { api, wakeServer } from '../api'
 import { stashDraft } from '../planDrafts'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
-import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
 import SpeakButton from '../components/SpeakButton'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
 import useWhisperVoice, { primeMicrophone } from '../hooks/useWhisperVoice'
@@ -101,9 +100,6 @@ export default function CoachAI() {
   const [sessionDraft, setSessionDraft] = useState(null) // extracted session JSON
   const [savingSession, setSavingSession] = useState(false)
 
-  // Register card
-  const [registerData, setRegisterData] = useState(null) // { session_id, session_title, attendees, attendance }
-  const [registerSaved, setRegisterSaved] = useState(false)
   const [cancellationData, setCancellationData] = useState(null)
   const [targetDraft, setTargetDraft] = useState(null)
   const [savedTarget, setSavedTarget] = useState(null)
@@ -119,7 +115,6 @@ export default function CoachAI() {
   const [savedBenchmarksToast, setSavedBenchmarksToast] = useState(null) // [{swimmer_name, label}, ...]
   const [savedIntentsToast, setSavedIntentsToast] = useState(null) // [{swimmer_name, label}, ...]
   const [poolside, setPoolside] = useState(readPoolside)
-  const [feedbackPrompt, setFeedbackPrompt] = useState(null) // post-register feedback
   const [handsFree, setHandsFree] = useState(false)
   const [voiceNote, setVoiceNote] = useState('')
 
@@ -162,27 +157,16 @@ export default function CoachAI() {
 
   useEffect(() => { if (!recording) setHandsFree(false) }, [recording])
 
-  useEffect(() => {
-    if (!registerSaved) return undefined
-    const returnHome = window.setTimeout(() => {
-      navigate('/', { replace: true })
-    }, 1400)
-    return () => window.clearTimeout(returnHome)
-  }, [navigate, registerSaved])
-
   // ---- Opening ----
 
   const resetCards = () => {
     setSuggestedAction(null)
     setActionResult(null)
     setSessionDraft(null)
-    setRegisterData(null)
     setCancellationData(null)
     setTargetDraft(null)
     setSavedTarget(null)
-    setRegisterSaved(false)
     setPinSaved(false)
-    setFeedbackPrompt(null)
     setLastInjected([])
   }
 
@@ -267,12 +251,12 @@ export default function CoachAI() {
     if (mode || sending) bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
   }, [messages, sending])
 
-  // Cards that arrive after the reply (the register, a target) come into view too.
+  // Cards that arrive after the reply (a target, a session draft) come into view too.
   useEffect(() => {
-    if (registerData || targetDraft || sessionDraft || feedbackPrompt) {
+    if (targetDraft || sessionDraft) {
       bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
     }
-  }, [registerData, targetDraft, sessionDraft, feedbackPrompt])
+  }, [targetDraft, sessionDraft])
 
   // The message box grows with what's typed, up to a few lines.
   useLayoutEffect(() => {
@@ -443,9 +427,11 @@ export default function CoachAI() {
     } else if ((res.topics_detected || []).includes('register')) {
       // Newer backends resolve the slot as part of the deterministic chat
       // response. Keep the fallback for clients talking to an older server.
+      // The chat opens the one real register, with the session's own group names.
       const regData = res.register_data || await api.startRegister(msg, threadId)
       if (regData.session_id) {
-        setRegisterData({ ...regData, attendance: null })
+        // Opens talking, with anything already said about who's here applied.
+        navigate(`/sessions/${regData.session_id}/register`, { state: { talk: true, say: msg } })
       }
     } else if (res.intent?.type === 'formal_target_capture' && res.intent?.swimmer_id) {
       const targetConversation = [
@@ -831,8 +817,6 @@ export default function CoachAI() {
 
   return (
     <div className="flex flex-col" style={{ height: PAGE_HEIGHT }}>
-      {registerSaved && <RegisterSavedOverlay />}
-
       {/* Header */}
       <div className="shrink-0 h-12 px-2 flex items-center gap-1 border-b border-pool-700">
         <button
@@ -1115,18 +1099,6 @@ export default function CoachAI() {
           </div>
         )}
 
-        {registerData && !registerSaved && (
-          <RegisterCard
-            data={registerData}
-            onDismiss={() => setRegisterData(null)}
-            onSaved={(_sessionId, fbPrompt) => {
-              setRegisterSaved(true)
-              setRegisterData(null)
-              if (fbPrompt) setFeedbackPrompt(fbPrompt)
-            }}
-          />
-        )}
-
         <SessionCancellationDialog
           session={cancellationData}
           onClose={() => setCancellationData(null)}
@@ -1140,28 +1112,6 @@ export default function CoachAI() {
             }])
           }}
         />
-
-        {feedbackPrompt && (
-          <div className="border border-accent-700/50 bg-accent-900/20 rounded-xl px-4 py-3 space-y-2.5">
-            <p className="text-xs font-semibold text-accent-300">Session feedback</p>
-            <p className="text-xs text-pool-300 leading-relaxed">{feedbackPrompt}</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setFeedbackPrompt(null); setInput('It went well — session achieved the intent.') }}
-                className="flex-1 bg-accent-700 hover:bg-accent-600 rounded-lg py-2 text-xs font-semibold transition-colors"
-              >
-                It went well
-              </button>
-              <button
-                onClick={() => { setFeedbackPrompt(null); setInput('The session didn\'t quite achieve the intent — ') }}
-                className="flex-1 bg-pool-700 hover:bg-pool-600 rounded-lg py-2 text-xs font-semibold transition-colors"
-              >
-                Not quite
-              </button>
-              <button onClick={() => setFeedbackPrompt(null)} className="px-3 text-xs text-pool-500 hover:text-pool-300">Dismiss</button>
-            </div>
-          </div>
-        )}
 
         <div ref={bottomRef} />
       </div>
@@ -1838,207 +1788,6 @@ function TargetDraftCard({ draft, onDismiss, onSaved }) {
         <button type="button" onClick={save} disabled={saving || !form.label.trim()}
           className="flex-1 bg-indigo-700 hover:bg-indigo-600 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold">
           {saving ? 'Saving…' : 'Save formal target'}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-function RegisterCard({ data, onDismiss, onSaved }) {
-  const initialGroupCount = data.register_group_count || null
-  const initialAttendance = (data.attendees || []).map(a => ({
-    swimmer_id: a.id,
-    name: a.name,
-    present: a.attended === true,
-    group: a.group_done ?? (initialGroupCount === 1 ? 1 : null),
-    note: '',
-    exception_reason: a.exception_reason || null,
-    usual_for_slot: a.usual_for_slot || false,
-  }))
-  const [attendance, setAttendance] = useState(initialAttendance)
-  const [parseInput, setParseInput] = useState('')
-  const [parsing, setParsing] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [groupCount, setGroupCount] = useState(initialGroupCount)
-  const [editingGroupCount, setEditingGroupCount] = useState(!initialGroupCount)
-  const [savingGroupCount, setSavingGroupCount] = useState(false)
-
-  const suppliedGroupNumbers = data.register_group_numbers || []
-  const groupNumbers = groupCount > 1 && suppliedGroupNumbers.length === groupCount
-    ? suppliedGroupNumbers
-    : Array.from({ length: groupCount || 0 }, (_, index) => index + 1)
-
-  const setEntry = (i, key, val) => setAttendance(prev => prev.map((e, idx) => idx === i ? { ...e, [key]: val } : e))
-
-  const chooseGroupCount = async (count) => {
-    setSavingGroupCount(true)
-    try {
-      await api.updateSession(data.session_id, { register_group_count: count })
-      setGroupCount(count)
-      setEditingGroupCount(false)
-      setAttendance(previous => previous.map(entry => ({
-        ...entry,
-        group: count === 1 ? 1 : entry.group && entry.group <= count ? entry.group : null,
-      })))
-    } catch (error) {
-      alert(`Could not save the session group setup: ${error.message}`)
-    } finally {
-      setSavingGroupCount(false)
-    }
-  }
-
-  const handleParse = async () => {
-    if (!parseInput.trim()) return
-    setParsing(true)
-    try {
-      const res = await api.parseRegister({
-        session_id: data.session_id,
-        message: parseInput,
-        attendees: data.attendees,
-      })
-      const parsed = res.attendance || []
-      setAttendance(prev => prev.map(e => {
-        const match = parsed.find(p => p.swimmer_id === e.swimmer_id)
-        if (!match) return e
-        return {
-          ...e,
-          present: match.present ?? e.present,
-          group: match.group ?? e.group,
-          note: match.note || e.note,
-        }
-      }))
-      setParseInput('')
-    } catch (err) {
-      alert(`Parse failed: ${err.message}`)
-    }
-    setParsing(false)
-  }
-
-  const handleSubmit = async () => {
-    setSaving(true)
-    try {
-      const res = await api.submitChatRegister({ session_id: data.session_id, attendance })
-      onSaved(data.session_id, res.feedback_prompt || null)
-    } catch (err) {
-      alert(`Could not save register: ${err.message}`)
-      setSaving(false)
-    }
-  }
-
-  const presentCount = attendance.filter(e => e.present).length
-
-  return (
-    <div className="border border-blue-700/50 bg-blue-900/15 rounded-2xl p-4 space-y-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs font-semibold text-blue-300 uppercase tracking-wide">Register</p>
-          <p className="text-xs text-pool-400 mt-0.5">{data.session_title} · {data.session_date}</p>
-        </div>
-        <button onClick={onDismiss} className="text-pool-500 hover:text-pool-300 text-base leading-none shrink-0">×</button>
-      </div>
-
-      {data.register_taken && (
-        <p className="text-xs text-amber-400 bg-amber-900/20 border border-amber-800/40 rounded-lg px-3 py-2">
-          Register already taken — submitting will overwrite it.
-        </p>
-      )}
-
-      {groupCount && !editingGroupCount ? (
-        <div className="flex items-center justify-between gap-2 bg-pool-800/60 border border-pool-700 rounded-xl px-3 py-2">
-          <div>
-            <p className="text-[10px] text-pool-500 uppercase tracking-wide font-semibold">Session format</p>
-            <p className="text-xs text-pool-200 mt-0.5">{groupCount === 1 ? 'Everyone did the same session' : `${groupCount} training groups`}</p>
-          </div>
-          <button onClick={() => setEditingGroupCount(true)} className="text-xs text-blue-300 px-2 py-1.5">Change</button>
-        </div>
-      ) : (
-        <div className="bg-amber-900/15 border border-amber-800/40 rounded-xl p-3">
-          <p className="text-xs font-semibold text-amber-200">How many different programmes were done?</p>
-          <div className="grid grid-cols-3 gap-1.5 mt-2">
-            {[[1, 'Everyone'], [2, '2 groups'], [3, '3 groups']].map(([count, label]) => (
-              <button key={count} onClick={() => chooseGroupCount(count)} disabled={savingGroupCount}
-                className="bg-pool-700 border border-pool-600 rounded-lg px-2 py-2 text-[11px] font-semibold disabled:opacity-50">
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Freetext parse */}
-      <div className="space-y-1.5">
-        <p className="text-xs text-pool-400">Describe who's here (or edit manually below):</p>
-        <div className="flex gap-2">
-          <input
-            value={parseInput}
-            onChange={e => setParseInput(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && handleParse()}
-            placeholder='e.g. "everyone except Tom, Sarah in group 2"'
-            className="flex-1 bg-pool-700 border border-pool-600 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-blue-500"
-          />
-          <button
-            onClick={handleParse}
-            disabled={parsing || !parseInput.trim()}
-            className="bg-blue-800 hover:bg-blue-700 disabled:opacity-40 rounded-xl px-3 py-2 text-xs font-semibold transition-colors shrink-0"
-          >
-            {parsing ? '…' : 'Parse'}
-          </button>
-        </div>
-      </div>
-
-      {/* Attendance list */}
-      <div className="space-y-1.5">
-        {attendance.map((e, i) => (
-          <div key={e.swimmer_id} className={`flex items-center gap-2 rounded-xl px-3 py-2 ${e.present ? 'bg-pool-700' : 'bg-pool-800/50 opacity-60'}`}>
-            <button
-              onClick={() => setEntry(i, 'present', !e.present)}
-              className={`w-6 h-6 rounded-full shrink-0 text-xs font-bold transition-colors ${
-                e.present ? 'bg-green-600 text-white' : 'bg-pool-600 text-pool-400'
-              }`}
-            >
-              {e.present ? '✓' : '×'}
-            </button>
-            <span className="flex-1 text-xs font-medium">{e.name}</span>
-            {e.usual_for_slot && (
-              <span className="text-[10px] text-teal-300">Usual</span>
-            )}
-            {e.exception_reason && !e.present && (
-              <span className="text-xs text-amber-400">{e.exception_reason}</span>
-            )}
-            {e.present && groupCount > 1 && (
-              <div className="flex gap-1 shrink-0">
-                {groupNumbers.map(g => (
-                  <button
-                    key={g}
-                    onClick={() => setEntry(i, 'group', e.group === g ? null : g)}
-                    className={`w-6 h-6 rounded-lg text-xs font-semibold transition-colors ${
-                      e.group === g ? 'bg-blue-700 text-white' : 'bg-pool-600 text-pool-400'
-                    }`}
-                  >
-                    {g}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
-
-      <p className="text-xs text-pool-500">{presentCount} of {attendance.length} present</p>
-
-      <div className="flex gap-2 pt-1">
-        <button
-          onClick={onDismiss}
-          className="px-4 py-2.5 text-xs text-pool-400 border border-pool-700 rounded-xl"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={handleSubmit}
-          disabled={saving || !groupCount}
-          className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 rounded-xl py-2.5 text-sm font-semibold transition-colors"
-        >
-          {!groupCount ? 'Choose session groups first' : saving ? 'Saving…' : 'Save register'}
         </button>
       </div>
     </div>

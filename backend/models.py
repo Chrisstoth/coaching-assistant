@@ -1659,3 +1659,15 @@ class PlanVersion(Base):
     plan = Column(JSON, nullable=False)
     roster = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class SwimmerNameAlias(Base):
+    """What the phone writes when the coach says a swimmer's name, learned from
+    the coach's taps on the spoken register: "Neve" is Niamh, "Olly" is Oliver.
+    No foreign key, so removing a swimmer never trips over an old alias."""
+    __tablename__ = "swimmer_name_aliases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    heard = Column(String, nullable=False, unique=True)      # lower case, single spaces
+    swimmer_id = Column(Integer, nullable=False, index=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

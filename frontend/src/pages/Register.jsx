@@ -1,10 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { api, whenAwake } from '../api'
 import VoiceInput from '../components/VoiceInput'
 import RegisterSavedOverlay from '../components/RegisterSavedOverlay'
+import RegisterTalk from '../components/RegisterTalk'
+import { applyRegisterTalk, buildVocabulary, namesPrompt, resolveHeard } from '../registerTalk'
 import HelpLink from '../components/HelpLink'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
+
+// Names the spoken register has been taught, kept on the phone for when there's no signal.
+const ALIAS_CACHE = 'lanewatch_register_aliases'
+const cachedAliases = () => {
+  try { return JSON.parse(localStorage.getItem(ALIAS_CACHE) || '[]') } catch { return [] }
+}
+const cacheAliases = (list) => {
+  try { localStorage.setItem(ALIAS_CACHE, JSON.stringify(list)) } catch { /* private mode: fine */ }
+}
 
 // One tap on the register: how a swimmer went, for the staff to learn from.
 const RESPONSES = [
@@ -123,6 +134,21 @@ export default function Register() {
   const [prefilled, setPrefilled] = useState(false)
   const [loadState, setLoadState] = useState('loading') // loading | waking | failed
   const [loadAttempt, setLoadAttempt] = useState(0)
+  // Taking the register by talking: what was said, re-read over the register
+  // as it stood when talking began. Swimmers tapped meanwhile keep the tap.
+  const [talking, setTalking] = useState(false)
+  const [talkText, setTalkText] = useState('')
+  const [talkResult, setTalkResult] = useState(null)
+  const [talkUnnamedOut, setTalkUnnamedOut] = useState(true)
+  const talkBase = useRef(null)
+  const talkTouched = useRef(new Set())
+  const [talkAliases, setTalkAliases] = useState(cachedAliases)
+  const [talkSuggestions, setTalkSuggestions] = useState({}) // heard (lower case) -> { id, name }
+  const [talkTidying, setTalkTidying] = useState(false)
+  const talkAsked = useRef(new Set())
+  useEffect(() => {
+    api.getRegisterAliases().then(list => { setTalkAliases(list); cacheAliases(list) }).catch(() => {})
+  }, [])
 
   const draftKey = `lanewatch_register_draft:${id}`
   // Opened from the session page: go back there when done, otherwise to Today.
@@ -220,6 +246,7 @@ export default function Register() {
   }, [navigate, submitted]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const update = (swimmerId, field, value) => {
+    if (talkBase.current) talkTouched.current.add(swimmerId)
     setSubmitted(null)
     setDraftDirty(true)
     setEntries((prev) =>
@@ -265,6 +292,115 @@ export default function Register() {
     })))
     setGroupCountPending(true)
   }
+
+  // ---- Taking the register by talking ----
+  const sessionGroups = session?.groups || []
+  // The session's own groups (named in the Session Builder), as the register shows them.
+  const talkGroupNumbers = sessionGroups.length > 1 && (!groupCount || groupCount === sessionGroups.length)
+    ? sessionGroups.map(g => g.group_number)
+    : groupCount > 1 ? Array.from({ length: groupCount }, (_, i) => i + 1) : []
+  // Groups only count when the session has more than one programme (or will, once one is named).
+  const talkUseGroups = groupCount > 1 || (!groupCount && sessionGroups.length > 1)
+  const talkVocab = () => buildVocabulary({
+    swimmers: entries.map(e => ({ id: e.swimmer_id, name: e.swimmer_name, excused: Boolean(e.exception_reason) })),
+    groups: talkGroupNumbers.map(n => {
+      const g = sessionGroups.find(x => x.group_number === n)
+      return { number: n, label: (g?.description || '').trim() || `Group ${n}`, subs: g?.sub_groups?.length > 1 ? g.sub_groups.map(sg => sg.label) : [] }
+    }),
+    aliases: talkAliases,
+  })
+
+  const runTalk = (text, unnamedOut = talkUnnamedOut) => {
+    setTalkText(text)
+    if (!talkBase.current) return
+    const result = applyRegisterTalk(text, talkVocab(), talkBase.current, { unnamedOut, useGroups: talkUseGroups })
+    setTalkResult(result)
+    setSubmitted(null)
+    setDraftDirty(true)
+    setEntries(prev => result.entries.map(entry => (
+      talkTouched.current.has(entry.swimmer_id) ? prev.find(p => p.swimmer_id === entry.swimmer_id) || entry : entry
+    )))
+    if (result.mentionedGroups && talkUseGroups && !groupCount) {
+      setGroupCount(talkGroupNumbers.length)
+      setGroupCountPending(true)
+    }
+  }
+  const startTalk = (text = '') => {
+    talkBase.current = entries
+    talkTouched.current = new Set()
+    setTalking(true)
+    setExpandedId(null)
+    if (text) runTalk(text)
+    else { setTalkText(''); setTalkResult(null) }
+  }
+  // The coach said who a word was: put the name in, and remember it for next
+  // time (not for a real name two swimmers share, like "Ben").
+  const pickTalk = (heard, swimmerId) => {
+    const entry = entries.find(e => e.swimmer_id === swimmerId)
+    if (!entry) return talkText
+    const vocab = talkVocab()
+    const key = heard.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    const realName = vocab.people.some(p => p.parts.join(' ') === key || p.parts.includes(key))
+    if (!realName && key) {
+      setTalkAliases(prev => {
+        const list = [...prev.filter(a => a.heard !== key), { heard: key, swimmer_id: swimmerId }]
+        cacheAliases(list)
+        return list
+      })
+      api.saveRegisterAlias(heard, swimmerId).catch(() => {})
+    }
+    return resolveHeard(talkText, heard, entry.swimmer_name, vocab)
+  }
+  // Words still unplaced: ask the quick model who they might be (once each).
+  const tidyTalk = async () => {
+    if (!talkResult) return
+    const words = [...talkResult.unknown, ...talkResult.unsure.filter(u => u.kind === 'near').map(u => u.heard)]
+      .filter(word => !talkAsked.current.has(word.toLowerCase()))
+    if (!words.length) return
+    words.forEach(word => talkAsked.current.add(word.toLowerCase()))
+    setTalkTidying(true)
+    try {
+      const reply = await api.tidyRegisterTalk({
+        words,
+        transcript: talkText,
+        swimmers: entries.map(e => ({ id: e.swimmer_id, name: e.swimmer_name })),
+      })
+      setTalkSuggestions(prev => {
+        const next = { ...prev }
+        for (const match of reply.matches || []) {
+          const entry = entries.find(e => e.swimmer_id === match.swimmer_id)
+          if (entry) next[match.heard.toLowerCase()] = { id: entry.swimmer_id, name: entry.swimmer_name }
+        }
+        return next
+      })
+    } catch {
+      words.forEach(word => talkAsked.current.delete(word.toLowerCase()))
+    } finally {
+      setTalkTidying(false)
+    }
+  }
+  const undoTalk = () => {
+    if (talkBase.current) setEntries(talkBase.current)
+    talkTouched.current = new Set()
+    setTalkText('')
+    setTalkResult(null)
+  }
+  const closeTalk = () => {
+    setTalking(false)
+    talkBase.current = null
+    setTalkResult(null)
+  }
+
+  // Asked for from the chat ("take the register… everyone's in except Ben"):
+  // open talking, with anything already said about who's here applied.
+  const talkFromChat = useRef(location.state?.talk ? (location.state.say || '') : null)
+  useEffect(() => {
+    if (!loaded || talkFromChat.current == null) return
+    const said = talkFromChat.current
+    talkFromChat.current = null
+    const result = applyRegisterTalk(said, talkVocab(), entries, { unnamedOut: talkUnnamedOut, useGroups: talkUseGroups })
+    startTalk(result.heard.length || result.bulk.length ? said : '')
+  }, [loaded]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Was the session swum as written? The staff learn from what was actually swum.
   const [asSwum, setAsSwum] = useState(null)
@@ -437,6 +573,18 @@ export default function Register() {
           >
             All present
           </button>
+          {!talking && (
+            <button
+              type="button"
+              onClick={() => startTalk()}
+              className="flex items-center gap-1 text-xs font-semibold bg-accent-600 text-white rounded-lg px-2.5 py-1.5"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 18.75a6 6 0 0 0 6-6v-1.5m-6 7.5a6 6 0 0 1-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 0 1-3-3V4.5a3 3 0 1 1 6 0v8.25a3 3 0 0 1-3 3Z" />
+              </svg>
+              Talk
+            </button>
+          )}
           <HelpLink topic="loop" label="Why the register matters" />
         </div>
       </div>
@@ -481,7 +629,26 @@ export default function Register() {
 
       <SessionWatchpoints notes={sessionNotes} />
 
-      {prefilled && (
+      {talking && (
+        <RegisterTalk
+          text={talkText}
+          onText={runTalk}
+          result={talkResult}
+          unnamedOut={talkUnnamedOut}
+          onUnnamedOut={value => { setTalkUnnamedOut(value); runTalk(talkText, value) }}
+          pick={pickTalk}
+          swimmers={entries.map(e => ({ id: e.swimmer_id, name: e.swimmer_name })).sort((a, b) => a.name.localeCompare(b.name))}
+          suggestions={talkSuggestions}
+          tidying={talkTidying}
+          onTidy={tidyTalk}
+          onUndo={undoTalk}
+          onClose={closeTalk}
+          prompt={namesPrompt(talkVocab())}
+          useGroups={talkUseGroups}
+        />
+      )}
+
+      {prefilled && !talking && (
         <p className="mx-3 mt-3 rounded-lg bg-teal-900/30 border border-teal-700/40 px-3 py-2 text-xs text-teal-200">
           Everyone expected is marked in. Tap anyone who isn't here, and anyone else who came.
         </p>
