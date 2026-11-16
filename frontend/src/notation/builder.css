@@ -1,7 +1,7 @@
 /* Session Builder styles, scoped to .sb: the builder's layout dressed in the
-   LaneWatch look the rest of the app uses (Oxanium, the pool greys, rounded
-   cards, pill buttons and the family blue). The Barlow fonts stay declared for
-   the PDF. */
+   LaneWatch look the rest of the app uses (Oxanium, the pool greys and the
+   family blue), squared off like Home's Session Desk (see the end of this
+   file). The Barlow fonts stay declared for the PDF. */
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Regular.ttf') format('truetype'); font-weight: 400; font-style: normal; font-display: swap; }
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-SemiBold.ttf') format('truetype'); font-weight: 600; font-style: normal; font-display: swap; }
 @font-face { font-family: 'BarlowSC'; src: url('/fonts/BarlowSemiCondensed-Bold.ttf') format('truetype'); font-weight: 700; font-style: normal; font-display: swap; }
@@ -475,3 +475,43 @@
 .sb.sb-notes #pool [data-nid]{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .sb.sb-notes #pool .pl[data-nid]:active,.sb.sb-notes #pool .prl[data-nid]:active{background:var(--surface-2)}
 .sb #pool .pl.noted .pd::after,.sb #pool .prl.noted > span::after{content:"";display:inline-block;width:8px;height:8px;margin-left:8px;border-radius:50%;background:#f59e0b;vertical-align:middle}
+
+/* ---- Squared off, like Home's Session Desk ----
+   Squared cards on a soft shadow, square buttons and chips (no pills), and no
+   coloured bars along card edges: a group's colour is a small square. */
+.sb .panel,.sb .block,.sb .pblock{border-radius:6px;background:linear-gradient(180deg,rgba(38,38,40,.78),rgba(26,26,28,.72));border:1px solid rgba(255,255,255,.07);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 2px 4px rgba(0,0,0,.35),0 12px 28px -10px rgba(0,0,0,.75)}
+.sb .notesblock,.sb .pnotes{background:rgba(255,255,255,.025);border:1px dashed rgba(255,255,255,.14)}
+.sb .gcard.cur{border-color:rgba(100,181,246,.35);background:linear-gradient(180deg,rgba(13,71,120,.42),rgba(8,40,68,.36))}
+.sb .ptots div,.sb .litem,.sb .imp-file,.sb .modal-card{border-radius:6px;background:linear-gradient(180deg,rgba(38,38,40,.78),rgba(26,26,28,.72));border-color:rgba(255,255,255,.07)}
+.sb .pop{border-radius:6px;border-color:rgba(255,255,255,.1);box-shadow:0 2px 4px rgba(0,0,0,.35),0 12px 28px -10px rgba(0,0,0,.75)}
+.sb .pop button,.sb .pop label{border-radius:4px}
+.sb .selbar,.sb .toast{border-radius:6px}
+.sb .round,.sb .line,.sb .items:empty{border-radius:4px}
+
+/* fields: square */
+.sb .field,.sb .cell,.sb .bname,.sb .ntext,.sb .textmode textarea,.sb .modal-card textarea{border-radius:4px}
+.sb .field{border-color:rgba(255,255,255,.12)}
+
+/* buttons and chips: square, firm, no pills */
+.sb .btn,.sb .bbtn{border-radius:5px;background:rgba(255,255,255,.035);border-color:rgba(255,255,255,.1);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.sb .btn:hover,.sb .bbtn:hover{background:rgba(255,255,255,.07);border-color:rgba(255,255,255,.16)}
+.sb .btn:active,.sb .bbtn:active{transform:translateY(1px)}
+.sb .btn.primary{background:linear-gradient(180deg,#2a95ea,#1873c8);border-color:rgba(144,202,249,.35);box-shadow:inset 0 1px 0 rgba(255,255,255,.22)}
+.sb .btn.quiet{background:transparent;border-color:transparent;box-shadow:none}
+.sb .seg{border-radius:5px}
+.sb .seg button{border-radius:3px}
+.sb .gtabs button{border-radius:4px;background:rgba(255,255,255,.035);border-color:rgba(255,255,255,.1)}
+.sb .gtabs button[aria-pressed="true"]{background:linear-gradient(180deg,#2a95ea,#1873c8);border-color:rgba(144,202,249,.35)}
+.sb .gchip,.sb .gpick,.sb .bgroup,.sb .pill,.sb .paims li,.sb .tadd button{border-radius:3px}
+.sb .gchip input,.sb .bgroup input,.sb .gchip button{border-radius:3px}
+.sb .selbar button,.sb .toast button,.sb .seln input,.sb .litem .lrow button,.sb .imp-head button,.sb .sc-pin .acts button{border-radius:4px}
+.sb .grip,.sb .kebab,.sb .mic{border-radius:4px}
+
+/* group colours: small squares, not dots */
+.sb .gchip i,.sb .gtabs button i,.sb .gpick i,.sb .pop label i{border-radius:1px}
+
+/* staff comments: no coloured bar down the side; a small square by the name instead */
+.sb .sc-pin{border-radius:4px;border:1px solid rgba(255,255,255,.07)}
+.sb .sc-pin .who::before{content:"";display:inline-block;width:8px;height:8px;margin-right:6px;vertical-align:.08em;background:var(--accent);border-radius:1px}
+.sb .sc-pin.safety .who::before{background:var(--bad)}

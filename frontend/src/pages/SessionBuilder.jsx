@@ -50,7 +50,7 @@ function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
     try { const res = await api.setBuilderAudience(payload.id, body); onSaved(res.audience) } finally { setBusy(false) }
   }
 
-  const field = 'w-full bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-xs text-pool-100'
+  const field = 'w-full bg-pool-700 border border-pool-600 rounded px-2 py-1.5 text-xs text-pool-100'
   return (
     <div className="builder-gut py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
       <p className="text-pool-400">Who the whole session is for.{hasGroups && <> To say who swims each of its groups, use{' '}
@@ -58,7 +58,7 @@ function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
       <div className="flex gap-1.5 flex-wrap">
         {[['squad', 'Whole squad'], ['group', 'One training group'], ['camp', 'A camp'], ['swimmer', 'One swimmer']].map(([k, t]) => (
           <button key={k} onClick={() => setKind(k)}
-            className={`rounded-lg px-3 py-1.5 font-semibold ${kind === k ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-300'}`}>{t}</button>
+            className={`rounded px-3 py-1.5 font-semibold ${kind === k ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-300'}`}>{t}</button>
         ))}
       </div>
       {kind === 'group' && (
@@ -80,7 +80,7 @@ function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-pool-400">Cancel</button>
         <button onClick={save} disabled={busy || (kind === 'group' && !groupId) || (kind === 'swimmer' && !swimmerId)}
-          className="px-3 py-1.5 rounded-lg bg-accent-600 text-white font-semibold disabled:opacity-40">Save</button>
+          className="px-3 py-1.5 rounded bg-accent-600 text-white font-semibold disabled:opacity-40">Save</button>
       </div>
     </div>
   )
@@ -130,21 +130,21 @@ function NewSession() {
       </div>
       <label className="block text-xs text-pool-400">Date
         <input type="date" value={date} onChange={e => setDate(e.target.value)}
-          className="mt-1 block w-full bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-pool-100" />
+          className="mt-1 block w-full bg-pool-700 border border-pool-600 rounded px-3 py-2 text-pool-100" />
       </label>
       <div className="space-y-2">
         <p className="text-xs text-pool-400">Which session?</p>
         {slots === null && <p className="text-sm text-pool-400">Loading the timetable…</p>}
         {slots && slots.map(s => (
           <button key={`${s.slot_id}-${s.session_id ?? 'new'}`} disabled={busy} onClick={() => start(s)}
-            className="w-full text-left bg-pool-800 hover:bg-pool-750 rounded-xl px-4 py-3 disabled:opacity-50">
+            className="w-full text-left bg-pool-800 hover:bg-pool-750 rounded-md px-4 py-3 disabled:opacity-50">
             <span className="block text-sm font-medium text-pool-100">{s.label || 'Session'}</span>
             <span className="block text-xs text-pool-400">{s.time}{s.end_time ? `–${s.end_time}` : ''}{s.session_id ? ' · already started, opens it' : ''}</span>
           </button>
         ))}
         {slots && !slots.length && <p className="text-sm text-pool-400">No timetable sessions on this day.</p>}
         <button disabled={busy} onClick={() => start(null)}
-          className="w-full text-left border border-dashed border-pool-600 rounded-xl px-4 py-3 text-sm text-pool-300 disabled:opacity-50">
+          className="w-full text-left border border-dashed border-pool-600 rounded-md px-4 py-3 text-sm text-pool-300 disabled:opacity-50">
           A session outside the timetable (a camp, an extra session…)
         </button>
       </div>
@@ -168,7 +168,7 @@ function openInPool(asked, session) {
 function PoolNoteSheet({ sessionId, swimmers, setGroups, presetSet, onSaved, onClose }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-end bg-black/55" onClick={onClose}>
-      <div className="w-full max-w-lg mx-auto bg-pool-900 border-t border-pool-700 rounded-t-2xl px-4 pt-4 pb-6 space-y-3 max-h-[88vh] overflow-y-auto"
+      <div className="w-full max-w-lg mx-auto bg-pool-900 border-t border-pool-700 rounded-t-md px-4 pt-4 pb-6 space-y-3 max-h-[88vh] overflow-y-auto"
         onClick={e => e.stopPropagation()} role="dialog" aria-label="Note something">
         <p className="text-sm font-semibold text-pool-100">
           {presetSet?.label ? <>Note about <span className="text-teal-300">{presetSet.label}</span></> : 'Note something'}
@@ -380,7 +380,7 @@ function Builder({ id }) {
           <div className="flex items-center gap-3 shrink-0">
             {payload.status !== 'cancelled' && (
               <button type="button" onClick={toggleReady} disabled={readyBusy}
-                className={ready ? 'font-semibold text-teal-300 disabled:opacity-50' : 'rounded-full border border-teal-600/70 px-2.5 py-1 font-semibold text-teal-200 disabled:opacity-50'}
+                className={ready ? 'font-semibold text-teal-300 disabled:opacity-50' : 'rounded border border-teal-600/70 px-2.5 py-1 font-semibold text-teal-200 disabled:opacity-50'}
                 title={ready ? 'Marked ready. Tap to take that back.' : "Say it's written and ready to run"}>
                 {ready ? 'Ready ✓' : 'Mark ready'}
               </button>
@@ -396,7 +396,7 @@ function Builder({ id }) {
         <>
           <p className="builder-gut py-1.5 bg-pool-900 border-b border-pool-800 text-xs text-pool-400">Tap a set to note something about it, or use + Note.</p>
           <button type="button" onClick={() => openNote(null)}
-            className="fixed bottom-20 right-4 z-40 rounded-full bg-accent-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-black/40">
+            className="fixed bottom-20 right-4 z-40 rounded bg-accent-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-black/40">
             + Note
           </button>
         </>
@@ -420,12 +420,12 @@ function Builder({ id }) {
       )}
       {payload && view !== 'pool' && (
         <div className="flex items-center gap-2 flex-wrap builder-gut py-2 bg-pool-900 border-b border-pool-800 text-xs">
-          <button onClick={() => askStaff(false)} disabled={reading} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
+          <button onClick={() => askStaff(false)} disabled={reading} className="rounded border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100 disabled:opacity-50">
             {reading ? 'The staff are reading…' : 'Ask the staff'}
           </button>
-          <button onClick={() => setJess(j => !j)} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Draft with Jess</button>
+          <button onClick={() => setJess(j => !j)} className="rounded border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Draft with Jess</button>
           {groupCount > 0 && (
-            <button onClick={() => (who === null ? openWho('') : setWho(null))} className="rounded-full border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Who swims each group</button>
+            <button onClick={() => (who === null ? openWho('') : setWho(null))} className="rounded border border-pool-700 bg-pool-800 px-3 py-1.5 font-semibold text-pool-100">Who swims each group</button>
           )}
           <label className="flex items-center gap-1.5 text-pool-400 ml-auto">
             <input type="checkbox" checked={live} onChange={toggleLive} /> Comment as I write
@@ -444,12 +444,12 @@ function Builder({ id }) {
         <div className="builder-gut py-3 bg-pool-800 border-b border-pool-700 space-y-2 text-xs">
           <p className="text-pool-300">Tell Jess what the session is for: the aim, the groups, anything you want in it. She writes it in your current style; you edit from there.</p>
           <textarea value={brief} onChange={e => setBrief(e.target.value)} rows={3} placeholder="e.g. Aerobic Monday. Girls threshold 3 rounds, boys pull with paddles, finish with some fast 25s off the blocks."
-            className="w-full bg-pool-700 border border-pool-600 rounded-lg px-3 py-2 text-sm text-pool-100" />
+            className="w-full bg-pool-700 border border-pool-600 rounded px-3 py-2 text-sm text-pool-100" />
           <VoiceInput onTranscript={t => setBrief(b => (b ? b + ' ' : '') + t)} placeholder="Or tap the mic and say it" />
           <div className="flex gap-2 justify-end">
             <button onClick={() => setJess(false)} className="px-3 py-1.5 text-pool-400">Cancel</button>
             <button onClick={draftWithJess} disabled={!brief.trim() || drafting === 'Jess is writing…'}
-              className="px-3 py-1.5 rounded-lg bg-accent-600 text-white font-semibold disabled:opacity-40">{drafting === 'Jess is writing…' ? 'Jess is writing…' : 'Write it'}</button>
+              className="px-3 py-1.5 rounded bg-accent-600 text-white font-semibold disabled:opacity-40">{drafting === 'Jess is writing…' ? 'Jess is writing…' : 'Write it'}</button>
           </div>
         </div>
       )}
