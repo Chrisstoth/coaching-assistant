@@ -106,7 +106,7 @@ export default function CoachCheckIns() {
                       {KIND_LABELS[item.checkin_type] || item.checkin_type} · {dateLabel(item.completed_at || item.created_at)}
                     </p>
                   </div>
-                  <span className={`text-[10px] uppercase tracking-wide rounded-full px-2 py-1 shrink-0 ${
+                  <span className={`text-[10px] uppercase tracking-wide rounded px-2 py-1 shrink-0 ${
                     item.status === 'completed' ? 'bg-teal-900/60 text-teal-300' :
                       item.status === 'skipped' ? 'bg-pool-700 text-pool-500' : 'bg-amber-900/40 text-amber-300'
                   }`}>

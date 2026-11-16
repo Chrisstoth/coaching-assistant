@@ -80,7 +80,7 @@ function BlockStatusCard({ status }) {
           )}
         </div>
         {group && (
-          <span className="text-xs font-semibold bg-accent-600/30 text-accent-300 rounded-full px-2 py-0.5">{group}</span>
+          <span className="text-xs font-semibold bg-accent-600/30 text-accent-300 rounded px-2 py-0.5">{group}</span>
         )}
       </div>
 
@@ -310,7 +310,7 @@ function ProfileProgressCard({ status, physicalProfile, psychologicalProfile, on
           <p className="text-[10px] uppercase tracking-wide text-pool-500 mb-1.5">Still to cover</p>
           <div className="flex flex-wrap gap-1.5">
             {status.missing_areas.map(area => (
-              <span key={area} className="text-[10px] bg-pool-800/80 border border-pool-700 rounded-full px-2 py-1 text-pool-300">
+              <span key={area} className="text-[10px] bg-pool-800/80 border border-pool-700 rounded px-2 py-1 text-pool-300">
                 {area}
               </span>
             ))}
@@ -1266,7 +1266,7 @@ export default function SwimmerDetail() {
                           {p.target_events_benefited?.length > 0 && (
                             <div className="flex flex-wrap gap-1 ml-7">
                               {p.target_events_benefited.map(ev => (
-                                <span key={ev} className="text-xs bg-pool-700 rounded-full px-2 py-0.5 text-pool-300">{ev}</span>
+                                <span key={ev} className="text-xs bg-pool-700 rounded px-2 py-0.5 text-pool-300">{ev}</span>
                               ))}
                             </div>
                           )}
@@ -1281,7 +1281,7 @@ export default function SwimmerDetail() {
                       <p className="text-xs text-pool-400 font-semibold uppercase tracking-wide">Biggest opportunity events</p>
                       <div className="flex flex-wrap gap-1.5">
                         {perfAnalyses[0].data.opportunity_events.map(ev => (
-                          <span key={ev} className="text-xs bg-orange-900/40 border border-orange-700 rounded-full px-2.5 py-1 text-orange-200">{ev}</span>
+                          <span key={ev} className="text-xs bg-orange-900/40 border border-orange-700 rounded px-2.5 py-1 text-orange-200">{ev}</span>
                         ))}
                       </div>
                     </div>
@@ -1359,7 +1359,7 @@ export default function SwimmerDetail() {
                   {readiness.key_factors?.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {readiness.key_factors.map((f, i) => (
-                        <span key={i} className="text-xs bg-pool-700 rounded-full px-2 py-0.5 text-pool-300">{f}</span>
+                        <span key={i} className="text-xs bg-pool-700 rounded px-2 py-0.5 text-pool-300">{f}</span>
                       ))}
                     </div>
                   )}
@@ -1569,7 +1569,7 @@ export default function SwimmerDetail() {
                                   await api.updateTarget(t.id, { achieved: true, achieved_date: new Date().toISOString().split('T')[0] })
                                   setTargets(prev => prev.map(x => x.id === t.id ? {...x, achieved: true} : x))
                                 }}
-                                className="text-xs text-green-400 border border-green-800 rounded-full px-2 py-0.5"
+                                className="text-xs text-green-400 border border-green-800 rounded px-2 py-0.5"
                               >✓</button>
                             )}
                             <button
@@ -1642,7 +1642,7 @@ export default function SwimmerDetail() {
                         <div key={i} className="flex justify-between items-center text-sm">
                           <span>{e.event || e}</span>
                           {e.course && (
-                            <span className="text-xs bg-pool-700 rounded-full px-2 py-0.5 text-pool-300">{e.course}</span>
+                            <span className="text-xs bg-pool-700 rounded px-2 py-0.5 text-pool-300">{e.course}</span>
                           )}
                         </div>
                       ))}
@@ -1665,7 +1665,7 @@ export default function SwimmerDetail() {
                       {eventsForm.map((e, i) => (
                         <div key={i} className="flex items-center gap-2">
                           <span className="flex-1 text-sm">{e.event}</span>
-                          <span className="text-xs bg-pool-700 rounded-full px-2 py-0.5 text-pool-300 shrink-0">{e.course}</span>
+                          <span className="text-xs bg-pool-700 rounded px-2 py-0.5 text-pool-300 shrink-0">{e.course}</span>
                           <button
                             onClick={() => setEventsForm(prev => prev.filter((_, idx) => idx !== i))}
                             className="text-red-400 text-sm shrink-0"
@@ -2033,7 +2033,7 @@ export default function SwimmerDetail() {
                       <div className="flex justify-between items-start gap-2">
                         <div className="flex items-center gap-2 flex-wrap">
                           {o.date && <span className="text-xs text-pool-400">{o.date}</span>}
-                          {o.event && <span className="text-xs text-accent-400 bg-accent-600/15 rounded-full px-2 py-0.5">{o.event}</span>}
+                          {o.event && <span className="text-xs text-accent-400 bg-accent-600/15 rounded px-2 py-0.5">{o.event}</span>}
                         </div>
                         <button
                           onClick={async () => {
@@ -2074,7 +2074,7 @@ export default function SwimmerDetail() {
                 <button
                   onClick={saveSlots}
                   disabled={savingSlots}
-                  className="text-xs bg-accent-600 disabled:opacity-40 rounded-full px-3 py-1.5 font-semibold"
+                  className="text-xs bg-accent-600 disabled:opacity-40 rounded px-3 py-1.5 font-semibold"
                 >
                   {savingSlots ? 'Saving...' : 'Save'}
                 </button>
@@ -2110,7 +2110,7 @@ export default function SwimmerDetail() {
                 </div>
                 <button
                   onClick={() => setShowLoadForm(!showLoadForm)}
-                  className="text-xs bg-pool-700 rounded-full px-3 py-1.5 font-semibold"
+                  className="text-xs bg-pool-700 rounded px-3 py-1.5 font-semibold"
                 >
                   {showLoadForm ? 'Cancel' : '+ Add'}
                 </button>
@@ -2125,7 +2125,7 @@ export default function SwimmerDetail() {
                   <div className="flex justify-between items-start">
                     <div className="space-y-0.5">
                       <div className="flex items-center gap-2">
-                        <span className={`text-xs rounded-full px-2 py-0.5 capitalize ${
+                        <span className={`text-xs rounded px-2 py-0.5 capitalize ${
                           e.event_type === 'competition' ? 'bg-purple-800 text-purple-200' :
                           e.event_type === 'illness' ? 'bg-red-900 text-red-200' :
                           e.event_type === 'injury' ? 'bg-orange-900 text-orange-200' :
@@ -2190,7 +2190,7 @@ export default function SwimmerDetail() {
                       <button
                         key={s}
                         onClick={() => setLoadForm({ ...loadForm, severity: s })}
-                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                        className={`rounded px-3 py-1 text-xs font-medium ${
                           loadForm.severity === s
                             ? s === 1 ? 'bg-green-800 text-green-200'
                               : s === 2 ? 'bg-yellow-800 text-yellow-200'
@@ -2330,7 +2330,7 @@ export default function SwimmerDetail() {
               analyses.map((a) => (
                 <div key={a.id} className="bg-pool-800 rounded-xl p-4">
                   <div className="flex justify-between items-center mb-2">
-                    <span className="text-xs bg-pool-700 rounded-full px-2 py-0.5 text-pool-400 capitalize">
+                    <span className="text-xs bg-pool-700 rounded px-2 py-0.5 text-pool-400 capitalize">
                       {a.type}
                     </span>
                     <span className="text-pool-400 text-xs">{a.created_at?.split('T')[0]}</span>
@@ -2617,7 +2617,7 @@ function ReadinessBadge({ state }) {
     pre_competition:     { label: 'Pre-competition',    bg: 'bg-purple-800 text-purple-200' },
   }
   const { label, bg } = config[state] || { label: state, bg: 'bg-pool-700 text-pool-300' }
-  return <span className={`text-xs rounded-full px-2.5 py-1 font-medium ${bg}`}>{label}</span>
+  return <span className={`text-xs rounded px-2.5 py-1 font-medium ${bg}`}>{label}</span>
 }
 
 function ContextCard({ label, value, detail, ok }) {

@@ -73,13 +73,13 @@ export default function Swimmers() {
           <div className="flex gap-2">
             <button
               onClick={() => setSelecting(true)}
-              className="text-pool-400 text-sm font-medium px-3 py-1.5 border border-pool-700 rounded-full"
+              className="text-pool-400 text-sm font-medium px-3 py-1.5 border border-pool-700 rounded"
             >
               Select
             </button>
             <Link
               to="/swimmers/new"
-              className="bg-accent-600 text-white rounded-full px-4 py-1.5 text-sm font-semibold"
+              className="bg-accent-600 text-white rounded px-4 py-1.5 text-sm font-semibold"
             >
               + Add
             </Link>
@@ -212,7 +212,7 @@ export default function Swimmers() {
                     </p>
                   </div>
                   {s.status && s.status !== 'active' && (
-                    <span className={`text-xs rounded-full px-2 py-0.5 shrink-0 ${statusColor}`}>
+                    <span className={`text-xs rounded px-2 py-0.5 shrink-0 ${statusColor}`}>
                       {({ sabbatical: 'Sabbatical', occasional: 'Uni / visiting' })[s.status] || 'Injury'}
                     </span>
                   )}
@@ -235,7 +235,7 @@ export default function Swimmers() {
                 </div>
                 <div className="flex items-center gap-2 ml-2 shrink-0">
                   {s.status && s.status !== 'active' && (
-                    <span className={`text-xs rounded-full px-2 py-0.5 capitalize ${statusColor}`}>
+                    <span className={`text-xs rounded px-2 py-0.5 capitalize ${statusColor}`}>
                       {({ sabbatical: 'Sabbatical', occasional: 'Uni / visiting' })[s.status] || 'Injury'}
                     </span>
                   )}
@@ -243,7 +243,7 @@ export default function Swimmers() {
                       so staleness shows even when completeness does not. */}
                   {s.active && profileStatus.stale && (
                     <span
-                      className="text-[10px] rounded-full px-2 py-0.5 shrink-0 bg-amber-900/50 text-amber-300"
+                      className="text-[10px] rounded px-2 py-0.5 shrink-0 bg-amber-900/50 text-amber-300"
                       title={`${profileStatus.observations_since_profile} observations recorded since the profile was built`}
                     >
                       +{profileStatus.observations_since_profile} obs
@@ -251,7 +251,7 @@ export default function Swimmers() {
                   )}
                   {s.active && profileStatus.state !== 'complete' && (
                     <span
-                      className={`text-[10px] rounded-full px-2 py-0.5 shrink-0 ${
+                      className={`text-[10px] rounded px-2 py-0.5 shrink-0 ${
                         profileStatus.state === 'in_progress'
                           ? 'bg-amber-900/50 text-amber-300'
                           : 'bg-pool-700 text-pool-400'

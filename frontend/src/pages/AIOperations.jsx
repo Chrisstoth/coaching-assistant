@@ -31,7 +31,7 @@ function OperationCard({ item, onRetry, retrying }) {
           <h2 className="text-sm font-semibold text-pool-100 leading-snug">{item.title}</h2>
           <p className="text-[11px] text-pool-500 mt-1">Operation #{item.id} · {item.execution_mode} · created {formatDate(item.created_at)}</p>
         </div>
-        <span className={`rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide shrink-0 ${statusStyle}`}>
+        <span className={`rounded px-2 py-1 text-[10px] font-semibold uppercase tracking-wide shrink-0 ${statusStyle}`}>
           {item.status}
         </span>
       </div>

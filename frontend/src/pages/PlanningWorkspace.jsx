@@ -238,7 +238,7 @@ function ChatPanel({ macro, macros, onDraft, onPlanChanged, onStaffChanged, queu
                 key={sug.label}
                 onClick={() => send(sug.text)}
                 disabled={!thread}
-                className="text-[11px] bg-pool-800 border border-pool-600 text-pool-300 rounded-full px-3 py-1 disabled:opacity-40"
+                className="text-[11px] bg-pool-800 border border-pool-600 text-pool-300 rounded px-3 py-1 disabled:opacity-40"
               >
                 {sug.label}
               </button>
@@ -301,7 +301,7 @@ function DraftCard({ kind, draft, macros, macroId, onSaved, onDismiss }) {
             {item.chips && item.chips.length > 0 && (
               <div className="flex flex-wrap gap-1 pt-0.5">
                 {item.chips.map(name => (
-                  <span key={name} className="text-[10px] bg-pool-700 text-pool-300 rounded-full px-2 py-0.5">{name}</span>
+                  <span key={name} className="text-[10px] bg-pool-700 text-pool-300 rounded px-2 py-0.5">{name}</span>
                 ))}
               </div>
             )}

@@ -1464,7 +1464,7 @@ function ChatStart({
               key={text}
               type="button"
               onClick={() => onAsk(text)}
-              className="text-xs bg-pool-800 hover:bg-pool-700 border border-pool-700 hover:border-accent-600/50 rounded-full px-3 py-2 text-pool-300 transition-colors"
+              className="text-xs bg-pool-800 hover:bg-pool-700 border border-pool-700 hover:border-accent-600/50 rounded px-3 py-2 text-pool-300 transition-colors"
             >
               {text}
             </button>
@@ -1682,7 +1682,7 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
                         {sg.swimmer_names?.length > 0 && (
                           <div className="flex flex-wrap gap-1">
                             {sg.swimmer_names.map(n => (
-                              <span key={n} className="text-xs bg-teal-900/40 text-teal-300 border border-teal-800/50 rounded-full px-1.5 py-0">{n}</span>
+                              <span key={n} className="text-xs bg-teal-900/40 text-teal-300 border border-teal-800/50 rounded px-1.5 py-0">{n}</span>
                             ))}
                           </div>
                         )}
@@ -1718,7 +1718,7 @@ function SessionDraftCard({ draft, saving, onConfirm, onDismiss }) {
               {(g.sub_groups || []).length === 0 && g.swimmer_names?.length > 0 && (
                 <div className="flex flex-wrap gap-1">
                   {g.swimmer_names.map(n => (
-                    <span key={n} className="text-xs bg-teal-900/40 text-teal-300 border border-teal-800/50 rounded-full px-2 py-0.5">{n}</span>
+                    <span key={n} className="text-xs bg-teal-900/40 text-teal-300 border border-teal-800/50 rounded px-2 py-0.5">{n}</span>
                   ))}
                 </div>
               )}

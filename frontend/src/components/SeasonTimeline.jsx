@@ -149,7 +149,7 @@ function WeekDetail({ week, macroId, onSaved, onClose }) {
       {week.meets.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {week.meets.map(m => (
-            <span key={m.id} className="text-[11px] bg-red-900/40 text-red-200 border border-red-700/50 rounded-full px-2.5 py-0.5">
+            <span key={m.id} className="text-[11px] bg-red-900/40 text-red-200 border border-red-700/50 rounded px-2.5 py-0.5">
               {m.name}
             </span>
           ))}

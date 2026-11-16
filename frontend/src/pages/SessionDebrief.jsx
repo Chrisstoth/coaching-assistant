@@ -32,11 +32,11 @@ function ReviewProposal({ proposal, decision, onChange }) {
       rejected ? 'border-pool-700/40 bg-pool-800/40 opacity-50' : 'border-pool-700 bg-pool-800'
     }`}>
       <div className="flex items-center gap-2">
-        <span className={`text-[10px] rounded-full px-2 py-0.5 font-medium ${KIND_COLORS[proposal.kind] || KIND_COLORS.observation}`}>
+        <span className={`text-[10px] rounded px-2 py-0.5 font-medium ${KIND_COLORS[proposal.kind] || KIND_COLORS.observation}`}>
           {KIND_LABELS[proposal.kind] || proposal.kind}
         </span>
         {proposal.confidence === 'low' && (
-          <span className="text-[10px] rounded-full px-2 py-0.5 bg-amber-900/40 text-amber-300">low confidence</span>
+          <span className="text-[10px] rounded px-2 py-0.5 bg-amber-900/40 text-amber-300">low confidence</span>
         )}
       </div>
 

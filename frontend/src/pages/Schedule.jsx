@@ -176,7 +176,7 @@ function EditSheet({ slot, swimmers, onClose, onSaved, onDeleted }) {
               <p className="text-xs text-pool-400 font-medium uppercase tracking-wide">Assigned swimmers</p>
               <div className="flex flex-wrap gap-1.5">
                 {swimmers.map(s => (
-                  <span key={s.id} className="text-xs bg-pool-700 rounded-full px-3 py-1 text-pool-200">{s.name}</span>
+                  <span key={s.id} className="text-xs bg-pool-700 rounded px-3 py-1 text-pool-200">{s.name}</span>
                 ))}
               </div>
               <p className="text-xs text-pool-500">Edit attendance on each swimmer's profile → Attendance tab.</p>
@@ -319,7 +319,7 @@ export default function Schedule() {
         </div>
         <button
           onClick={() => setShowAdd(!showAdd)}
-          className="bg-accent-600 text-white rounded-full px-4 py-1.5 text-sm font-semibold"
+          className="bg-accent-600 text-white rounded px-4 py-1.5 text-sm font-semibold"
         >
           {showAdd ? 'Cancel' : '+ Add slot'}
         </button>

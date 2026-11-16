@@ -61,7 +61,7 @@ export default function AskTheStaff({ subject, subjectLabel, placeholder, trigge
                 key={role}
                 onClick={() => toggle(role)}
                 aria-pressed={on}
-                className={`text-[11px] rounded-full px-2.5 py-1 border ${on ? 'text-white' : 'text-pool-300 bg-pool-700 border-pool-600'}`}
+                className={`text-[11px] rounded px-2.5 py-1 border ${on ? 'text-white' : 'text-pool-300 bg-pool-700 border-pool-600'}`}
                 style={on ? { backgroundColor: style.colour, borderColor: style.colour } : undefined}
               >
                 {style.title}

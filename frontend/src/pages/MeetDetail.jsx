@@ -592,22 +592,22 @@ export default function MeetDetail() {
           </p>
           <div className="flex flex-wrap gap-1.5 mt-2">
             {meet.course && (
-              <span className="text-xs bg-pool-700 rounded-full px-2.5 py-0.5 text-pool-200">{meet.course}</span>
+              <span className="text-xs bg-pool-700 rounded px-2.5 py-0.5 text-pool-200">{meet.course}</span>
             )}
             {meet.level && (
-              <span className={`text-xs rounded-full px-2.5 py-0.5 font-medium ${
+              <span className={`text-xs rounded px-2.5 py-0.5 font-medium ${
                 { club: 'bg-pool-700 text-pool-300', regional: 'bg-blue-900 text-blue-200', national: 'bg-purple-900 text-purple-200', international: 'bg-amber-900 text-amber-200' }[meet.level] || 'bg-pool-700 text-pool-300'
               }`}>
                 {LEVEL_LABELS[meet.level] || meet.level}
               </span>
             )}
             {meet.warm_up_time && (
-              <span className="text-xs bg-pool-700 rounded-full px-2.5 py-0.5 text-pool-300">
+              <span className="text-xs bg-pool-700 rounded px-2.5 py-0.5 text-pool-300">
                 Warm-up {meet.warm_up_time}
               </span>
             )}
             {daysUntil !== null && daysUntil >= 0 && (
-              <span className={`text-xs rounded-full px-2.5 py-0.5 font-medium ${daysUntil <= 7 ? 'bg-amber-900 text-amber-200' : 'bg-emerald-900/50 text-emerald-300'}`}>
+              <span className={`text-xs rounded px-2.5 py-0.5 font-medium ${daysUntil <= 7 ? 'bg-amber-900 text-amber-200' : 'bg-emerald-900/50 text-emerald-300'}`}>
                 {daysUntil === 0 ? 'Today' : daysUntil === 1 ? 'Tomorrow' : `${daysUntil} days`}
               </span>
             )}
@@ -986,7 +986,7 @@ export default function MeetDetail() {
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-sm">{t.swimmer_name}</p>
                         {t.priority && (
-                          <span className={`text-xs rounded-full px-2 py-0.5 font-bold ${PRIORITY_COLORS[t.priority] || 'bg-pool-700 text-pool-300'}`}>
+                          <span className={`text-xs rounded px-2 py-0.5 font-bold ${PRIORITY_COLORS[t.priority] || 'bg-pool-700 text-pool-300'}`}>
                             {t.priority}
                           </span>
                         )}
@@ -995,7 +995,7 @@ export default function MeetDetail() {
                       {t.events.length > 0 && (
                         <div className="flex flex-wrap gap-1 mt-2">
                           {t.events.map(ev => (
-                            <span key={ev} className="text-xs bg-pool-700 rounded-full px-2.5 py-0.5 text-pool-200">
+                            <span key={ev} className="text-xs bg-pool-700 rounded px-2.5 py-0.5 text-pool-200">
                               {ev}
                               {t.target_times?.[ev] && (
                                 <span className="text-accent-400 ml-1">{t.target_times[ev]}</span>
@@ -1090,7 +1090,7 @@ export default function MeetDetail() {
                   <button
                     key={ev}
                     onClick={() => toggleEvent(ev)}
-                    className={`text-sm rounded-full px-3 py-1.5 border transition-colors ${
+                    className={`text-sm rounded px-3 py-1.5 border transition-colors ${
                       assignForm.events.includes(ev)
                         ? 'bg-accent-600 border-accent-500 text-white'
                         : 'bg-pool-700 border-pool-600 text-pool-300'

@@ -82,7 +82,7 @@ export default function CoachingContext() {
             <button
               key={v}
               onClick={() => setView(v)}
-              className={`text-xs px-3 py-1.5 rounded-full font-medium capitalize ${
+              className={`text-xs px-3 py-1.5 rounded font-medium capitalize ${
                 view === v || (view === 'history-detail' && v === 'history')
                   ? 'bg-accent-600 text-white'
                   : 'bg-pool-700 text-pool-400'
@@ -255,7 +255,7 @@ export default function CoachingContext() {
                 </div>
                 <button
                   onClick={() => setView('chat')}
-                  className="text-xs bg-accent-700 text-accent-200 rounded-full px-3 py-1.5 font-medium"
+                  className="text-xs bg-accent-700 text-accent-200 rounded px-3 py-1.5 font-medium"
                 >
                   + Update
                 </button>
@@ -295,7 +295,7 @@ export default function CoachingContext() {
                   <p className="font-medium text-sm text-pool-200">{p.title}</p>
                   <div className="flex items-center gap-2 shrink-0">
                     {p.is_current && (
-                      <span className="text-xs bg-emerald-900 text-emerald-300 rounded-full px-2 py-0.5 font-medium">Current</span>
+                      <span className="text-xs bg-emerald-900 text-emerald-300 rounded px-2 py-0.5 font-medium">Current</span>
                     )}
                     <span className="text-pool-500 text-xs">›</span>
                   </div>
@@ -318,7 +318,7 @@ export default function CoachingContext() {
           <div>
             <p className="font-semibold text-pool-200">{selectedProfile.title}</p>
             <p className="text-xs text-pool-500">{new Date(selectedProfile.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-            {selectedProfile.is_current && <span className="text-xs bg-emerald-900 text-emerald-300 rounded-full px-2 py-0.5 font-medium inline-block mt-1">Current</span>}
+            {selectedProfile.is_current && <span className="text-xs bg-emerald-900 text-emerald-300 rounded px-2 py-0.5 font-medium inline-block mt-1">Current</span>}
           </div>
           {[
             { label: 'Philosophy & Ethos', content: selectedProfile.ethos },

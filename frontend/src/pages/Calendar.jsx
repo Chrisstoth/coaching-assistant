@@ -223,15 +223,15 @@ function SessionCard({ item, dayDate, starting, onStart, onCancel, onOpen, onWri
           <div className="flex items-center gap-2">
             <p className="font-medium text-sm truncate">{item.label}</p>
             {item.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{item.cycle_code}</span>}
-            {toRun && item.plan_ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded-full px-2 py-0.5 shrink-0">Ready ✓</span>}
-            {toRun && !item.plan_ready && item.has_plan && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded-full px-2 py-0.5 shrink-0">Written</span>}
+            {toRun && item.plan_ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded px-2 py-0.5 shrink-0">Ready ✓</span>}
+            {toRun && !item.plan_ready && item.has_plan && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded px-2 py-0.5 shrink-0">Written</span>}
           </div>
           <p className="text-pool-400 text-xs mt-0.5">
             {item.time}{item.end_time ? `–${item.end_time}` : ''}
           </p>
           {poolMeta && <p className="text-pool-500 text-xs mt-0.5">{poolMeta}</p>}
         </div>
-        <span className={`shrink-0 text-xs rounded-full px-2.5 py-1 font-medium ${chip.cls}`}>
+        <span className={`shrink-0 text-xs rounded px-2.5 py-1 font-medium ${chip.cls}`}>
           {chip.label}
         </span>
       </div>
@@ -464,7 +464,7 @@ export default function Calendar() {
                 <button
                   key={r}
                   onClick={() => setCancelReason(r)}
-                  className={`text-sm rounded-full px-3 py-1.5 border ${cancelReason === r ? 'bg-accent-600 border-accent-500 text-white' : 'bg-pool-700 border-pool-600 text-pool-200'}`}
+                  className={`text-sm rounded px-3 py-1.5 border ${cancelReason === r ? 'bg-accent-600 border-accent-500 text-white' : 'bg-pool-700 border-pool-600 text-pool-200'}`}
                 >
                   {r}
                 </button>

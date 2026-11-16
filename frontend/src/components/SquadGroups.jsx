@@ -282,7 +282,7 @@ export default function SquadGroups() {
         </p>
         {data.groups.length > 0 && editing === null && (
           <button onClick={() => { setSelecting(v => !v); setSelected(new Set()) }}
-            className="text-xs text-pool-400 border border-pool-700 rounded-full px-3 py-1 shrink-0">
+            className="text-xs text-pool-400 border border-pool-700 rounded px-3 py-1 shrink-0">
             {selecting ? 'Cancel' : 'Select'}
           </button>
         )}
@@ -351,7 +351,7 @@ export default function SquadGroups() {
               The Swimmer Manager can check whether everyone still fits their group. Any move comes to you to approve.
             </p>
             <button onClick={askStaff} disabled={staffBusy}
-              className="text-xs text-accent-300 border border-accent-700/60 rounded-full px-3 py-1 shrink-0 disabled:opacity-40">
+              className="text-xs text-accent-300 border border-accent-700/60 rounded px-3 py-1 shrink-0 disabled:opacity-40">
               Ask the staff
             </button>
           </div>

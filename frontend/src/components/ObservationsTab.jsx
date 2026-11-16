@@ -133,7 +133,7 @@ export default function ObservationsTab({
               <button
                 key={value}
                 onClick={() => setForm({ ...form, obs_type: value, event: '' })}
-                className={`rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+                className={`rounded px-3 py-1.5 text-xs font-medium transition-colors ${
                   form.obs_type === value ? typeColour(value) : 'bg-pool-700 text-pool-400'
                 }`}
               >
@@ -240,7 +240,7 @@ export default function ObservationsTab({
       <div className="flex gap-1.5 overflow-x-auto pb-1">
         <button
           onClick={() => setObsFilter('all')}
-          className={`rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap ${
+          className={`rounded px-3 py-1.5 text-xs font-medium whitespace-nowrap ${
             obsFilter === 'all' ? 'bg-pool-500 text-white' : 'bg-pool-700 text-pool-400'
           }`}
         >
@@ -250,7 +250,7 @@ export default function ObservationsTab({
           <button
             key={value}
             onClick={() => setObsFilter(value)}
-            className={`rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap ${
+            className={`rounded px-3 py-1.5 text-xs font-medium whitespace-nowrap ${
               obsFilter === value ? typeColour(value) : 'bg-pool-700 text-pool-400'
             }`}
           >
@@ -270,7 +270,7 @@ export default function ObservationsTab({
             <div key={obs.id} className="bg-pool-800 rounded-xl p-4 space-y-2">
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-2">
-                  <span className={`text-xs rounded-full px-2 py-0.5 ${typeColour(obs.obs_type)}`}>
+                  <span className={`text-xs rounded px-2 py-0.5 ${typeColour(obs.obs_type)}`}>
                     {typeLabel(obs.obs_type)}
                   </span>
                   {obs.event && (

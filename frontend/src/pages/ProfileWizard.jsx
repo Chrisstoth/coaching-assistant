@@ -172,7 +172,7 @@ function FoundationDraftReview({ draft, saving, onSave, onCancel }) {
               Stored profile text has been copied into directly matching fields. Edit anything that is inaccurate; blank fields can be completed through the interview later.
             </p>
             {draft.uses_ai === false && (
-              <span className="inline-block mt-2 bg-green-900/30 border border-green-800/50 text-green-300 rounded-full px-2 py-1 text-[10px] font-semibold">
+              <span className="inline-block mt-2 bg-green-900/30 border border-green-800/50 text-green-300 rounded px-2 py-1 text-[10px] font-semibold">
                 No AI call · no tokens used
               </span>
             )}
@@ -198,7 +198,7 @@ function FoundationDraftReview({ draft, saving, onSave, onCancel }) {
               <label key={key} className="block bg-pool-800 border border-pool-700 rounded-xl p-3">
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <span className="text-xs font-semibold text-pool-200">{label}</span>
-                  <span className={`text-[9px] border rounded-full px-2 py-0.5 ${confidenceStyle[confidence] || confidenceStyle.missing}`}>
+                  <span className={`text-[9px] border rounded px-2 py-0.5 ${confidenceStyle[confidence] || confidenceStyle.missing}`}>
                     {confidenceLabel[confidence] || confidenceLabel.missing}
                   </span>
                 </div>
@@ -977,7 +977,7 @@ export default function ProfileWizard() {
             <button
               type="button"
               onClick={toggleVoice}
-              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded border transition-colors ${
                 voiceOn ? 'bg-accent-600 border-accent-500 text-white' : 'border-pool-600 text-pool-400'
               }`}
               aria-pressed={voiceOn}
@@ -991,7 +991,7 @@ export default function ProfileWizard() {
               <button
                 type="button"
                 onClick={toggleHandsFree}
-                className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors ${
+                className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded border transition-colors ${
                   handsFree ? 'bg-green-700 border-green-600 text-white' : 'border-pool-600 text-pool-400'
                 }`}
                 aria-pressed={handsFree}

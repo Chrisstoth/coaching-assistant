@@ -128,12 +128,12 @@ export function NoteComposer({ sessionId, swimmers = [], setGroups = [], presetS
           <div className="flex flex-wrap gap-1.5">
             {shown.map(s => (
               <button key={s.id} type="button" onClick={() => toggle(s.id)} aria-pressed={chosen.has(s.id)}
-                className={`rounded-full px-2.5 py-1 text-xs font-medium border ${chosen.has(s.id) ? 'bg-accent-600 border-accent-500 text-white' : 'bg-pool-800 border-pool-600 text-pool-300'}`}>
+                className={`rounded px-2.5 py-1 text-xs font-medium border ${chosen.has(s.id) ? 'bg-accent-600 border-accent-500 text-white' : 'bg-pool-800 border-pool-600 text-pool-300'}`}>
                 {s.name.split(' ')[0]}{swimmers.filter(x => x.name.split(' ')[0] === s.name.split(' ')[0]).length > 1 ? ` ${(s.name.split(' ')[1] || '').slice(0, 1)}` : ''}
               </button>
             ))}
             {hidden > 0 && (
-              <button type="button" onClick={() => setEveryone(true)} className="rounded-full px-2.5 py-1 text-xs text-accent-400">
+              <button type="button" onClick={() => setEveryone(true)} className="rounded px-2.5 py-1 text-xs text-accent-400">
                 + {hidden} not here
               </button>
             )}

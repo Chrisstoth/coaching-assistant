@@ -71,7 +71,7 @@ function MemberPicker({ pathway, swimmers, groups, onSaved, onCancel }) {
           {groups.filter(g => g.swimmers.length).map(g => (
             <button key={g.id}
               onClick={() => setChosen(prev => new Set([...prev, ...g.swimmers.map(s => s.id)]))}
-              className="text-[11px] rounded-full px-2.5 py-0.5 border border-accent-700/60 text-accent-300">
+              className="text-[11px] rounded px-2.5 py-0.5 border border-accent-700/60 text-accent-300">
               + {g.name} ({g.swimmers.length})
             </button>
           ))}
@@ -82,7 +82,7 @@ function MemberPicker({ pathway, swimmers, groups, onSaved, onCancel }) {
           <button
             key={s.id}
             onClick={() => toggle(s.id)}
-            className={`text-[11px] rounded-full px-2.5 py-1 border transition-colors ${
+            className={`text-[11px] rounded px-2.5 py-1 border transition-colors ${
               chosen.has(s.id)
                 ? 'bg-accent-600 border-accent-500 text-white'
                 : 'bg-pool-700 border-pool-600 text-pool-300'
@@ -237,7 +237,7 @@ function PathwayCard({ pathway, index, meets, swimmers, groups, onReload }) {
                   const st = qualStyle(m.qualification_status)
                   return (
                     <span key={m.id}
-                      className={`flex items-center gap-1.5 text-[11px] bg-pool-700 rounded-full px-2.5 py-0.5 ${
+                      className={`flex items-center gap-1.5 text-[11px] bg-pool-700 rounded px-2.5 py-0.5 ${
                         memberEnded(m, today) ? 'text-pool-500 line-through' : 'text-pool-200'}`}>
                       <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} title={st.label} />
                       {memberLabel(m, today)}

@@ -23,7 +23,7 @@ function StatusChip({ cancelled, done, covered, ready, written }) {
       : ready ? ['Ready ✓', 'text-teal-200 bg-teal-900/40 border-teal-600/50']
         : written ? ['Written', 'text-pool-300 bg-pool-800 border-pool-600']
           : ['Not written yet', 'text-amber-300 bg-amber-900/25 border-amber-700/40']
-  return <span className={`text-[11px] font-semibold rounded-full border px-2.5 py-1 shrink-0 ${style}`}>{text}</span>
+  return <span className={`text-[11px] font-semibold rounded border px-2.5 py-1 shrink-0 ${style}`}>{text}</span>
 }
 
 // "I didn't take this session": no register or debrief is expected of the coach,

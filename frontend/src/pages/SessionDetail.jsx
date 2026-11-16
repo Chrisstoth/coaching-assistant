@@ -48,7 +48,7 @@ function VolumeDisplay({ breakdown, presentation = DEFAULT_PRESENTATION }) {
       <p className="text-xs text-pool-500 mb-1.5">Volume breakdown</p>
       <div className="flex flex-wrap gap-1.5">
         {entries.map(([k, v]) => (
-          <span key={k} className="text-xs px-2 py-0.5 rounded-full font-medium" style={{ background: VOL_COLOURS[k] + '33', color: VOL_COLOURS[k], border: `1px solid ${VOL_COLOURS[k]}55` }}>
+          <span key={k} className="text-xs px-2 py-0.5 rounded font-medium" style={{ background: VOL_COLOURS[k] + '33', color: VOL_COLOURS[k], border: `1px solid ${VOL_COLOURS[k]}55` }}>
             {energyPresentation(k, presentation).label || VOL_LABELS[k]} {(v / 1000).toFixed(2)}km
           </span>
         ))}
@@ -210,7 +210,7 @@ export function SessionTools({ session, setSession, onDeleted }) {
                 <p className="text-sm font-medium">{r.name}</p>
                 <p className="text-xs text-pool-400">{r.reason}</p>
               </div>
-              <span className="bg-accent-600 text-white text-xs rounded-full px-2 py-0.5 ml-2 flex-shrink-0">
+              <span className="bg-accent-600 text-white text-xs rounded px-2 py-0.5 ml-2 flex-shrink-0">
                 G{r.group}
               </span>
             </div>

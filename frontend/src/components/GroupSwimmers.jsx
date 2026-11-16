@@ -97,14 +97,14 @@ export default function GroupSwimmers({ builder, sessionId, focusGroup, onClose,
 
       <div className="flex flex-wrap gap-1.5">
         {groups.map(g => (
-          <span key={g.id} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 ${g.id === focusGroup ? 'border-accent-500' : 'border-pool-600'}`}>
+          <span key={g.id} className={`inline-flex items-center gap-1.5 rounded border px-2.5 py-1 ${g.id === focusGroup ? 'border-accent-500' : 'border-pool-600'}`}>
             <i className="w-2 h-2 rounded-full" style={{ background: g.color }} />
             <span className="font-semibold text-pool-100">{g.name}</span>
             <span className="text-pool-400">{count(g.id)}</span>
           </span>
         ))}
         {data && unplaced > 0 && (
-          <span className="inline-flex items-center rounded-full bg-amber-900/30 text-amber-300 px-2.5 py-1">
+          <span className="inline-flex items-center rounded bg-amber-900/30 text-amber-300 px-2.5 py-1">
             {unplaced} {data.register_taken ? 'who came' : ''} not in a group
           </span>
         )}

@@ -56,7 +56,7 @@ function SessionDose({ analysis }) {
       </div>
       <div className="flex flex-wrap gap-1 mt-2">
         {Object.entries(zones).filter(([, value]) => Number(value) > 0).map(([zone, value]) => (
-          <span key={zone} className="text-[9px] rounded-full bg-pool-800 px-2 py-0.5 text-pool-300">{energy(zone).label} {Number(value).toLocaleString()}m</span>
+          <span key={zone} className="text-[9px] rounded bg-pool-800 px-2 py-0.5 text-pool-300">{energy(zone).label} {Number(value).toLocaleString()}m</span>
         ))}
       </div>
     </div>

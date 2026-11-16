@@ -44,7 +44,7 @@ function SessionCard({ s, onLongPress }) {
         </div>
         <div className="flex flex-col items-end gap-1.5 ml-3">
           {s.energy_system_focus && (
-            <span className={`text-xs rounded-full px-2 py-0.5 ${eColour}`}>
+            <span className={`text-xs rounded px-2 py-0.5 ${eColour}`}>
               {energyDisplay.label}
             </span>
           )}
@@ -75,7 +75,7 @@ function CancelledSessionCard({ session }) {
           </p>
           {session.cancel_reason && <p className="text-xs text-pool-400 mt-1">Reason: {session.cancel_reason}</p>}
         </div>
-        <span className="text-[10px] bg-red-900/30 border border-red-800/40 text-red-300 rounded-full px-2 py-1">Cancelled</span>
+        <span className="text-[10px] bg-red-900/30 border border-red-800/40 text-red-300 rounded px-2 py-1">Cancelled</span>
       </div>
     </div>
   )
@@ -109,7 +109,7 @@ export default function Sessions() {
         <h1 className="text-xl font-bold">Session Log</h1>
         <Link
           to="/sessions/new"
-          className="bg-accent-600 text-white rounded-full px-4 py-1.5 text-sm font-semibold"
+          className="bg-accent-600 text-white rounded px-4 py-1.5 text-sm font-semibold"
         >
           + New
         </Link>

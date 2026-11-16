@@ -129,12 +129,12 @@ export default function TargetTimes() {
         <div className="flex gap-2 overflow-x-auto pb-1 -mx-1 px-1">
           {sets.map(s => (
             <button key={s.id} onClick={() => setSelectedId(s.id)}
-              className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${
+              className={`shrink-0 rounded px-3 py-1.5 text-xs font-medium border transition-colors ${
                 s.id === selectedId ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-600 text-pool-300'}`}>
               {s.name}
             </button>
           ))}
-          <button onClick={() => startNew()} className="shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold border border-dashed border-accent-500 text-accent-400">
+          <button onClick={() => startNew()} className="shrink-0 rounded px-3 py-1.5 text-xs font-semibold border border-dashed border-accent-500 text-accent-400">
             + New target set
           </button>
         </div>
@@ -172,12 +172,12 @@ export default function TargetTimes() {
             <span className={label}>Strokes</span>
             <div className="flex flex-wrap gap-1.5">
               <button onClick={() => set('strokes', null)}
-                className={`rounded-full px-2.5 py-1 text-xs border ${!draft.strokes ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-600 text-pool-300'}`}>
+                className={`rounded px-2.5 py-1 text-xs border ${!draft.strokes ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-600 text-pool-300'}`}>
                 Their target events
               </button>
               {STROKES.map(s => (
                 <button key={s} onClick={() => set('strokes', toggleStroke(draft.strokes, s))}
-                  className={`rounded-full px-2.5 py-1 text-xs border ${draft.strokes?.includes(s) ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-600 text-pool-300'}`}>
+                  className={`rounded px-2.5 py-1 text-xs border ${draft.strokes?.includes(s) ? 'bg-accent-600 border-accent-600 text-white' : 'border-pool-600 text-pool-300'}`}>
                   {SHORT_STROKE[s]}
                 </button>
               ))}

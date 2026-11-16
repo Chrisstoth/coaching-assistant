@@ -28,6 +28,17 @@ export default {
           200: '#bbdefb',
         },
       },
+      // Squared off, like Home's Session Desk: every rounded-* corner is small and
+      // tight. rounded-full stays a circle, for dots, avatars and round buttons.
+      borderRadius: {
+        sm: '2px',
+        DEFAULT: '4px',
+        md: '5px',
+        lg: '5px',
+        xl: '6px',
+        '2xl': '6px',
+        '3xl': '6px',
+      },
       fontFamily: {
         sans: ['Oxanium', 'system-ui', 'sans-serif'],
         brand: ['Orbitron', 'Oxanium', 'sans-serif'],

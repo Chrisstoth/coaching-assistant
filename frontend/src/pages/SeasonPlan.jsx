@@ -443,7 +443,7 @@ function MesoCard({ meso, upcomingMeets, microcycles = [], onEdit, onDelete, pri
         <div className="flex items-center justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              {meso.is_current && <span className="text-xs bg-accent-600 text-white rounded-full px-1.5 py-0.5 font-semibold">NOW</span>}
+              {meso.is_current && <span className="text-xs bg-accent-600 text-white rounded px-1.5 py-0.5 font-semibold">NOW</span>}
               <span className={`text-sm font-semibold ${c.text}`}>{meso.name}</span>
               <span className="text-xs text-pool-500 capitalize">{meso.phase_type}</span>
             </div>
@@ -544,7 +544,7 @@ function MacroCard({ macro, upcomingMeets, microcycles, onReload, onDelete, prin
         <div className="flex items-start justify-between gap-2">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              {macro.is_current && <span className="text-xs bg-accent-600 text-white rounded-full px-2 py-0.5 font-semibold">NOW</span>}
+              {macro.is_current && <span className="text-xs bg-accent-600 text-white rounded px-2 py-0.5 font-semibold">NOW</span>}
               {macro.is_past && <span className="text-xs text-pool-600">Past</span>}
               <span className="text-sm font-bold text-pool-100">{macro.name}</span>
               {macro.squad && <span className="text-xs text-pool-500">{macro.squad}</span>}
@@ -1115,7 +1115,7 @@ function MeetPin({ meet, compact }) {
         <span className="text-xs text-accent-300 shrink-0">{meet.timetable_session_count} sessions</span>
       )}
       {meet.a_count > 0 && (
-        <span className="text-xs bg-red-900/60 border border-red-700/50 text-red-300 rounded-full px-2 py-0.5 shrink-0">
+        <span className="text-xs bg-red-900/60 border border-red-700/50 text-red-300 rounded px-2 py-0.5 shrink-0">
           {meet.a_count}A
         </span>
       )}

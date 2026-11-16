@@ -59,13 +59,13 @@ export default function Meets() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setShowImport(!showImport); setShowForm(false) }}
-            className="border border-pool-600 text-pool-200 rounded-full px-3 py-1.5 text-xs font-semibold"
+            className="border border-pool-600 text-pool-200 rounded px-3 py-1.5 text-xs font-semibold"
           >
             {showImport ? 'Close import' : 'Import Excel'}
           </button>
           <button
             onClick={() => { setShowForm(!showForm); setShowImport(false) }}
-            className="bg-accent-600 text-white rounded-full px-3 py-1.5 text-xs font-semibold"
+            className="bg-accent-600 text-white rounded px-3 py-1.5 text-xs font-semibold"
           >
             {showForm ? 'Cancel' : '+ Add meet'}
           </button>
@@ -260,7 +260,7 @@ function MeetExcelImport({ onImported, onDone }) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium leading-snug">{row.name || `Row ${row.row_number}`}</p>
-                      {row.course && <span className="shrink-0 text-[10px] bg-pool-700 rounded-full px-2 py-0.5 text-pool-300">{row.course}</span>}
+                      {row.course && <span className="shrink-0 text-[10px] bg-pool-700 rounded px-2 py-0.5 text-pool-300">{row.course}</span>}
                     </div>
                     <p className="text-xs text-pool-400 mt-1">{row.date ? fmtDateRange(row.date, row.date_to) : 'Invalid date'}{row.location ? ` · ${row.location}` : ''}</p>
                     {[...(row.errors || []), ...(row.warnings || [])].map((message, index) => (
@@ -304,7 +304,7 @@ function MeetCard({ meet }) {
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
           {levelChip && (
-            <span className={`text-xs rounded-full px-2 py-0.5 font-medium ${levelChip}`}>
+            <span className={`text-xs rounded px-2 py-0.5 font-medium ${levelChip}`}>
               {LEVEL_LABELS[meet.level]}
             </span>
           )}

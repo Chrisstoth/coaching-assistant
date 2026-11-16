@@ -768,7 +768,7 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
                         <p className="text-sm font-medium text-pool-200">{item.label || item.title || 'Scheduled session'}</p>
                         <p className="text-xs text-pool-400 mt-0.5">{item.time || 'Time not set'}{item.end_time ? `–${item.end_time}` : ''}{item.squad ? ` · ${item.squad}` : ''}</p>
                       </div>
-                      <span className={`text-[10px] rounded-full px-2 py-1 ${isCancelled ? 'bg-pool-700 text-pool-400' : 'bg-pool-600 text-pool-300'}`}>
+                      <span className={`text-[10px] rounded px-2 py-1 ${isCancelled ? 'bg-pool-700 text-pool-400' : 'bg-pool-600 text-pool-300'}`}>
                         {isCancelled ? 'Cancelled' : item.session_id ? item.status : 'Timetable'}
                       </span>
                     </div>
@@ -828,7 +828,7 @@ function ExcelImport({ setResult, setLoading, loading, importContext }) {
                 )}
                 <div className="flex flex-wrap gap-1.5">
                   {chips.map(([zone, value]) => (
-                    <span key={zone} className="text-[10px] bg-pool-800 border border-pool-700 rounded-full px-2 py-1 text-pool-300">
+                    <span key={zone} className="text-[10px] bg-pool-800 border border-pool-700 rounded px-2 py-1 text-pool-300">
                       {energy(zone).label} · {Number(value).toLocaleString()}m
                     </span>
                   ))}

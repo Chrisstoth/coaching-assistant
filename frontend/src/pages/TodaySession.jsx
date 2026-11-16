@@ -247,7 +247,7 @@ export default function TodaySession() {
             return (
               <button key={`${item.session_id || 'slot'}-${item.slot_id || item.label}`}
                 onClick={() => setSearchParams(item.session_id ? { session: item.session_id } : { slot: item.slot_id })}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold ${active ? 'bg-accent-600 text-white' : 'bg-pool-800 text-pool-400 border border-pool-700'}`}>
+                className={`shrink-0 rounded px-3 py-1.5 text-xs font-semibold ${active ? 'bg-accent-600 text-white' : 'bg-pool-800 text-pool-400 border border-pool-700'}`}>
                 {item.label || item.title} {item.time || ''}
               </button>
             )

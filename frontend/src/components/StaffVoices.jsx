@@ -102,7 +102,7 @@ function DecisionCard({ note, replies, onChanged, onActed, onWorkIn }) {
     <div className={`rounded-2xl border-2 px-3.5 py-3 space-y-2 bg-pool-800 ${note.status === 'dismissed' ? 'opacity-60' : ''}`}
       style={{ borderColor: `${style.colour}99` }}>
       <div className="flex items-center gap-2">
-        <span className="text-[10px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 text-black"
+        <span className="text-[10px] font-bold uppercase tracking-wide rounded px-2 py-0.5 text-black"
           style={{ backgroundColor: style.colour }}>
           Your call
         </span>

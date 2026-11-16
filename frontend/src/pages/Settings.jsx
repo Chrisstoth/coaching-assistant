@@ -227,7 +227,7 @@ export default function Settings() {
                     {checkInMode === option.value && <span className="w-2 h-2 rounded-full bg-teal-400" />}
                   </span>
                   <span className="text-sm font-medium text-pool-100">{option.label}</span>
-                  {option.badge && <span className="text-[9px] uppercase tracking-wide text-teal-300 bg-teal-900/60 rounded-full px-2 py-0.5">{option.badge}</span>}
+                  {option.badge && <span className="text-[9px] uppercase tracking-wide text-teal-300 bg-teal-900/60 rounded px-2 py-0.5">{option.badge}</span>}
                 </div>
                 <p className="text-xs text-pool-500 mt-1 ml-6 leading-relaxed">{option.description}</p>
               </button>
