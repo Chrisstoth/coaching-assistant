@@ -383,3 +383,37 @@
 .desk-more svg { width: 18px; height: 18px; }
 /* Blur makes each card its own layer, so lift the one whose menu is open. */
 .desk-card:has(.desk-menu) { z-index: 20; }
+
+/* The same card language for the rest of Home: the coloured edge says what
+   kind of card it is, the surface stays the same. */
+.desk-card[data-tone="teal"]::before { background: #14b8a6; }
+.desk-card[data-tone="indigo"]::before { background: #818cf8; }
+.desk-card[data-tone="amber"]::before { background: #f59e0b; }
+.desk-card[data-tone="red"]::before { background: #ef4444; box-shadow: 0 0 10px rgba(239, 68, 68, 0.45); }
+.desk-card[data-tone="blue"]::before { background: #2196f3; }
+.desk-card[data-tone="dashed"] { border-style: dashed; border-color: rgba(255, 255, 255, 0.14); }
+a.desk-card, button.desk-card { transition: border-color 0.15s, transform 0.08s; }
+a.desk-card:hover { border-color: rgba(255, 255, 255, 0.14); }
+a.desk-card:active { transform: translateY(1px); }
+
+.desk-divide > * + * { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+
+.desk-btn--sm { padding: 0 0.9rem; flex-shrink: 0; }
+.desk-btn--teal {
+  color: #fff;
+  background: linear-gradient(180deg, #17a596, #0f8075);
+  border-color: rgba(94, 234, 212, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 12px -4px rgba(20, 184, 166, 0.5);
+}
+.desk-btn--teal:hover { background: linear-gradient(180deg, #1cb5a5, #128c80); }
+.desk-btn--indigo {
+  color: #fff;
+  background: linear-gradient(180deg, #6872f0, #4f56d6);
+  border-color: rgba(165, 180, 252, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), 0 4px 12px -4px rgba(99, 102, 241, 0.5);
+}
+.desk-btn--indigo:hover { background: linear-gradient(180deg, #7880f3, #5a61dd); }
+
+/* Quiet "not now" style links under a card's main action. */
+.desk-quiet { font-size: 11px; color: #7f858c; min-height: 32px; }
+.desk-quiet:hover { color: #d0d4d8; }

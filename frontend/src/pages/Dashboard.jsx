@@ -71,7 +71,7 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
           <>
             <p className="text-sm text-red-300 mt-2">This week’s timetable did not load.</p>
             <p className="text-xs text-pool-500 mt-1">{error}</p>
-            <button onClick={onRetry} className="mt-3 rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white">
+            <button onClick={onRetry} className="mt-3 desk-btn desk-btn--teal desk-btn--sm">
               Try again
             </button>
           </>
@@ -114,8 +114,8 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
                   <span className="flex items-center gap-2">
                     {current && <span className="w-2 h-2 rounded-full bg-accent-400 animate-pulse" />}
                     <span className="text-sm font-semibold text-pool-100 truncate">{session.title || session.label || 'Session'}</span>
-                    {ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded-full px-2 py-0.5 shrink-0">Ready ✓</span>}
-                    {covered && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded-full px-2 py-0.5 shrink-0 truncate max-w-[9rem]">{session.taken_by ? `Taken by ${session.taken_by}` : 'Someone else'}</span>}
+                    {ready && <span className="text-[10px] font-semibold text-teal-200 bg-teal-900/45 border border-teal-700/50 rounded px-2 py-0.5 shrink-0">Ready ✓</span>}
+                    {covered && <span className="text-[10px] font-semibold text-pool-300 bg-pool-700 border border-pool-600 rounded px-2 py-0.5 shrink-0 truncate max-w-[9rem]">{session.taken_by ? `Taken by ${session.taken_by}` : 'Someone else'}</span>}
                     {session.cycle_code && <span className="text-[10px] font-semibold text-teal-300 bg-teal-900/35 rounded px-1.5 py-0.5 shrink-0">{session.cycle_code}</span>}
                   </span>
                   <span className="block text-xs text-pool-400 mt-1">
@@ -180,12 +180,7 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
 }
 
 // What the staff need from the coach, in one list.
-const ASK_STYLE = {
-  safety: 'border-red-700/60 bg-red-900/20 text-red-200',
-  prediction: 'border-pool-700 bg-pool-800 text-pool-200',
-  review: 'border-pool-700 bg-pool-800 text-pool-200',
-  question: 'border-pool-700 bg-pool-800 text-pool-200',
-}
+const ASK_TONE = { safety: 'red', prediction: 'blue', review: 'blue', question: 'blue' }
 function StaffAsksCard() {
   const [asks, setAsks] = useState(null)
   useEffect(() => { api.getStaffAsks().then(setAsks).catch(() => setAsks(null)) }, [])
@@ -194,12 +189,12 @@ function StaffAsksCard() {
     <section className="space-y-2">
       <div className="flex items-center justify-between px-0.5">
         <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">The staff need you</p>
-        <span className="text-[11px] font-bold text-white bg-accent-600 rounded-full px-2 py-0.5">{asks.count}</span>
+        <span className="text-[11px] font-bold text-white bg-accent-600 rounded px-2 py-0.5 tabular-nums">{asks.count}</span>
       </div>
       {asks.items.slice(0, 6).map((a, i) => (
-        <Link key={i} to={a.link} className={`block rounded-xl border px-3.5 py-2.5 ${ASK_STYLE[a.kind] || ASK_STYLE.review}`}>
-          <p className="text-[11px] text-pool-400">{a.kind === 'safety' ? `Safety flag · ${a.who}` : a.who}</p>
-          <p className="text-sm line-clamp-2">{a.text}</p>
+        <Link key={i} to={a.link} data-tone={ASK_TONE[a.kind] || 'blue'} className="desk-card block px-4 py-3">
+          <p className={`text-[11px] ${a.kind === 'safety' ? 'text-red-300' : 'text-pool-400'}`}>{a.kind === 'safety' ? `Safety flag · ${a.who}` : a.who}</p>
+          <p className="text-sm text-pool-200 line-clamp-2 mt-0.5">{a.text}</p>
         </Link>
       ))}
       {asks.count > 6 && <Link to="/workbooks" className="block text-xs text-accent-400 px-0.5">{asks.count - 6} more ›</Link>}
@@ -216,19 +211,19 @@ function SetupChecklist() {
   const hide = () => { setHidden(true); try { localStorage.setItem('setup.hidden', '1') } catch { /* fine */ } }
   const next = list.steps.find(s => !s.done)
   return (
-    <section className="bg-pool-800 border border-accent-600/40 rounded-2xl p-4 space-y-3">
+    <section data-tone="blue" className="desk-card p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">Getting started</p>
           <p className="text-[11px] text-pool-500 mt-0.5">{list.done} of {list.total} done</p>
         </div>
-        <button type="button" onClick={hide} className="text-[11px] text-pool-500">Hide</button>
+        <button type="button" onClick={hide} className="desk-quiet">Hide</button>
       </div>
       <div className="h-1.5 bg-pool-700 rounded-full overflow-hidden"><div className="h-full bg-accent-500" style={{ width: `${(list.done / list.total) * 100}%` }} /></div>
       <ol className="space-y-1.5">
         {list.steps.map(s => (
           <li key={s.key}>
-            <Link to={s.link} className={`flex items-start gap-2.5 rounded-lg px-2 py-1.5 ${s === next ? 'bg-accent-600/15' : ''}`}>
+            <Link to={s.link} className={`flex items-start gap-2.5 rounded px-2 py-1.5 ${s === next ? 'bg-accent-600/15' : ''}`}>
               <span className={`mt-0.5 w-4 h-4 rounded-full border grid place-items-center text-[10px] shrink-0 ${s.done ? 'bg-teal-600 border-teal-500 text-white' : 'border-pool-500'}`}>{s.done ? '✓' : ''}</span>
               <span className="min-w-0">
                 <span className={`block text-sm ${s.done ? 'text-pool-500 line-through' : 'text-pool-100'}`}>{s.label}</span>
@@ -253,7 +248,7 @@ function PlanWeekCard({ squads }) {
   return (
     <section className="space-y-2">
       {weeks.map(w => (
-        <Link key={w.squad} to={`/season/${encodeURIComponent(w.squad)}`} className="block bg-pool-800 border border-pool-700 rounded-2xl p-4 space-y-2">
+        <Link key={w.squad} to={`/season/${encodeURIComponent(w.squad)}`} data-tone="teal" className="desk-card block p-4 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-teal-300 uppercase tracking-wider">{w.squad} · this week</p>
             <span className="text-xs text-pool-500">Season Planner ›</span>
@@ -327,7 +322,7 @@ function SwimmerPulseRow({ swimmer }) {
 
   return (
     <Link to={`/swimmers/${id}`} className="block active:opacity-70 transition-opacity">
-      <div className="py-2.5 border-b border-pool-800 last:border-0">
+      <div className="py-2.5">
         <div className="flex items-center gap-2.5">
           {/* Name */}
           <span className="text-sm font-medium text-pool-200 w-28 shrink-0 truncate">{name}</span>
@@ -378,7 +373,7 @@ function SquadPulse({ pulse }) {
   return (
     <section>
       <div className="flex items-center justify-between mb-1">
-        <h2 className="font-semibold text-sm">Squad Pulse</h2>
+        <h2 className="text-xs font-semibold text-pool-400 uppercase tracking-wider">Squad Pulse</h2>
         <Link to="/swimmers" className="text-xs text-pool-500 hover:text-pool-300">Full squad →</Link>
       </div>
 
@@ -399,7 +394,7 @@ function SquadPulse({ pulse }) {
         </div>
       </div>
 
-      <div className="bg-pool-800 border border-pool-700 rounded-2xl px-4 py-1">
+      <div className="desk-card desk-divide px-4 py-1">
         {visible.map(sw => (
           <SwimmerPulseRow key={sw.id} swimmer={sw} />
         ))}
@@ -462,7 +457,7 @@ function SeasonStartCard({ onStarted }) {
   }
 
   return (
-    <section className="bg-teal-900/20 border border-teal-700/40 rounded-2xl p-4">
+    <section data-tone="teal" className="desk-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold text-teal-300 uppercase tracking-wide">New season</p>
@@ -472,13 +467,13 @@ function SeasonStartCard({ onStarted }) {
           </p>
         </div>
         {!expanded && (
-          <button onClick={() => setExpanded(true)} className="shrink-0 bg-teal-700 hover:bg-teal-600 rounded-lg px-3 py-2 text-xs font-semibold">
+          <button onClick={() => setExpanded(true)} className="desk-btn desk-btn--teal desk-btn--sm">
             Start
           </button>
         )}
       </div>
       {expanded && (
-        <form onSubmit={submit} className="mt-4 space-y-3 border-t border-teal-800/40 pt-4">
+        <form onSubmit={submit} className="mt-4 space-y-3 desk-rule pt-4">
           <label className="block text-xs text-pool-400">
             Season name
             <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
@@ -509,8 +504,8 @@ function SeasonStartCard({ onStarted }) {
           </label>
           {error && <p className="text-xs text-red-300">{error}</p>}
           <div className="flex gap-2">
-            <button type="button" onClick={() => setExpanded(false)} className="flex-1 bg-pool-700 rounded-lg py-2.5 text-sm font-semibold">Cancel</button>
-            <button disabled={saving} className="flex-1 bg-teal-700 disabled:opacity-50 rounded-lg py-2.5 text-sm font-semibold">
+            <button type="button" onClick={() => setExpanded(false)} className="flex-1 desk-btn">Cancel</button>
+            <button disabled={saving} className="flex-1 desk-btn desk-btn--teal">
               {saving ? 'Starting...' : 'Start season'}
             </button>
           </div>
@@ -524,7 +519,7 @@ function CurrentSeasonCard({ season, pulse, notice }) {
   const established = pulse.filter(sw => sw.attendance_state === 'established').length
   const building = pulse.filter(sw => sw.attendance_state === 'building_baseline').length
   return (
-    <section className="bg-pool-800/60 border border-pool-700/60 rounded-xl px-3.5 py-3">
+    <section data-tone="teal" className="desk-card px-4 py-3">
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs font-semibold text-teal-300 truncate">{season.name}</p>
@@ -552,22 +547,22 @@ function AvailabilityCard({ report }) {
   return (
     <section>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="font-semibold text-sm">Squad availability</h2>
+        <h2 className="text-xs font-semibold text-pool-400 uppercase tracking-wider">Squad availability</h2>
         <span className="text-[11px] text-pool-500">
           {report.current_count || 0} away now · {report.upcoming_count || 0} upcoming
         </span>
       </div>
-      <div className="bg-pool-800 border border-pool-700 rounded-2xl divide-y divide-pool-700/60">
+      <div className="desk-card desk-divide">
         {visible.map((item, index) => (
           <Link key={`${item.swimmer_id}-${item.date_from}-${item.reason}-${index}`} to={`/swimmers/${item.swimmer_id}`}
-            className="flex items-center justify-between gap-3 px-4 py-3 active:bg-pool-700/50">
+            className="flex items-center justify-between gap-3 px-4 py-3 active:bg-white/5">
             <div className="min-w-0">
               <p className="text-sm font-medium text-pool-200 truncate">{item.swimmer_name}</p>
               <p className="text-xs text-pool-500 truncate">
                 {item.detail || item.label} · {item.date_from === item.date_to ? item.date_from : `${item.date_from} → ${item.date_to}`}
               </p>
             </div>
-            <span className={`text-[10px] px-2 py-1 rounded-md shrink-0 ${
+            <span className={`text-[10px] px-2 py-1 rounded shrink-0 ${
               item.is_current ? 'bg-amber-900/50 text-amber-300' : 'bg-pool-700 text-pool-400'
             }`}>{item.is_current ? item.label : `in ${item.days_until}d`}</span>
           </Link>
@@ -588,11 +583,7 @@ function GroupTargetCard({ target }) {
   const urgent = days_out <= 14
   const soon = days_out <= 42
 
-  const bgClass = urgent
-    ? 'bg-red-900/25 border-red-700/40'
-    : soon
-    ? 'bg-amber-900/20 border-amber-700/35'
-    : 'bg-teal-900/20 border-teal-700/30'
+  const tone = urgent ? 'red' : soon ? 'amber' : 'teal'
 
   const accentClass = urgent ? 'text-red-300' : soon ? 'text-amber-300' : 'text-teal-300'
   const labelClass = urgent ? 'text-red-400/70' : soon ? 'text-amber-400/70' : 'text-teal-400/70'
@@ -603,7 +594,7 @@ function GroupTargetCard({ target }) {
   const barClass = urgent ? 'bg-red-500' : soon ? 'bg-amber-500' : 'bg-teal-500'
 
   return (
-    <Link to={`/meets/${meet_id}`} className={`block border rounded-2xl px-4 py-3.5 transition-opacity active:opacity-75 ${bgClass}`}>
+    <Link to={`/meets/${meet_id}`} data-tone={tone} className="desk-card block px-4 py-3.5">
       <div className="flex items-start justify-between gap-3">
         <div className="flex-1 min-w-0">
           <p className={`text-[10px] font-semibold uppercase tracking-wider ${labelClass}`}>{group}</p>
@@ -614,7 +605,7 @@ function GroupTargetCard({ target }) {
           <p className={`text-[10px] mt-0.5 ${labelClass}`}>{days_out === 1 ? 'day' : days_out < 14 ? 'days' : `days · ${weeks}w`}</p>
         </div>
       </div>
-      <div className="mt-2.5 h-1 rounded-full bg-pool-800/60">
+      <div className="mt-2.5 h-1 rounded-full bg-white/[0.06]">
         <div className={`h-full rounded-full ${barClass}`} style={{ width: `${progress}%` }} />
       </div>
     </Link>
@@ -628,8 +619,8 @@ function AssistantInboxPreview({ inbox }) {
   if (openCount === 0 && progressCount === 0) return null
 
   return (
-    <section className="bg-pool-800 border border-pool-700 rounded-2xl overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 border-b border-pool-700/70">
+    <section data-tone="blue" className="desk-card">
+      <div className="flex items-center justify-between px-4 py-3">
         <div>
           <p className="text-xs font-semibold text-accent-300 uppercase tracking-wide">Assistant coach</p>
           <p className="text-[11px] text-pool-500 mt-0.5">
@@ -640,9 +631,9 @@ function AssistantInboxPreview({ inbox }) {
         <Link to="/assistant" className="text-xs text-accent-400 font-semibold">Open inbox →</Link>
       </div>
       {items.length > 0 && (
-        <div className="divide-y divide-pool-700/60">
+        <div className="desk-divide desk-rule">
           {items.map(item => (
-            <Link key={item.id} to="/assistant" className="block px-4 py-3 active:bg-pool-700/50">
+            <Link key={item.id} to="/assistant" className="block px-4 py-3 active:bg-white/5">
               <div className="flex items-start gap-2.5">
                 <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${item.severity === 'warning' ? 'bg-amber-400' : 'bg-teal-400'}`} />
                 <div className="min-w-0">
@@ -662,24 +653,24 @@ function SessionDebriefPrompts({ items }) {
   if (!items.length) return null
 
   return (
-    <section className="rounded-2xl border border-teal-700/50 bg-teal-950/35 overflow-hidden">
-      <div className="px-4 pt-4 pb-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-teal-400">Session debrief</p>
-        <p className="text-sm text-teal-100 mt-1">Talk it through while it&apos;s fresh.</p>
+    <section data-tone="teal" className="desk-card">
+      <div className="px-4 pt-4 pb-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">Session debrief</p>
+        <p className="text-sm text-pool-200 mt-1">Talk it through while it&apos;s fresh.</p>
       </div>
-      <div className="divide-y divide-teal-800/40">
+      <div className="desk-divide desk-rule">
         {items.map(item => (
-          <div key={item.session_id} className="px-4 py-3 flex items-start gap-3">
+          <div key={item.session_id} className="px-4 py-3 flex items-center gap-3">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-pool-100 truncate">{item.title}</p>
-              <p className="text-xs text-teal-400/80 mt-0.5">
+              <p className="text-xs text-pool-400 mt-0.5">
                 {item.days_since === 0 ? 'Today' : item.days_since === 1 ? 'Yesterday' : `${item.days_since} days ago`}
                 {` · ${item.attended} swimmer${item.attended === 1 ? '' : 's'}`}
               </p>
             </div>
             <Link
               to={`/debrief?session=${item.session_id}`}
-              className="rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white shrink-0"
+              className="desk-btn desk-btn--teal desk-btn--sm"
             >
               Debrief
             </Link>
@@ -697,18 +688,18 @@ function MeetResultsPrompts({ items, onDismiss, busyKey }) {
   const timing = (days) => (days === 1 ? 'Finished yesterday' : `Finished ${days} days ago`)
 
   return (
-    <section className="rounded-2xl border border-indigo-700/50 bg-indigo-950/35 overflow-hidden">
-      <div className="px-4 pt-4 pb-2">
-        <p className="text-xs font-semibold uppercase tracking-wider text-indigo-400">Gala results</p>
-        <p className="text-sm text-indigo-100 mt-1">Add the times while they are still fresh.</p>
+    <section data-tone="indigo" className="desk-card">
+      <div className="px-4 pt-4 pb-3">
+        <p className="text-xs font-semibold uppercase tracking-wider text-indigo-300">Gala results</p>
+        <p className="text-sm text-pool-200 mt-1">Add the times while they are still fresh.</p>
       </div>
-      <div className="divide-y divide-indigo-800/40">
+      <div className="desk-divide desk-rule">
         {items.map(item => (
           <div key={item.meet_id} className="px-4 py-3">
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-pool-100 truncate">{item.name}</p>
-                <p className="text-xs text-indigo-400/80 mt-0.5">
+                <p className="text-xs text-pool-400 mt-0.5">
                   {timing(item.days_since)}
                   {item.location ? ` · ${item.location}` : ''}
                   {item.swimmer_count ? ` · ${item.swimmer_count} swimmer${item.swimmer_count === 1 ? '' : 's'}` : ''}
@@ -716,7 +707,7 @@ function MeetResultsPrompts({ items, onDismiss, busyKey }) {
               </div>
               <Link
                 to={`/meets/${item.meet_id}`}
-                className="rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shrink-0"
+                className="desk-btn desk-btn--indigo desk-btn--sm"
               >
                 Add results
               </Link>
@@ -724,7 +715,7 @@ function MeetResultsPrompts({ items, onDismiss, busyKey }) {
             <button
               onClick={() => onDismiss(item)}
               disabled={busyKey === item.meet_id}
-              className="text-[11px] text-pool-500 hover:text-pool-300 mt-2 disabled:opacity-50"
+              className="desk-quiet mt-1 disabled:opacity-50"
             >
               {busyKey === item.meet_id ? 'Dismissing…' : 'Not now'}
             </button>
@@ -751,21 +742,21 @@ function CoachCheckInPrompts({ items, onStart, onSkip, busyKey }) {
   }
 
   return (
-    <section className="rounded-2xl border border-teal-700/50 bg-teal-950/35 overflow-hidden">
-      <div className="px-4 pt-4 pb-2 flex items-start justify-between gap-3">
+    <section data-tone="teal" className="desk-card">
+      <div className="px-4 pt-4 pb-3 flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wider text-teal-400">Coaching check-in</p>
-          <p className="text-sm text-teal-100 mt-1">A useful moment to step back and reflect.</p>
+          <p className="text-xs font-semibold uppercase tracking-wider text-teal-300">Coaching check-in</p>
+          <p className="text-sm text-pool-200 mt-1">A useful moment to step back and reflect.</p>
         </div>
-        <Link to="/coach-checkins" className="text-xs text-teal-400 shrink-0">History</Link>
+        <Link to="/coach-checkins" className="text-xs text-teal-300 shrink-0">History</Link>
       </div>
-      <div className="divide-y divide-teal-800/40">
+      <div className="desk-divide desk-rule">
         {items.map(item => (
           <div key={item.milestone_key} className="px-4 py-3">
             <div className="flex items-start gap-3">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-pool-100">{item.title}</p>
-                <p className="text-xs text-teal-400/80 mt-0.5">
+                <p className="text-xs text-pool-400 mt-0.5">
                   {item.status === 'in_progress'
                     ? 'Started—ready to continue'
                     : item.checkin_type === 'monthly' ? 'This month’s reminder' : timing(item.due_date)}
@@ -774,12 +765,12 @@ function CoachCheckInPrompts({ items, onStart, onSkip, busyKey }) {
               <button
                 onClick={() => onStart(item)}
                 disabled={busyKey === item.milestone_key}
-                className="rounded-lg bg-teal-600 px-3 py-2 text-xs font-semibold text-white disabled:opacity-50 shrink-0"
+                className="desk-btn desk-btn--teal desk-btn--sm"
               >
                 {busyKey === item.milestone_key ? 'Opening…' : item.status === 'in_progress' ? 'Continue' : 'Check in'}
               </button>
             </div>
-            <button onClick={() => onSkip(item)} className="text-[11px] text-pool-500 hover:text-pool-300 mt-2">Not this time</button>
+            <button onClick={() => onSkip(item)} className="desk-quiet mt-1">Not this time</button>
           </div>
         ))}
       </div>
@@ -798,7 +789,7 @@ function CoachingWatchpoints({ notes, onDismiss }) {
     : 'squad-wide'
 
   return (
-    <section className="bg-amber-900/15 border border-amber-800/35 rounded-2xl overflow-hidden">
+    <section data-tone="amber" className="desk-card">
       <button
         type="button"
         onClick={() => setOpen(value => !value)}
@@ -818,7 +809,7 @@ function CoachingWatchpoints({ notes, onDismiss }) {
       </button>
 
       {open && (
-        <div className="border-t border-amber-800/30 divide-y divide-amber-800/25">
+        <div className="desk-rule desk-divide">
           {notes.map(note => {
             const noteOpen = openNoteId === note.id
             return (
@@ -1143,12 +1134,12 @@ export default function Dashboard() {
       {meetCountdowns.upcoming_meets.length > 0 && (
         <section>
           <div className="flex items-center justify-between mb-1.5">
-            <p className="text-xs font-semibold text-pool-500 uppercase tracking-wide">Meets coming up</p>
+            <p className="text-xs font-semibold text-pool-400 uppercase tracking-wider">Meets coming up</p>
             <Link to="/meets" className="text-xs text-pool-500 hover:text-pool-300">All →</Link>
           </div>
-          <div className="bg-pool-800/60 border border-pool-700/50 rounded-xl divide-y divide-pool-700/40">
+          <div className="desk-card desk-divide">
             {meetCountdowns.upcoming_meets.map(m => (
-              <Link key={m.meet_id} to={`/meets/${m.meet_id}`} className="flex items-center justify-between px-3.5 py-2.5 active:opacity-70 transition-opacity">
+              <Link key={m.meet_id} to={`/meets/${m.meet_id}`} className="flex items-center justify-between px-4 py-2.5 active:bg-white/5">
                 <span className="text-sm text-pool-300">{m.name}</span>
                 <span className="text-xs text-pool-500 tabular-nums">
                   {m.days_out === 0 ? 'today' : m.days_out === 1 ? 'tomorrow' : `${m.days_out}d`}
@@ -1163,8 +1154,8 @@ export default function Dashboard() {
 
       {/* Attention flags from pulse — imminent targets or very low attendance */}
       {flaggedSwimmers.length > 0 && (
-        <div className="bg-amber-900/15 border border-amber-800/30 rounded-2xl px-4 py-3 space-y-1.5">
-          <p className="text-xs font-semibold text-amber-400 uppercase tracking-wide">Needs your eye</p>
+        <div data-tone="amber" className="desk-card px-4 py-3 space-y-1.5">
+          <p className="text-xs font-semibold text-amber-300 uppercase tracking-wider">Needs your eye</p>
           {flaggedSwimmers.map(sw => (
             <Link key={sw.id} to={`/swimmers/${sw.id}`} className="flex items-center justify-between group">
               <span className="text-sm text-pool-200 group-hover:text-accent-400 transition-colors">{sw.name}</span>
@@ -1194,13 +1185,7 @@ export default function Dashboard() {
           : null
         const stale = daysOld !== null && daysOld > 28
         return (
-          <Link to="/context" className={`block border rounded-2xl px-4 py-3.5 transition-colors ${
-            stale
-              ? 'bg-amber-900/30 border-amber-700/50 hover:bg-amber-900/40'
-              : coachingProfile?.active
-              ? 'bg-pool-800 border-pool-700 hover:bg-pool-700'
-              : 'bg-pool-800/60 border-dashed border-pool-600 hover:bg-pool-800'
-          }`}>
+          <Link to="/context" data-tone={stale ? 'amber' : coachingProfile?.active ? undefined : 'dashed'} className="desk-card block px-4 py-3.5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-pool-200">Coaching Profile</p>
@@ -1222,10 +1207,10 @@ export default function Dashboard() {
 
       {/* Utility links */}
       <div className="grid grid-cols-2 gap-2 pb-2">
-        <Link to="/import" className="bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-xl py-3 text-center text-xs text-pool-400 font-medium transition-colors">
+        <Link to="/import" className="desk-btn">
           Import
         </Link>
-        <Link to="/schedule" className="bg-pool-800 hover:bg-pool-700 border border-pool-700 rounded-xl py-3 text-center text-xs text-pool-400 font-medium transition-colors">
+        <Link to="/schedule" className="desk-btn">
           Schedule
         </Link>
       </div>
