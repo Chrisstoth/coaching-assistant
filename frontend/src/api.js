@@ -652,6 +652,13 @@ export const api = {
   sendDebriefMessage: (id, message) => request('POST', `/session-debriefs/${id}/chat`, { message }),
   completeSessionDebrief: (id) => request('POST', `/session-debriefs/${id}/complete`),
   commitSessionDebrief: (id, decisions) => request('POST', `/session-debriefs/${id}/commit`, { decisions }),
+  // Injuries, illness and other notes that hold right now ("Right now" on the Session Builder).
+  getCurrentNotesForSession: (sessionId) => request('GET', `/current-notes/session/${sessionId}`),
+  getCurrentNotes: (swimmerId, includeCleared = false) => request('GET', `/current-notes${swimmerId ? `?swimmer_id=${swimmerId}${includeCleared ? '&include_cleared=true' : ''}` : ''}`),
+  addCurrentNote: (data) => request('POST', '/current-notes', data),
+  updateCurrentNote: (id, data) => request('PATCH', `/current-notes/${id}`, data),
+  clearCurrentNote: (id, why) => request('POST', `/current-notes/${id}/clear`, { why: why || null }),
+  reopenCurrentNote: (id) => request('POST', `/current-notes/${id}/reopen`),
   getSessionsAwaitingDebrief: () => request('GET', '/dashboard/sessions-awaiting-debrief'),
   retryAIOperation: (id) => request('POST', `/ai-operations/${id}/retry`),
 

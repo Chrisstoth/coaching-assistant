@@ -10,6 +10,7 @@ from backend import models
 from backend.database import get_db
 from backend.services import claude_service
 from backend.services import session_notes
+from backend.services import current_notes
 from backend.services.ai_operations import enqueue_operation, operation_out
 
 router = APIRouter()
@@ -25,6 +26,11 @@ class ProposalDecision(BaseModel):
     id: str
     status: str                      # accepted / rejected
     content: Optional[str] = None    # coach may correct the wording before committing
+    # For an ongoing note ("right now"): the coach may correct these too.
+    title: Optional[str] = None
+    impact: Optional[str] = None
+    until: Optional[str] = None      # YYYY-MM-DD, or "" for "until I clear it"
+    ongoing_kind: Optional[str] = None
 
 
 class CommitProposals(BaseModel):
@@ -187,6 +193,15 @@ def commit_debrief(debrief_id: int, body: CommitProposals, db: DBSession = Depen
                 "status": "accepted" if decision.status == "accepted" else "rejected",
                 "content": (decision.content or item.get("content") or "").strip() or item.get("content"),
             }
+            if item.get("kind") == "ongoing":
+                if decision.title is not None and decision.title.strip():
+                    item["title"] = decision.title.strip()[:80]
+                if decision.impact is not None:
+                    item["impact"] = decision.impact.strip() or None
+                if decision.until is not None:
+                    item["until"] = decision.until.strip()[:10] or None
+                if decision.ongoing_kind:
+                    item["ongoing_kind"] = current_notes.clean_kind(decision.ongoing_kind)
         proposals.append(item)
     row.proposals = proposals
     db.commit()

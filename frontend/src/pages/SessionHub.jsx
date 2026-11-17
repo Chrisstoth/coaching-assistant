@@ -5,6 +5,7 @@ import { sessionEnded } from '../sessionProximity'
 import { blockGroupNames, fmtDist, groupColor, groupLabel, normalizeSession, statsOf, timeText, totalsFor } from '../notation/core.js'
 import SessionNotesPanel from '../components/SessionNotes'
 import SessionTargets from '../components/SessionTargets'
+import RightNow from '../components/RightNow'
 import SessionCancellationDialog from '../components/SessionCancellationDialog'
 import { NewSession, SessionTools } from './SessionDetail'
 
@@ -307,6 +308,10 @@ function Hub({ id }) {
           </span>
           <span className="text-xl shrink-0 ml-3" aria-hidden="true">🎤</span>
         </Link>
+      )}
+
+      {!cancelled && (
+        <RightNow sessionId={session.id} poolside className="bg-pool-800 border border-pool-700 rounded-2xl px-4 py-3" />
       )}
 
       {!cancelled && (

@@ -5,6 +5,7 @@ import { api } from '../api'
 import { mountBuilder } from '../notation/builderUi'
 import VoiceInput from '../components/VoiceInput'
 import GroupSwimmers from '../components/GroupSwimmers'
+import RightNow from '../components/RightNow'
 import { NoteComposer } from '../components/SessionNotes'
 import { queuedSessionNotes } from '../offlineQueue'
 import { noteSetOptions, setRefFor } from '../sessionNotes'
@@ -393,6 +394,7 @@ function Builder({ id }) {
       {payload && notice && (
         <p className="builder-gut py-1.5 bg-teal-950/60 border-b border-teal-800/40 text-xs text-teal-200">{notice}</p>
       )}
+      {payload && <RightNow sessionId={payload.id} poolside={view === 'pool'} />}
       {payload && view === 'pool' && (
         <>
           <p className="builder-gut py-1.5 bg-pool-900 border-b border-pool-800 text-xs text-pool-400">Tap a set to note something about it, or use + Note.</p>

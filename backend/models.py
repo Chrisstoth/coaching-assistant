@@ -651,6 +651,37 @@ class SwimmerLoadEvent(Base):
     swimmer = relationship("Swimmer", back_populates="load_events")
 
 
+class SwimmerCurrentNote(Base):
+    """
+    Something about a swimmer that holds *right now* and changes how they train:
+    an injury, an illness, or anything else that affects how they swim (exams,
+    a growth spurt, a hard time at home).
+
+    Usually proposed by the debrief and confirmed by the coach. Shown on the
+    Session Builder while it is active, and given to the staff. It stays active
+    until the coach clears it, or until its end date passes.
+    """
+    __tablename__ = "swimmer_current_notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False, index=True)
+    kind = Column(String, nullable=False, default="other")   # injury / illness / other
+    title = Column(String, nullable=False)                   # a few words: "Left shoulder"
+    detail = Column(Text, nullable=True)                     # what is going on
+    impact = Column(Text, nullable=True)                     # what it means for training
+    date_from = Column(Date, nullable=False)
+    until = Column(Date, nullable=True)                      # null = until the coach clears it
+    cleared_at = Column(DateTime(timezone=True), nullable=True)
+    cleared_note = Column(Text, nullable=True)
+    source = Column(String, default="coach")                 # coach / debrief
+    debrief_id = Column(Integer, nullable=True)
+    session_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    swimmer = relationship("Swimmer")
+
+
 class SwimmerProfileVersion(Base):
     """
     Versioned snapshot of a swimmer's race or training profile, synthesised from observations.

@@ -6871,7 +6871,12 @@ HOW TO ASK:
 - Ask about what they have NOT covered, using what the system already knows:
   a watchpoint left open from last time, a training intent the coach set for a swimmer,
   a target they are working toward, an active coaching note that was meant to apply,
+  an ongoing injury or other note still marked "right now" (ask whether it still holds —
+  "is Sam's shoulder still limiting them?" — so it can be cleared when it's over),
   or simply someone who attended and has not been mentioned at all.
+- If the coach mentions an injury, illness or anything else that will affect a swimmer
+  beyond today, ask briefly what it means for training and roughly how long it will last,
+  unless they have already said.
 - Before finishing, ask about a swimmer marked "little on record". Say why you are asking —
   "we have not got much on Bo lately, how is he training?" — so it reads as filling a gap
   rather than an accusation. If the coach has nothing to say about them, accept that and move on.
@@ -7079,8 +7084,16 @@ def _debrief_swimmer_dossiers(attended, swimmers, session, db: DBSession) -> str
     # has not been discussed), but only swimmers with an actual reason get a
     # dossier. The rest are one line, and can be pulled in on demand if the
     # coach brings them up.
+    from backend.services import current_notes as current_notes_service
+    ongoing_by_swimmer = current_notes_service.by_swimmer(db, swimmer_ids)
+
     def detail_for(entry) -> list[str]:
         detail = []
+        for note in ongoing_by_swimmer.get(entry.swimmer_id, [])[:2]:
+            text = f"ongoing {current_notes_service.KIND_WORDS.get(note.kind, 'note')} since {note.date_from}: {note.title}"
+            if note.impact:
+                text += f" ({note.impact[:100]})"
+            detail.append(("ongoing", text + " — check whether it still holds"))
         if watchpoint_by_swimmer.get(entry.swimmer_id):
             detail.append(("watchpoint", f"open watchpoint: {watchpoint_by_swimmer[entry.swimmer_id]}"))
         if entry.ai_expected_response:
@@ -7101,7 +7114,7 @@ def _debrief_swimmer_dossiers(attended, swimmers, session, db: DBSession) -> str
 
     # An unanswered question from last time is the most useful thing to ask about;
     # a routine note is the least.
-    weights = {"watchpoint": 100, "prediction": 40, "intent": 30, "target": 20, "note": 5}
+    weights = {"watchpoint": 100, "ongoing": 80, "prediction": 40, "intent": 30, "target": 20, "note": 5}
     scored = []
     for entry in attended:
         if entry.swimmer_id not in swimmers:
@@ -7296,6 +7309,12 @@ def extract_session_debrief(debrief, db: DBSession) -> list[dict]:
         ).order_by(models.Swimmer.name).all()
         swimmer_rows = [f"  - {row.name} (id={row.id})" for row in swimmers]
 
+    from backend.services import current_notes as current_notes_service
+    listed_ids = [int(row.split("id=")[1].rstrip(")")) for row in swimmer_rows if "id=" in row]
+    ongoing_rows = current_notes_service.debrief_lines(db, listed_ids)
+    ongoing_ids = {n.id: n.swimmer_id for n in current_notes_service.active_notes(db, listed_ids)}
+    ongoing_text = "\n".join("  - " + line for line in ongoing_rows) or "  (none)"
+
     prompt = f"""Extract structured records from this post-session debrief.
 
 TODAY: {date.today().isoformat()}
@@ -7310,9 +7329,12 @@ TRANSCRIPT:
 NOTES THE COACH TOOK DURING THE SESSION (their own words at the time, as good as the transcript):
 {jotted or '  (none)'}
 
+ONGOING NOTES ALREADY ACTIVE FOR THESE SWIMMERS ("right now": injuries, illness, other):
+{ongoing_text}
+
 Return a JSON array of proposed records. Each item:
 {{
-  "kind": "observation" | "benchmark" | "intent" | "watchpoint",
+  "kind": "observation" | "benchmark" | "intent" | "watchpoint" | "ongoing" | "ongoing_clear",
   "swimmer_id": <int from the list above>,
   "swimmer_name": "<name>",
   "content": "<the record, in the coach's own terms, one or two sentences>",
@@ -7321,6 +7343,11 @@ Return a JSON array of proposed records. Each item:
   "stroke": "<for benchmark only: free|back|breast|fly|im>",
   "effort": "<for benchmark only: max|aerobic|threshold>",
   "time_seconds": <for benchmark only: number>,
+  "ongoing_kind": "<for ongoing only: injury|illness|other>",
+  "title": "<for ongoing only: a few words, e.g. 'Left shoulder' or 'Mock exams'>",
+  "impact": "<for ongoing only: what it means for training, in the coach's words, or null>",
+  "until": "<for ongoing only: YYYY-MM-DD if the coach gave a length or end, else null>",
+  "note_id": <for ongoing_clear, or an ongoing that updates an active note: its id from the list above>,
   "confidence": "low|moderate|high",
   "evidence": "<the words in the transcript or notes this came from>"
 }}
@@ -7332,6 +7359,15 @@ RULES:
 - A note about a set but no swimmer is about the group; only attribute it to a swimmer it names.
 - If a swimmer cannot be matched confidently to an id, leave it out entirely.
 - "intent" is a training direction the coach decided on. "watchpoint" is something to check next time.
+- "ongoing" is something that holds beyond today and affects how the swimmer trains or performs:
+  an injury, an illness, or anything else (exams, a growth spurt, worries at home, a medication).
+  It stays on the Session Builder until cleared, so only use it for something that lasts.
+  "content" says what is going on; "impact" what to do about it in training, only if the coach said.
+  Turn a stated length into "until" counted from TODAY ("off for two weeks" -> 14 days on); otherwise null.
+  Do not also write an observation or watchpoint for the same thing.
+- If the coach updates an active note above (worse, better, a new restriction), give "ongoing" with its
+  "note_id" and the whole updated note. If they say it's over or no longer holds, give
+  "ongoing_clear" with its "note_id" and "content" saying why. Never clear one the coach didn't speak about.
 - Mark confidence "low" when the coach was vague or hedging.
 - If there is nothing worth recording, return [].
 
@@ -7363,9 +7399,33 @@ Return only the JSON array."""
         if swimmer_id not in valid_ids or not (item.get("content") or "").strip():
             continue
         kind = item.get("kind")
-        if kind not in {"observation", "benchmark", "intent", "watchpoint"}:
+        if kind not in {"observation", "benchmark", "intent", "watchpoint", "ongoing", "ongoing_clear"}:
             continue
+        extra = {}
+        if kind in {"ongoing", "ongoing_clear"}:
+            try:
+                note_id = int(item.get("note_id")) if item.get("note_id") is not None else None
+            except (TypeError, ValueError):
+                note_id = None
+            if note_id is not None and ongoing_ids.get(note_id) != swimmer_id:
+                note_id = None            # not one of this swimmer's active notes
+            if kind == "ongoing_clear" and note_id is None:
+                continue
+            until = str(item.get("until") or "").strip()[:10] or None
+            try:
+                if until:
+                    date.fromisoformat(until)
+            except ValueError:
+                until = None
+            extra = {
+                "note_id": note_id,
+                "ongoing_kind": current_notes_service.clean_kind(item.get("ongoing_kind")),
+                "title": (str(item.get("title") or "").strip()[:80] or None),
+                "impact": (str(item.get("impact") or "").strip() or None),
+                "until": until,
+            }
         proposals.append({
+            **extra,
             "id": f"{debrief.id}-{index}",
             "kind": kind,
             "swimmer_id": swimmer_id,
@@ -7425,7 +7485,8 @@ TRANSCRIPT:
 def commit_debrief_proposals(debrief, db: DBSession) -> dict:
     """Write the coach-accepted proposals into the swimmers' real records."""
     session_id = debrief.session_id
-    counts = {"observations": 0, "benchmarks": 0, "intents": 0, "watchpoints": 0}
+    from backend.services import current_notes as current_notes_service
+    counts = {"observations": 0, "benchmarks": 0, "intents": 0, "watchpoints": 0, "ongoing": 0, "cleared": 0}
 
     for item in (debrief.proposals or []):
         if item.get("status") != "accepted":
@@ -7433,6 +7494,51 @@ def commit_debrief_proposals(debrief, db: DBSession) -> dict:
         kind = item.get("kind")
         swimmer_id = item.get("swimmer_id")
         content = item.get("content") or ""
+
+        if kind in {"ongoing", "ongoing_clear"}:
+            existing = db.query(models.SwimmerCurrentNote).filter(
+                models.SwimmerCurrentNote.id == item.get("note_id"),
+                models.SwimmerCurrentNote.swimmer_id == swimmer_id,
+            ).first() if item.get("note_id") else None
+            if kind == "ongoing_clear":
+                if existing and existing.cleared_at is None:
+                    current_notes_service.clear(db, existing, content)
+                    counts["cleared"] += 1
+                continue
+            try:
+                if existing:
+                    current_notes_service.update(db, existing, {
+                        "kind": item.get("ongoing_kind"), "title": item.get("title"),
+                        "detail": content, "impact": item.get("impact"), "until": item.get("until"),
+                    })
+                    if existing.cleared_at is not None:
+                        current_notes_service.reopen(db, existing)
+                else:
+                    current_notes_service.create(
+                        db, swimmer_id, item.get("ongoing_kind"), item.get("title") or content, content,
+                        item.get("impact"), debrief.date, item.get("until"),
+                        source="debrief", debrief_id=debrief.id, session_id=session_id,
+                    )
+            except ValueError:
+                continue
+            # Also on the swimmer's history, so the staff can see when it started.
+            db.add(models.SwimmerObservation(
+                swimmer_id=swimmer_id,
+                session_id=None,
+                obs_type="physical" if item.get("ongoing_kind") in ("injury", "illness") else "general",
+                date=debrief.date,
+                content=f"{item.get('title') or 'Ongoing'}: {content}" + (
+                    f" In training: {item['impact']}" if item.get("impact") else ""),
+                structured={
+                    "source": "session_debrief",
+                    "debrief_id": debrief.id,
+                    "session_id": session_id,
+                    "ongoing": True,
+                    "evidence": item.get("evidence"),
+                },
+            ))
+            counts["ongoing"] += 1
+            continue
 
         if kind == "benchmark" and item.get("time_seconds"):
             db.add(models.BenchmarkLog(

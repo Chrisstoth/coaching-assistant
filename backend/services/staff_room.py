@@ -738,7 +738,13 @@ def role_context(role: str, db: DBSession, subject: Subject) -> str:
         from backend.services import season_planner
         on = subject.session_date or subject.week_start or date.today()
         plan = _safe(season_planner.staff_lines, db, subject.squad or _default_squad(db), on)
-    head = "\n\n".join(x for x in (rules, direction, plan) if x)
+    # Injuries, illness and other notes that hold right now: every worker plans around them,
+    # and they are short, so they sit with the coach's rules and are never trimmed.
+    from backend.services import current_notes
+    who = [a.id for a in attendees] or [s.id for s in swimmers] or None
+    on = subject.session_date if subject.session_date and subject.session_date > date.today() else None
+    now = _safe(current_notes.staff_lines, db, who, on)
+    head = "\n\n".join(x for x in (rules, direction, now, plan) if x)
     return f"{head}\n\n{data}" if head else data
 
 

@@ -118,6 +118,13 @@ def writing_context(db: DBSession, day, squad: Optional[str], swimmer_ids: list)
     """Everything the Session Writer reads besides the brief: the coach's rules, then the plan."""
     from backend.services import coach_guidance
     parts = [coach_guidance.prompt_block(db, "sessions"), plan_brief(db, day, squad, swimmer_ids)]
+    # Injuries and other notes that hold right now, so the draft plans around them.
+    try:
+        from backend.services import current_notes
+        on = day if day and day > date.today() else None
+        parts.append(current_notes.staff_lines(db, swimmer_ids or None, on))
+    except Exception:  # noqa: BLE001 - extra context, never a blocker
+        pass
     return "\n\n".join(p for p in parts if p)
 
 

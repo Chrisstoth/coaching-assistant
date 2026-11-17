@@ -8,13 +8,20 @@ const KIND_LABELS = {
   benchmark: 'Benchmark',
   intent: 'Training intent',
   watchpoint: 'Watch next time',
+  ongoing: 'Right now',
+  ongoing_clear: 'Clear from right now',
 }
+
+const ONGOING_WORDS = { injury: 'injury', illness: 'illness', other: 'note' }
+const shortDate = iso => (iso ? new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : '')
 
 const KIND_COLORS = {
   observation: 'bg-pool-700 text-pool-200',
   benchmark: 'bg-emerald-900 text-emerald-200',
   intent: 'bg-blue-900 text-blue-200',
   watchpoint: 'bg-amber-900 text-amber-200',
+  ongoing: 'bg-red-900 text-red-200',
+  ongoing_clear: 'bg-teal-900 text-teal-200',
 }
 
 const CONFIDENCE_HINT = {
@@ -35,11 +42,38 @@ function ReviewProposal({ proposal, decision, onChange }) {
         <span className={`text-[10px] rounded px-2 py-0.5 font-medium ${KIND_COLORS[proposal.kind] || KIND_COLORS.observation}`}>
           {KIND_LABELS[proposal.kind] || proposal.kind}
         </span>
+        {proposal.kind === 'ongoing' && (
+          <span className="text-[10px] text-pool-400">
+            {ONGOING_WORDS[decision?.ongoing_kind ?? proposal.ongoing_kind] || 'note'}
+            {proposal.note_id ? ' · updates the one on file' : ''} · stays on the Session Builder until cleared
+          </span>
+        )}
         {proposal.confidence === 'low' && (
           <span className="text-[10px] rounded px-2 py-0.5 bg-amber-900/40 text-amber-300">low confidence</span>
         )}
       </div>
 
+      {proposal.kind === 'ongoing' && !editing && (
+        <p className="text-sm font-semibold text-red-200">{decision?.title ?? proposal.title}</p>
+      )}
+      {editing && proposal.kind === 'ongoing' && (
+        <div className="space-y-2">
+          <div className="flex gap-1.5">
+            {Object.entries(ONGOING_WORDS).map(([k, word]) => (
+              <button key={k} type="button" onClick={() => onChange({ ...decision, status: 'accepted', ongoing_kind: k })}
+                className={`rounded px-2.5 py-1 text-[11px] font-semibold ${(decision?.ongoing_kind ?? proposal.ongoing_kind) === k ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-300'}`}>
+                {word[0].toUpperCase() + word.slice(1)}
+              </button>
+            ))}
+          </div>
+          <input
+            value={decision?.title ?? proposal.title ?? ''}
+            onChange={e => onChange({ ...decision, status: 'accepted', title: e.target.value })}
+            placeholder="What it is, e.g. Left shoulder"
+            className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+          />
+        </div>
+      )}
       {editing ? (
         <textarea
           value={decision?.content ?? proposal.content}
@@ -50,6 +84,29 @@ function ReviewProposal({ proposal, decision, onChange }) {
       ) : (
         <p className="text-sm text-pool-200">{decision?.content ?? proposal.content}</p>
       )}
+      {proposal.kind === 'ongoing' && (editing ? (
+        <div className="space-y-2">
+          <textarea
+            value={decision?.impact ?? proposal.impact ?? ''}
+            onChange={e => onChange({ ...decision, status: 'accepted', impact: e.target.value })}
+            rows={2}
+            placeholder="What it means in training, e.g. no fly, kick with a board"
+            className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none resize-none"
+          />
+          <label className="flex items-center gap-2 text-[11px] text-pool-400">
+            Until
+            <input type="date" value={decision?.until ?? proposal.until ?? ''}
+              onChange={e => onChange({ ...decision, status: 'accepted', until: e.target.value })}
+              className="bg-pool-700 rounded px-2 py-1 text-xs border border-pool-600" />
+            <span>(blank: until you clear it)</span>
+          </label>
+        </div>
+      ) : (
+        <p className="text-[11px] text-pool-400">
+          {(decision?.impact ?? proposal.impact) ? <>In training: <span className="text-pool-200">{decision?.impact ?? proposal.impact}</span> · </> : ''}
+          {(decision?.until ?? proposal.until) ? `until ${shortDate(decision?.until ?? proposal.until)}` : 'until you clear it'}
+        </p>
+      ))}
 
       {proposal.evidence && (
         <p className="text-[11px] text-pool-500 italic">you said: “{proposal.evidence}”</p>
@@ -67,7 +124,7 @@ function ReviewProposal({ proposal, decision, onChange }) {
         </button>
         {!rejected && (
           <button onClick={() => setEditing(!editing)} className="text-[11px] text-accent-400">
-            {editing ? 'Done editing' : 'Edit wording'}
+            {editing ? 'Done editing' : proposal.kind === 'ongoing' ? 'Edit' : 'Edit wording'}
           </button>
         )}
       </div>
@@ -168,6 +225,12 @@ export default function SessionDebrief() {
         id: proposal.id,
         status: decisions[proposal.id]?.status || 'accepted',
         content: decisions[proposal.id]?.content ?? proposal.content,
+        ...(proposal.kind === 'ongoing' ? {
+          title: decisions[proposal.id]?.title ?? proposal.title ?? null,
+          impact: decisions[proposal.id]?.impact ?? proposal.impact ?? '',
+          until: decisions[proposal.id]?.until ?? proposal.until ?? '',
+          ongoing_kind: decisions[proposal.id]?.ongoing_kind ?? proposal.ongoing_kind ?? null,
+        } : {}),
       }))
       const result = await api.commitSessionDebrief(debrief.id, payload)
       setDebrief(result)
@@ -277,6 +340,8 @@ export default function SessionDebrief() {
                 <p className="text-sm text-green-200">
                   Saved to {(debrief.proposals || []).filter(p => p.status === 'accepted').length} swimmer record
                   {(debrief.proposals || []).filter(p => p.status === 'accepted').length === 1 ? '' : 's'}.
+                  {(debrief.proposals || []).some(p => p.status === 'accepted' && p.kind === 'ongoing') &&
+                    ' Anything marked "Right now" shows on the Session Builder until you clear it.'}
                 </p>
               </div>
             )}
