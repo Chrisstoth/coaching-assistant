@@ -66,6 +66,16 @@ const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 let view = 'edit', curGroup = '';
 let noted = new Set();   // sets the coach has noted something about this session (poolside)
+/* Poolside, what's been swum so far, kept on this phone. Each group has its own,
+   since groups sharing a block aren't at the same point in it. A set or block is
+   true once done; a round holds how many times through have been done. */
+let done = {};
+const poolScroll = new Map();   // group → where its sets sat on screen when the coach left it
+const doneStore = () => 'sb.pool.done.' + (cur.id || 'new');
+// by the group's name: an older session's groups get new ids each time it opens
+const doneKey = id => (curGroup ? groupName(S(), curGroup) : '') + '|' + id;
+function loadDone(){ try { done = JSON.parse(globalThis.localStorage.getItem(doneStore()) || '{}') || {}; } catch (e) { done = {}; } }
+function saveDone(){ try { globalThis.localStorage.setItem(doneStore(), JSON.stringify(done)); } catch (e) { /* private window: ticks last until the page closes */ } }
 const sel = new Set();
 const textMode = new Set();
 let undoStack = [];
@@ -402,18 +412,29 @@ function refreshTotals(){
 
 /* ---------- poolside ---------- */
 const poolTiming = t => (t.int != null ? '@' + fmtTime(t.int) + (t.int2 != null && t.int2 !== t.int ? ' / ' + fmtTime(t.int2) : '') : (t.rest != null ? restLabel(t.rest) : ''));
+// a tick box poolside: tapping it marks the set (or block) done, tapping again takes it back
+const poolTick = (id, what) => `<button type="button" class="ptick" data-done="${esc(id)}" aria-pressed="${Boolean(done[doneKey(id)])}" aria-label="${what} done"></button>`;
+// how many times through a round has been swum (a plain tick counts as all of them)
+const roundsDone = n => { const v = done[doneKey(n.id)], times = n.times || 1; return v === true ? times : Math.min(+v || 0, times); };
 function poolItems(items){
   // data-nid: tapping a set poolside notes something about it (when the app asks for that)
-  const nid = n => `data-nid="${esc(n.id)}"`, nc = n => (noted.has(n.id) ? ' noted' : '');
+  const nid = n => `data-nid="${esc(n.id)}"`, nc = n => (noted.has(n.id) ? ' noted' : ''), dc = n => (done[doneKey(n.id)] ? ' done' : '');
   return (items || []).map(n => {
-    if (n.t === 'round') return `<div class="pr"><div class="prl${nc(n)}" ${nid(n)}><span>${n.times || 1}× round${n.times == 1 ? '' : 's'}</span>${n.note ? `<em>${esc(n.note)}</em>` : ''}</div><div class="prb"><div class="rope" aria-hidden="true"></div><div>${poolItems(n.items)}</div></div></div>`;
-    if (isTalkLine(n)) return `<div class="pl talk${nc(n)}" ${nid(n)}><span class="pq">Talk</span><span class="pd">${esc(plainDesc(n.desc))}</span><span class="pi">${esc(fmtTime(n.talk))}</span><span></span></div>`;
+    if (n.t === 'round') {
+      const times = n.times || 1, k = roundsDone(n);
+      // a round swum more than once: one button per time through, tapped as each one finishes
+      const marks = times > 1
+        ? `<span class="ppips">${Array.from({ length: times }, (_, i) => `<button type="button" class="ppip" data-done="${esc(n.id)}" data-r="${i + 1}" aria-pressed="${i < k}" aria-label="Round ${i + 1} done">${i + 1}</button>`).join('')}</span>`
+        : '';
+      return `<div class="pr${k >= times ? ' done' : ''}"><div class="prl${nc(n)}" ${nid(n)}>${times > 1 ? '' : poolTick(n.id, 'Round')}<span class="prn">${times}× round${times == 1 ? '' : 's'}</span>${marks}${n.note ? `<em>${esc(n.note)}</em>` : ''}</div><div class="prb"><div class="rope" aria-hidden="true"></div><div>${poolItems(n.items)}</div></div></div>`;
+    }
+    if (isTalkLine(n)) return `<div class="pl talk${nc(n)}${dc(n)}" ${nid(n)}>${poolTick(n.id, 'Talk')}<span class="pq">Talk</span><span class="pd">${esc(plainDesc(n.desc))}</span><span class="pi">${esc(fmtTime(n.talk))}</span><span></span></div>`;
     if (isBlankLine(n)) return '';
     if (isNoteLine(n)) return `<div class="pl note${nc(n)}" ${nid(n)}><span class="pd">${esc(plainDesc(n.desc))}</span></div>`;
     const q = n.dist != null && n.dist !== '' ? ((n.reps && n.reps > 1) ? `${n.reps}×${n.dist}` : `${n.dist}`) : (n.reps && n.reps > 1 ? `${n.reps}×` : '');
     const e = parseEffort(n.eff), dp = partTimings(n);
     const parts = dp ? `<div class="pparts">${dp.parts.map(p => `<span><b>${p.n}</b>${esc(p.text)}${p.own && (p.own.int != null || p.own.rest != null) ? ` <em class="ptime">${esc(poolTiming(p.eff))}</em>` : ''}</span>`).join('')}</div>` : '';
-    return `<div class="pl${dp ? ' has-parts' : ''}${nc(n)}" ${nid(n)}><span class="pq">${q}</span><span class="pd">${esc(dp ? dp.prefix : plainDesc(n.desc))}</span><span class="pi">${esc(poolTiming(lineTiming(n)))}</span>${n.eff ? `<span class="pe" style="background:${effBg(e)};color:${effInk(e)}">${esc(effFromCanon(n.eff))}</span>` : '<span></span>'}</div>` + parts;
+    return `<div class="pl${dp ? ' has-parts' : ''}${nc(n)}${dc(n)}" ${nid(n)}>${poolTick(n.id, 'Set')}<span class="pq">${q}</span><span class="pd">${esc(dp ? dp.prefix : plainDesc(n.desc))}</span><span class="pi">${esc(poolTiming(lineTiming(n)))}</span>${n.eff ? `<span class="pe" style="background:${effBg(e)};color:${effInk(e)}">${esc(effFromCanon(n.eff))}</span>` : '<span></span>'}</div>` + parts;
   }).join('');
 }
 function renderPool(){
@@ -429,9 +450,18 @@ function renderPool(){
     `<div class="prun">` + s.blocks.map(b => {
       const st = statsOf(b.items), gn = s._group ? [] : blockGroupNames(all, b);
       if (b.kind === 'notes') return hasNoteText(b) ? `<section class="pblock pnotes"><div class="pbh"><h2>${esc(b.name || 'Notes')}</h2>${gn.length ? `<span class="pchips">${gn.map(x => `<span class="pchip">${esc(x)}</span>`).join('')}</span>` : ''}</div><div class="pnote">${esc(String(b.text).trim())}</div></section>` : '';
-      return `<section class="pblock"><div class="pbh"><h2>${esc(b.name || 'Block')}</h2>${gn.length ? `<span class="pchips">${gn.map(n => `<span class="pchip">${esc(n)}</span>`).join('')}</span>` : ''}<span class="ptot">${fmtDist(st.dist)} m · ${timeText(st)}</span></div>${poolItems(b.items) || '<div class="pl"><span class="pd" style="color:var(--muted)">No sets yet</span></div>'}</section>`;
-    }).join('') + `</div>`;
+      return `<section class="pblock${done[doneKey(b.id)] ? ' done' : ''}"><div class="pbh">${poolTick(b.id, b.name || 'Block')}<h2>${esc(b.name || 'Block')}</h2>${gn.length ? `<span class="pchips">${gn.map(n => `<span class="pchip">${esc(n)}</span>`).join('')}</span>` : ''}<span class="ptot">${fmtDist(st.dist)} m · ${timeText(st)}</span></div>${poolItems(b.items) || '<div class="pl"><span></span><span></span><span class="pd" style="color:var(--muted)">No sets yet</span></div>'}</section>`;
+    }).join('') + `</div>` +
+    (Object.keys(done).some(k => k.startsWith(doneKey(''))) ? `<div class="pclear"><button type="button" class="btn quiet" data-done-clear>Clear ticks${s._group ? ' for ' + esc(s._group) : ''}</button></div>` : '');
   pinTabs();
+}
+/* The element that actually scrolls the page (the app scrolls its <main>, not the window). */
+function scrollerOf(el){
+  for (let p = el.parentElement; p; p = p.parentElement) {
+    const o = globalThis.getComputedStyle(p).overflowY;
+    if ((o === 'auto' || o === 'scroll') && p.scrollHeight > p.clientHeight) return p;
+  }
+  return globalThis.document.scrollingElement || globalThis.document.documentElement;
 }
 /* Poolside, the group buttons stay pinned under the app's header once the coach
    scrolls down to the sets. Done by hand because the app's page wrapper stops
@@ -942,12 +972,20 @@ document.addEventListener('click', e => {
   if (act === 'clear-sel') { sel.clear(); renderBlocks(); return; }
   if (act === 'tab') {
     const pinned = view === 'pool' && Boolean(b.closest('.ptabs.stuck'));
+    // Poolside, remember where this group's sets were, to come back to the same place.
+    const was = view === 'pool' && $('#pool .prun');
+    if (was) poolScroll.set(curGroup, was.getBoundingClientRect().top);
     curGroup = b.dataset.gid || ''; sel.clear(); renderBlocks(); refreshTotals();
     if (view === 'pool') {
       renderPool();
-      // Changed group from the pinned buttons: go to the top of that group's sets.
-      const run = pinned && $('#pool .prun'), nav = $('#pool .ptabs');
-      if (run) { run.style.scrollMarginTop = ((opts.pinTop || 0) + (nav ? nav.offsetHeight : 0) + 8) + 'px'; run.scrollIntoView({ block: 'start' }); }
+      const run = $('#pool .prun'), nav = $('#pool .ptabs'), back = poolScroll.get(curGroup);
+      if (run && back != null) {
+        // Been on this group before: back to where the coach was in it.
+        scrollerOf(run).scrollTop += run.getBoundingClientRect().top - back; pinTabs();
+      } else if (run && pinned) {
+        // First visit, from the pinned buttons: go to the top of that group's sets.
+        run.style.scrollMarginTop = ((opts.pinTop || 0) + (nav ? nav.offsetHeight : 0) + 8) + 'px'; run.scrollIntoView({ block: 'start' });
+      }
     }
     return;
   }
@@ -1100,7 +1138,7 @@ window.addEventListener('pagehide', flushNow);
   function openSession(id, session){
     cur = { id, session: JSON.parse(JSON.stringify(session)), loadedAt: 1 }
     if (!cur.session.aims) cur.session.aims = ['', '']
-    normalizeSession(cur.session); curGroup = ''
+    normalizeSession(cur.session); curGroup = ''; poolScroll.clear(); loadDone()
     setEffSys(cur.session.effSys || opts.effSys || 'effort20')
     if (!Array.isArray(cur.session.blocks)) cur.session.blocks = []
     undoStack = []; sel.clear(); textMode.clear(); dirty = false
@@ -1137,8 +1175,31 @@ window.addEventListener('pagehide', flushNow);
 
   /* ---------- poolside: tap a set to note something about it ---------- */
   function holds(items, id){ return (items || []).some(n => n.id === id || (n.t === 'round' && holds(n.items, id))) }
+  /* ---------- poolside: tick off what's been swum ---------- */
+  const onTick = e => {
+    if (view !== 'pool' || !e.target.closest) return
+    if (e.target.closest('#pool [data-done-clear]')) {
+      if (!globalThis.confirm('Clear the ticks on this session?')) return
+      const scope = doneKey('')
+      for (const k of Object.keys(done)) if (k.startsWith(scope)) delete done[k]
+      saveDone(); renderPool(); return
+    }
+    const b = e.target.closest('#pool [data-done]'); if (!b || !root.contains(b)) return
+    const key = doneKey(b.dataset.done)
+    if (b.dataset.r) {
+      // tapping the last round ticked takes it back; any other marks that many times through done
+      const r = +b.dataset.r, l = locate(b.dataset.done), k = l ? roundsDone(l.node) : 0
+      const next = k >= r ? r - 1 : r
+      if (next) done[key] = next; else delete done[key]
+    } else if (done[key]) delete done[key]
+    else done[key] = true
+    saveDone(); renderPool()
+  }
+  root.addEventListener('click', onTick); listeners.push([root, 'click', onTick, undefined])
+
   const onPoolTap = e => {
     if (view !== 'pool' || !opts.onPoolNote) return
+    if (e.target.closest && e.target.closest('#pool [data-done], #pool [data-done-clear]')) return   // a tick, not a note
     const el = e.target.closest && e.target.closest('#pool [data-nid]'); if (!el || !root.contains(el)) return
     const id = el.dataset.nid, block = S().blocks.find(b => holds(b.items, id))
     if (block) opts.onPoolNote({ block_id: block.id, line_id: id })

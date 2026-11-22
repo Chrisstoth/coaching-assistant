@@ -230,5 +230,56 @@ b5.destroy()
 poolLine.dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
 assert.equal(tapped.length, 1, 'the tap listener goes with the builder')
 
+// poolside ticks: a set, a block and each time through a round can be ticked off,
+// without opening a note; they stay on this phone and each group has its own
+{
+  window.localStorage.clear()
+  globalThis.confirm = () => true
+  const seen = []
+  const root6 = window.document.createElement('div'); window.document.body.appendChild(root6)
+  const open = () => mountBuilder(root6, { id: 47, session: sample, effSys: 'effort20', save: async () => ({ ok: true }), onPoolNote: ref => seen.push(ref) })
+  let b6 = open(); b6.setView('pool')
+  const $6 = s => root6.querySelector(s)
+  const s6 = b6.getSession(), block = s6.blocks[0], line = block.items.find(n => n.t === 'line')
+  click($6(`#pool [data-done="${line.id}"]`))
+  assert.deepEqual(seen, [], 'a tick is not a note')
+  assert.ok($6(`#pool .pl[data-nid="${line.id}"]`).classList.contains('done'))
+  assert.equal($6(`#pool [data-done="${line.id}"]`).getAttribute('aria-pressed'), 'true')
+  click($6(`#pool [data-done="${block.id}"]`))
+  assert.ok($6('#pool .pblock').classList.contains('done'), 'a whole block (warm up done)')
+
+  let round = null
+  for (const b of s6.blocks) for (const n of b.items) if (!round && n.t === 'round') round = n
+  if (round) {
+    round.times = round.times || 1
+    if (round.times > 1) {
+      const pip = r => $6(`#pool [data-done="${round.id}"][data-r="${r}"]`)
+      click(pip(1))
+      assert.equal(pip(1).getAttribute('aria-pressed'), 'true', 'once through')
+      assert.equal(pip(2).getAttribute('aria-pressed'), 'false')
+      click(pip(round.times))
+      assert.ok(pip(round.times).closest('.pr').classList.contains('done'), 'all the way through: the round is done')
+      click(pip(round.times))
+      assert.equal(pip(round.times).getAttribute('aria-pressed'), 'false', 'tapping the last one takes it back')
+      assert.equal(pip(round.times - 1).getAttribute('aria-pressed'), 'true')
+    }
+  }
+
+  // back on the phone later: still ticked
+  b6.destroy(); b6 = open(); b6.setView('pool')
+  assert.ok($6(`#pool .pl[data-nid="${line.id}"]`).classList.contains('done'), 'ticks survive leaving the page')
+
+  // another group has its own ticks
+  const g = (b6.getSession().groups || [])[0]
+  if (g) {
+    click($6(`#pool [data-act="tab"][data-gid="${g.id}"]`))
+    assert.equal(root6.querySelectorAll('#pool .done').length, 0, `${g.name} starts with nothing ticked`)
+    click($6('#pool [data-act="tab"][data-gid=""]'))
+  }
+  click($6('#pool [data-done-clear]'))
+  assert.equal(root6.querySelectorAll('#pool .done, #pool [aria-pressed="true"].ptick').length, 0, 'cleared')
+  b6.destroy()
+}
+
 console.log('Session builder screen checks passed')
 process.exit(0)

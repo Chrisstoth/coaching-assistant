@@ -478,7 +478,34 @@
    A set already noted this session carries a small marker. */
 .sb.sb-notes #pool [data-nid]{cursor:pointer;-webkit-tap-highlight-color:transparent}
 .sb.sb-notes #pool .pl[data-nid]:active,.sb.sb-notes #pool .prl[data-nid]:active{background:var(--surface-2)}
-.sb #pool .pl.noted .pd::after,.sb #pool .prl.noted > span::after{content:"";display:inline-block;width:8px;height:8px;margin-left:8px;border-radius:50%;background:#f59e0b;vertical-align:middle}
+.sb #pool .pl.noted .pd::after,.sb #pool .prl.noted > .prn::after{content:"";display:inline-block;width:8px;height:8px;margin-left:8px;border-radius:50%;background:#f59e0b;vertical-align:middle}
+
+/* Poolside ticks: a box at the start of each set and block, and a numbered
+   button per time through a round. What's done fades back so what's next stands out. */
+.sb #pool .pl{grid-template-columns:30px auto minmax(0,1fr) auto auto}
+.sb #pool .pl.note{grid-template-columns:minmax(0,1fr);padding-left:42px}
+.sb #pool .pparts{padding-left:calc(42px + 3.6em)}
+@media (max-width:520px){
+  .sb #pool .pl{grid-template-columns:30px auto minmax(0,1fr)}
+  .sb #pool .pi,.sb #pool .pe{grid-column:3}
+  .sb #pool .pparts{padding-left:42px}
+}
+.sb .ptick{position:relative;width:30px;height:30px;padding:0;align-self:center;display:grid;place-items:center;border:2px solid rgba(255,255,255,.3);border-radius:4px;background:transparent;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.sb .ptick::before{content:"";position:absolute;inset:-8px}
+.sb .ptick[aria-pressed="true"]{background:#0d9488;border-color:#14b8a6}
+.sb .ptick[aria-pressed="true"]::after{content:"";width:7px;height:13px;border:solid #fff;border-width:0 3px 3px 0;transform:translateY(-2px) rotate(45deg)}
+.sb .pbh .ptick{align-self:center}
+.sb .prl .ptick{align-self:center}
+.sb .ppips{display:inline-flex;flex-wrap:wrap;gap:6px;align-self:center}
+.sb .ppip{min-width:36px;height:32px;padding:0 8px;border:2px solid rgba(255,255,255,.3);border-radius:4px;background:transparent;color:var(--muted);font-family:var(--f-data);font-size:15px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.sb .ppip[aria-pressed="true"]{background:#0d9488;border-color:#14b8a6;color:#fff}
+.sb #pool :is(.pl.done,.pr.done .pl,.pblock.done .pl) > :not(.ptick),
+.sb #pool :is(.pl.done + .pparts,.pr.done .pparts,.pblock.done .pparts),
+.sb #pool :is(.pr.done,.pblock.done) .prl > :is(.prn,em),
+.sb #pool .pblock.done .pbh > :not(.ptick){opacity:.4}
+.sb #pool :is(.pl.done,.pr.done .pl,.pblock.done .pl) .pd{text-decoration:line-through;text-decoration-thickness:1px}
+.sb .pclear{display:flex;justify-content:center}
+.sb .pclear .btn{font-size:13px;color:var(--muted)}
 
 /* ---- Squared off, like Home's Session Desk ----
    Squared cards on a soft shadow, square buttons and chips (no pills), and no
