@@ -83,9 +83,10 @@ class HomeScreenTests(unittest.TestCase):
             gone = models.Swimmer(name="Gone", squad="Bronze", active=False)
             db.add_all([amy, ben, cal, gone])
             county = models.Meet(name="County Champs", date=today + timedelta(days=12), date_to=today + timedelta(days=13))
-            open_ = models.Meet(name="Club Open", date=today + timedelta(days=40))
+            open_ = models.Meet(name="Club Open", date=today + timedelta(days=25))
             past = models.Meet(name="Last month", date=today - timedelta(days=30))
-            db.add_all([county, open_, past])
+            later = models.Meet(name="Spring Meet", date=today + timedelta(days=40))
+            db.add_all([county, open_, past, later])
             db.flush()
             db.add(models.MeetTarget(meet_id=county.id, swimmer_id=amy.id, priority="A", events=["100 Freestyle"]))
             # Ben has no targets, only entries: his best entry priority counts
@@ -98,7 +99,8 @@ class HomeScreenTests(unittest.TestCase):
         http, h = self.client()
         with http:
             out = http.get("/dashboard/galas", headers=h).json()
-        self.assertEqual([m["name"] for m in out["meets"]], ["County Champs", "Club Open"], "nearest first, past ones gone")
+        self.assertEqual([m["name"] for m in out["meets"]], ["County Champs", "Club Open"],
+                         "nearest first; past ones and anything over a month out aren't on Home")
         county = out["meets"][0]
         self.assertEqual(county["days_out"], 12)
         self.assertEqual([(s["name"], s["priority"]) for s in county["swimmers"]], [("Amy", "A"), ("Ben", "B")],

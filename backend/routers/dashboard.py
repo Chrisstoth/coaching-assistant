@@ -107,8 +107,9 @@ PRIORITY_ORDER = {"A": 0, "B": 1, "C": 2}
 @router.get("/galas")
 def upcoming_galas(db: DBSession = Depends(get_db)):
     """
-    The galas coming up, nearest first, each with who's going and how much it
-    matters to each of them (their A/B/C priority for that meet).
+    The galas in the next month, nearest first, each with who's going and how
+    much it matters to each of them (their A/B/C priority for that meet).
+    Further out isn't Home's business; the Meets page has the rest.
 
     Who's going: a swimmer with targets for the meet or an entry that isn't
     withdrawn. Their priority is the one set on their targets, or else the
@@ -116,7 +117,7 @@ def upcoming_galas(db: DBSession = Depends(get_db)):
     any of its swimmers has targets for (the old countdown card).
     """
     today = date.today()
-    cutoff = today + timedelta(weeks=24)
+    cutoff = today + timedelta(days=31)
     meets = [m for m in db.query(models.Meet).filter(
         models.Meet.date != None,
         models.Meet.date <= cutoff,
