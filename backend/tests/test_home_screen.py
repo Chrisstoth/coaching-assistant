@@ -36,11 +36,13 @@ class HomeScreenTests(unittest.TestCase):
 
     def test_the_staff_asks_in_one_list(self):
         with SessionLocal() as db:
-            s = models.Session(date=date(2026, 11, 2), squad="Silver 1")
-            db.add(s)
+            s = models.Session(date=date(2026, 11, 2), squad="Silver 1", title="Monday threshold")
+            amy = models.Swimmer(name="Amy", squad="Silver 1")
+            db.add_all([s, amy])
             db.flush()
             db.add(models.StaffNote(role="physiologist", kind="concern", message="Load up 22% on last week for Group 2",
-                                    session_id=s.id, flag="safety", status="open", trigger="builder"))
+                                    session_id=s.id, flag="safety", status="open", trigger="builder",
+                                    anchor={"line_id": "l3", "block": "Main set"}, swimmer_ids=[amy.id]))
             db.add(models.StaffNote(role="planner", kind="observation", message="Fine", flag="preference", status="open", trigger="builder"))
             db.add(models.Prediction(role="manager", kind="attendance", statement="Year 11s drop to 2 sessions a week",
                                      due=date.today() - timedelta(days=1)))
@@ -53,7 +55,13 @@ class HomeScreenTests(unittest.TestCase):
         self.assertEqual(kinds.count("safety"), 1, "only safety flags, not preferences")
         safety = next(a for a in asks["items"] if a["kind"] == "safety")
         self.assertEqual((safety["who"], safety["link"]), ("Fiona", f"/builder/{sid}"))
-        self.assertIn("prediction", kinds)
+        # Opened on Home, it says what it's attached to and what started it, with an id to act on
+        self.assertEqual((safety["session"]["title"], safety["block"], safety["swimmers"]), ("Monday threshold", "Main set", ["Amy"]))
+        self.assertTrue(safety["note_id"] and safety["can_rate"] and safety["trigger"])
+        prediction = next(a for a in asks["items"] if a["kind"] == "prediction")
+        self.assertEqual((prediction["statement"], prediction["due"]),
+                         ("Year 11s drop to 2 sessions a week", (date.today() - timedelta(days=1)).isoformat()))
+        self.assertEqual(len({a["key"] for a in asks["items"]}), len(asks["items"]), "each ask has its own key")
         self.assertEqual(asks["count"], len(asks["items"]))
 
     def test_this_week_of_the_plan_and_the_checklist(self):

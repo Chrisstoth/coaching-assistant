@@ -179,25 +179,196 @@ function SessionDesk({ sessions, onOpen, onRegister, onDismiss, onCancel, busyKe
   )
 }
 
-// What the staff need from the coach, in one list.
+// What the staff need from the coach, in one list. Tap one to open it in place:
+// what it's attached to, what started it, the whole of it, and what you can do about it.
 const ASK_TONE = { safety: 'red', prediction: 'blue', review: 'blue', question: 'blue' }
+const ASK_LABEL = { safety: 'Safety flag', prediction: 'Prediction to check', review: 'Workbooks changed', question: 'Questions' }
+const shortDay = iso => (iso ? new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '')
+
+function AskFact({ label, children }) {
+  if (!children) return null
+  return (
+    <div className="flex gap-3 text-xs">
+      <span className="w-14 shrink-0 text-pool-500">{label}</span>
+      <span className="min-w-0 text-pool-300">{children}</span>
+    </div>
+  )
+}
+
+function AskDetail({ ask, busy, onAct }) {
+  const session = ask.session
+  return (
+    <div className="desk-rule px-4 pt-3 pb-3.5 space-y-3">
+      <div className="space-y-1.5">
+        {session && (
+          <AskFact label="On">
+            <Link to={`/builder/${session.id}`} className="text-accent-300">
+              {[session.title || 'Session', shortDay(session.date), session.time, session.squad].filter(Boolean).join(' · ')}
+            </Link>
+          </AskFact>
+        )}
+        <AskFact label="Where">{ask.block}</AskFact>
+        <AskFact label="About">{ask.swimmers?.length ? ask.swimmers.join(', ') : null}</AskFact>
+        <AskFact label="From">{ask.trigger}</AskFact>
+        <AskFact label="Raised">{ask.raised && shortDay(ask.raised)}</AskFact>
+        <AskFact label="Due">{ask.due && shortDay(ask.due)}</AskFact>
+      </div>
+
+      {ask.question && <p className="text-xs text-pool-200 bg-white/[0.04] rounded px-3 py-2">{ask.question}</p>}
+
+      {ask.kind === 'review' && (
+        <ul className="desk-divide border-l border-white/10 pl-3">
+          {ask.pages.map(page => {
+            const key = `${page.role}:${page.path}`
+            return (
+              <li key={key} className="py-2 flex items-start gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-pool-100">{page.title || page.path}</p>
+                  <p className="text-[11px] text-pool-500">{page.name}{page.reason ? ` · ${page.reason}` : ''}</p>
+                  {page.summary && <p className="text-xs text-pool-400 mt-0.5 line-clamp-3">{page.summary}</p>}
+                </div>
+                <button type="button" disabled={Boolean(busy)} onClick={() => onAct('tick', page)} className="desk-btn desk-btn--sm">
+                  {busy === `tick:${key}` ? '…' : 'Tick'}
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+
+      {ask.kind === 'question' && (
+        <ul className="space-y-1">
+          {ask.terms.map(t => (
+            <li key={t.term} className="text-xs text-pool-300">
+              <span className="font-mono text-pool-100">{t.term}</span>
+              <span className="text-pool-500"> · in {t.files} file{t.files === 1 ? '' : 's'}, e.g. {t.example}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {ask.error && <p className="text-xs text-red-300">{ask.error}</p>}
+
+      {ask.kind === 'safety' && (
+        <>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" disabled={Boolean(busy)} onClick={() => onAct('acknowledge')} className="desk-btn desk-btn--primary">
+              {busy === 'acknowledge' ? 'Saving…' : 'Acknowledge'}
+            </button>
+            <Link to={ask.link} className="desk-btn">{session ? 'Open session' : 'Open workbooks'}</Link>
+          </div>
+          {ask.can_rate && (
+            <div className="flex items-center gap-3 text-[11px] text-pool-500">
+              <span>Was it useful?</span>
+              <button type="button" disabled={Boolean(busy)} onClick={() => onAct('useful', true)}
+                className={`desk-quiet ${ask.useful === true ? 'text-teal-300' : ''}`}>Yes</button>
+              <button type="button" disabled={Boolean(busy)} onClick={() => onAct('useful', false)}
+                className={`desk-quiet ${ask.useful === false ? 'text-amber-300' : ''}`}>No</button>
+            </div>
+          )}
+          <p className="text-[11px] text-pool-500">Acknowledging tells the staff you've seen it. Safety flags are never switched off.</p>
+        </>
+      )}
+
+      {ask.kind === 'prediction' && (
+        <div className="grid grid-cols-3 gap-2">
+          {[['right', 'It happened'], ['wrong', "It didn't"], ['no result', "Can't tell"]].map(([outcome, label]) => (
+            <button key={outcome} type="button" disabled={Boolean(busy)} onClick={() => onAct('mark', outcome)}
+              className={`desk-btn ${outcome === 'right' ? 'desk-btn--teal' : ''}`}>
+              {busy === `mark:${outcome}` ? '…' : label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {ask.kind === 'review' && (
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" disabled={Boolean(busy)} onClick={() => onAct('tick-all')} className="desk-btn desk-btn--primary">
+            {busy === 'tick-all' ? 'Ticking…' : 'Tick all as read'}
+          </button>
+          <Link to={ask.link} className="desk-btn">Open workbooks</Link>
+        </div>
+      )}
+
+      {ask.kind === 'question' && (
+        <Link to={ask.link} className="desk-btn desk-btn--primary w-full">Answer Maggie</Link>
+      )}
+    </div>
+  )
+}
+
 function StaffAsksCard() {
   const [asks, setAsks] = useState(null)
+  const [openKey, setOpenKey] = useState(null)
+  const [busy, setBusy] = useState({ key: null, what: null })
   useEffect(() => { api.getStaffAsks().then(setAsks).catch(() => setAsks(null)) }, [])
-  if (!asks || asks.count === 0) return null
+  if (!asks || asks.items.length === 0) return null
+
+  const patch = (key, change) => setAsks(prev => ({ ...prev, items: prev.items.map(a => (a.key === key ? { ...a, ...change } : a)) }))
+  const drop = key => setAsks(prev => {
+    const items = prev.items.filter(a => a.key !== key)
+    return { ...prev, items, count: items.length }
+  })
+
+  const act = async (ask, what, value) => {
+    const busyWhat = what === 'tick' ? `tick:${value.role}:${value.path}` : what === 'mark' ? `mark:${value}` : what
+    setBusy({ key: ask.key, what: busyWhat })
+    patch(ask.key, { error: '' })
+    try {
+      if (what === 'acknowledge') {
+        await api.updateStaffNote(ask.note_id, 'dismissed')
+        drop(ask.key)
+      } else if (what === 'useful') {
+        await api.decideBuilderComment(ask.note_id, { action: 'useful', useful: value })
+        patch(ask.key, { useful: value })
+      } else if (what === 'mark') {
+        await api.markPrediction(ask.prediction_id, value)
+        drop(ask.key)
+      } else if (what === 'tick' || what === 'tick-all') {
+        const pages = what === 'tick' ? [value] : ask.pages
+        for (const page of pages) await api.tickWorkbookPage(page.role, page.path)
+        const left = ask.pages.filter(p => !pages.includes(p))
+        if (left.length) {
+          patch(ask.key, { pages: left, text: `${left.length} workbook page${left.length === 1 ? '' : 's'} changed this week, to read and tick` })
+        } else {
+          drop(ask.key)
+        }
+      }
+    } catch (error) {
+      patch(ask.key, { error: `That didn't save: ${error.message}` })
+    }
+    setBusy({ key: null, what: null })
+  }
+
   return (
     <section className="space-y-2">
       <div className="flex items-center justify-between px-0.5">
         <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">The staff need you</p>
-        <span className="text-[11px] font-bold text-white bg-accent-600 rounded px-2 py-0.5 tabular-nums">{asks.count}</span>
+        <span className="text-[11px] font-bold text-white bg-accent-600 rounded px-2 py-0.5 tabular-nums">{asks.items.length}</span>
       </div>
-      {asks.items.slice(0, 6).map((a, i) => (
-        <Link key={i} to={a.link} data-tone={ASK_TONE[a.kind] || 'blue'} className="desk-card block px-4 py-3">
-          <p className={`text-[11px] ${a.kind === 'safety' ? 'text-red-300' : 'text-pool-400'}`}>{a.kind === 'safety' ? `Safety flag · ${a.who}` : a.who}</p>
-          <p className="text-sm text-pool-200 line-clamp-2 mt-0.5">{a.text}</p>
-        </Link>
-      ))}
-      {asks.count > 6 && <Link to="/workbooks" className="block text-xs text-accent-400 px-0.5">{asks.count - 6} more ›</Link>}
+      {asks.items.slice(0, 6).map(a => {
+        const open = openKey === a.key
+        return (
+          <article key={a.key} data-tone={ASK_TONE[a.kind] || 'blue'} className="desk-card">
+            <button type="button" aria-expanded={open} onClick={() => setOpenKey(open ? null : a.key)}
+              className="w-full flex items-start gap-3 px-4 py-3 text-left">
+              <div className="min-w-0 flex-1">
+                <p className={`text-[11px] ${a.kind === 'safety' ? 'text-red-300' : 'text-pool-400'}`}>
+                  {ASK_LABEL[a.kind] || 'From the staff'} · {a.who}
+                </p>
+                <p className={`text-sm text-pool-200 mt-0.5 whitespace-pre-line ${open ? '' : 'line-clamp-2'}`}>
+                  {a.kind === 'prediction' && open ? a.statement : a.text}
+                </p>
+              </div>
+              <span className="mt-1"><Chevron open={open} /></span>
+            </button>
+            {open && (
+              <AskDetail ask={a} busy={busy.key === a.key ? busy.what : null} onAct={(what, value) => act(a, what, value)} />
+            )}
+          </article>
+        )
+      })}
+      {asks.items.length > 6 && <Link to="/workbooks" className="block text-xs text-accent-400 px-0.5">{asks.items.length - 6} more ›</Link>}
     </section>
   )
 }
