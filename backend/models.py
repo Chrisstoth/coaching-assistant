@@ -237,6 +237,8 @@ class Session(Base):
     # taken at all) aren't counted against swimmers. ``taken_by`` is who it was.
     taken_by_other = Column(Boolean, nullable=False, default=False)
     taken_by = Column(String, nullable=True)
+    # The coach chose not to debrief this session, so Home stops asking.
+    debrief_skipped_at = Column(DateTime(timezone=True), nullable=True)
 
     training_block_id = Column(Integer, ForeignKey("training_blocks.id"), nullable=True)
 

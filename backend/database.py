@@ -80,6 +80,7 @@ def _apply_migrations():
             add_col("sessions", "plan_ready_at", "DATETIME")
             add_col("sessions", "taken_by_other", "BOOLEAN DEFAULT 0")
             add_col("sessions", "taken_by", "VARCHAR")
+            add_col("sessions", "debrief_skipped_at", "TIMESTAMP WITH TIME ZONE")
 
         if "session_entries" in insp.get_table_names():
             add_col("session_entries", "response", "VARCHAR")

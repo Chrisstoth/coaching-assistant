@@ -121,6 +121,20 @@ class SessionDeliveryTests(unittest.TestCase):
         self.assertIn(mine, asked)
         self.assertNotIn(covered, asked)
 
+    def test_the_coach_can_skip_a_debrief_without_doing_one(self):
+        yesterday = date.today() - timedelta(days=1)
+        with SessionLocal() as db:
+            sid = self._finished_session(db, yesterday, marks={"Amy": True})
+            db.commit()
+        http, h = self.client()
+        with http:
+            asked = lambda: {i["session_id"] for i in http.get("/dashboard/sessions-awaiting-debrief", headers=h).json()["items"]}
+            self.assertIn(sid, asked())
+            r = http.post(f"/dashboard/sessions-awaiting-debrief/{sid}/skip", headers=h)
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertNotIn(sid, asked(), "Home stops asking once skipped")
+            self.assertEqual(http.post("/dashboard/sessions-awaiting-debrief/999999/skip", headers=h).status_code, 404)
+
     def test_absences_on_a_covered_register_dont_count_against_a_swimmer(self):
         from backend.services.claude_service import build_attendance_stats
         with SessionLocal() as db:

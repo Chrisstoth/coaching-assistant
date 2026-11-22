@@ -539,17 +539,21 @@ function CurrentSeasonCard({ season, pulse, notice }) {
   )
 }
 
+// Injuries and galas have their own cards at the top; this is everyone else away.
+const OWN_CARD = new Set(['injury', 'competition'])
+
 function AvailabilityCard({ report }) {
   const [expanded, setExpanded] = useState(false)
-  const items = report?.items || []
+  const items = (report?.items || []).filter(item => !OWN_CARD.has(item.reason))
   if (items.length === 0) return null
   const visible = expanded ? items : items.slice(0, 5)
+  const now = items.filter(item => item.is_current).length
   return (
     <section>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-xs font-semibold text-pool-400 uppercase tracking-wider">Squad availability</h2>
+        <h2 className="text-xs font-semibold text-pool-400 uppercase tracking-wider">Away</h2>
         <span className="text-[11px] text-pool-500">
-          {report.current_count || 0} away now · {report.upcoming_count || 0} upcoming
+          {now} away now · {items.length - now} upcoming
         </span>
       </div>
       <div className="desk-card desk-divide">
@@ -577,38 +581,196 @@ function AvailabilityCard({ report }) {
   )
 }
 
-function GroupTargetCard({ target }) {
-  const { group, meet_name, days_out, meet_id } = target
-  const weeks = Math.ceil(days_out / 7)
-  const urgent = days_out <= 14
-  const soon = days_out <= 42
+// How close a gala is: red inside a fortnight, amber inside six weeks.
+function galaUrgency(days) {
+  if (days <= 14) return { tone: 'red', accent: 'text-red-300', label: 'text-red-400/70', bar: 'bg-red-500' }
+  if (days <= 42) return { tone: 'amber', accent: 'text-amber-300', label: 'text-amber-400/70', bar: 'bg-amber-500' }
+  return { tone: 'teal', accent: 'text-teal-300', label: 'text-teal-400/70', bar: 'bg-teal-500' }
+}
 
-  const tone = urgent ? 'red' : soon ? 'amber' : 'teal'
+const PRIORITY_CHIP = {
+  A: 'bg-red-900/50 text-red-200 border-red-700/60',
+  B: 'bg-amber-900/40 text-amber-200 border-amber-700/50',
+  C: 'bg-pool-700 text-pool-300 border-pool-600',
+}
 
-  const accentClass = urgent ? 'text-red-300' : soon ? 'text-amber-300' : 'text-teal-300'
-  const labelClass = urgent ? 'text-red-400/70' : soon ? 'text-amber-400/70' : 'text-teal-400/70'
+function PriorityChip({ priority }) {
+  if (!priority) return <span className="text-[10px] text-pool-600 w-6 text-center shrink-0" title="No priority set">–</span>
+  return (
+    <span className={`text-[11px] font-bold w-6 text-center py-0.5 rounded border shrink-0 ${PRIORITY_CHIP[priority]}`}
+      title={`${priority} meet for this swimmer`}>
+      {priority}
+    </span>
+  )
+}
 
-  // Progress bar: 0% = 12+ weeks out, 100% = today
-  const MAX_DAYS = 84
-  const progress = Math.min(100, Math.max(4, Math.round((1 - days_out / MAX_DAYS) * 100)))
-  const barClass = urgent ? 'bg-red-500' : soon ? 'bg-amber-500' : 'bg-teal-500'
+const dayLabel = iso => new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+const meetDates = m => (m.date_to && m.date_to !== m.date ? `${dayLabel(m.date)} – ${dayLabel(m.date_to)}` : dayLabel(m.date))
+const countdown = m => (m.on_now ? 'on now' : m.days_out === 0 ? 'today' : m.days_out === 1 ? 'tomorrow' : `${m.days_out}d`)
+const priorityMix = counts => ['A', 'B', 'C'].filter(p => counts?.[p]).map(p => `${counts[p]} ${p}`).join(' · ')
+
+function readOpen(key) {
+  try { return localStorage.getItem(key) === '1' } catch { return false }
+}
+function saveOpen(key, open) {
+  try { localStorage.setItem(key, open ? '1' : '0') } catch { /* private window */ }
+}
+
+function Chevron({ open }) {
+  return (
+    <svg viewBox="0 0 12 12" className={`w-3 h-3 text-pool-500 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+      <path d="M2.5 4.5 6 8l3.5-3.5" />
+    </svg>
+  )
+}
+
+/* One gala: when it is, how long until, and (opened) who's going with their priority. */
+function GalaRow({ meet, open, onToggle, unwell }) {
+  const u = galaUrgency(meet.days_out)
+  const mix = priorityMix(meet.priority_counts)
+  return (
+    <div>
+      <button type="button" onClick={onToggle} aria-expanded={open}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left active:bg-white/5">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-pool-100 truncate">{meet.name}</p>
+          <p className="text-[11px] text-pool-400 mt-0.5 truncate">
+            {meetDates(meet)}
+            {` · ${meet.swimmers.length} swimmer${meet.swimmers.length === 1 ? '' : 's'}`}
+            {mix ? ` · ${mix}` : ''}
+          </p>
+          {meet.target_for.length > 0 && (
+            <p className={`text-[10px] font-semibold uppercase tracking-wider mt-1 ${u.label}`}>
+              Target meet · {meet.target_for.join(', ')}
+            </p>
+          )}
+        </div>
+        <span className={`text-sm font-bold tabular-nums shrink-0 ${u.accent}`}>{countdown(meet)}</span>
+        <Chevron open={open} />
+      </button>
+      {open && (
+        <div className="px-4 pb-3">
+          {meet.swimmers.length === 0 ? (
+            <p className="text-xs text-pool-500 py-1">No one entered yet.</p>
+          ) : (
+            <div className="desk-divide border-l border-white/10 pl-3">
+              {meet.swimmers.map(s => (
+                <Link key={s.swimmer_id} to={`/swimmers/${s.swimmer_id}`} className="flex items-center gap-2.5 py-2 active:opacity-70">
+                  <PriorityChip priority={s.priority} />
+                  <span className="text-sm text-pool-200 truncate">{s.name}</span>
+                  {unwell.has(s.swimmer_id) && (
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider shrink-0 ${unwell.get(s.swimmer_id) === 'illness' ? 'text-amber-300' : 'text-red-300'}`}>
+                      {unwell.get(s.swimmer_id) === 'illness' ? 'Ill' : 'Injury'}
+                    </span>
+                  )}
+                  <span className="flex-1" />
+                  <span className="text-[11px] text-pool-500 shrink-0">
+                    {s.events.length ? `${s.events.length} event${s.events.length === 1 ? '' : 's'}` : ''}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          )}
+          <Link to={`/meets/${meet.meet_id}`} className="inline-block mt-2 text-xs text-accent-400 font-semibold">Open meet ›</Link>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* Galas coming up: the next one and its countdown at a glance; opened, every gala,
+   each opening to who's going and how much it matters to them (A/B/C). */
+function GalasCard({ data, unwell = [] }) {
+  const meets = data?.meets || []
+  const unwellKind = new Map(unwell.map(u => [u.swimmer_id, u.kind]))
+  const [open, setOpen] = useState(() => readOpen('home.galas.open'))
+  const [openMeet, setOpenMeet] = useState(null)
+  if (!meets.length) return null
+  const next = meets[0]
+  const u = galaUrgency(next.days_out)
+  const toggle = () => setOpen(value => { saveOpen('home.galas.open', !value); return !value })
+  // 0% = 12+ weeks out, 100% = today
+  const progress = Math.min(100, Math.max(4, Math.round((1 - next.days_out / 84) * 100)))
+  const weeks = Math.ceil(next.days_out / 7)
 
   return (
-    <Link to={`/meets/${meet_id}`} data-tone={tone} className="desk-card block px-4 py-3.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <p className={`text-[10px] font-semibold uppercase tracking-wider ${labelClass}`}>{group}</p>
-          <p className="font-semibold text-sm text-pool-100 mt-0.5 truncate">{meet_name}</p>
+    <section data-tone={u.tone} className="desk-card">
+      <button type="button" onClick={toggle} aria-expanded={open} className="w-full block px-4 py-3.5 text-left">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className={`text-[10px] font-semibold uppercase tracking-wider ${u.label}`}>
+              Galas · {data.swimmer_count} swimmer{data.swimmer_count === 1 ? '' : 's'} · {meets.length} meet{meets.length === 1 ? '' : 's'}
+            </p>
+            <p className="font-semibold text-sm text-pool-100 mt-0.5 truncate">{next.name}</p>
+            <p className="text-[11px] text-pool-400 mt-0.5 truncate">
+              {next.target_for.length ? `${next.target_for.join(', ')} target · ` : ''}
+              {next.swimmers.length} going{priorityMix(next.priority_counts) ? ` · ${priorityMix(next.priority_counts)}` : ''}
+            </p>
+          </div>
+          <div className="text-right shrink-0">
+            {next.on_now ? (
+              <p className={`text-base font-bold leading-none ${u.accent}`}>On now</p>
+            ) : (
+              <>
+                <p className={`text-2xl font-bold leading-none tabular-nums ${u.accent}`}>{next.days_out}</p>
+                <p className={`text-[10px] mt-0.5 ${u.label}`}>{next.days_out === 1 ? 'day' : next.days_out < 14 ? 'days' : `days · ${weeks}w`}</p>
+              </>
+            )}
+          </div>
+          <span className="self-center"><Chevron open={open} /></span>
         </div>
-        <div className="text-right shrink-0">
-          <p className={`text-2xl font-bold leading-none tabular-nums ${accentClass}`}>{days_out}</p>
-          <p className={`text-[10px] mt-0.5 ${labelClass}`}>{days_out === 1 ? 'day' : days_out < 14 ? 'days' : `days · ${weeks}w`}</p>
+        <div className="mt-2.5 h-1 rounded-full bg-white/[0.06]">
+          <div className={`h-full rounded-full ${u.bar}`} style={{ width: `${progress}%` }} />
         </div>
+      </button>
+      {open && (
+        <div className="desk-divide desk-rule">
+          {meets.map(m => (
+            <GalaRow key={m.meet_id} meet={m} open={openMeet === m.meet_id} unwell={unwellKind}
+              onToggle={() => setOpenMeet(id => (id === m.meet_id ? null : m.meet_id))} />
+          ))}
+          <div className="px-4 py-2.5 flex justify-between text-xs">
+            <span className="text-pool-500">A, B, C: how much each meet matters to the swimmer</span>
+            <Link to="/meets" className="text-pool-400 shrink-0 ml-3">All meets ›</Link>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* Who's injured or ill right now, at the top so it's seen before planning anything. */
+function UnwellCard({ items }) {
+  if (!items.length) return null
+  const shortDate = iso => new Date(`${iso}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
+  return (
+    <section data-tone="red" className="desk-card">
+      <div className="px-4 pt-3.5 pb-2 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wider text-red-300">Injured &amp; ill</p>
+        <span className="text-[11px] text-pool-400">{items.length} swimmer{items.length === 1 ? '' : 's'}</span>
       </div>
-      <div className="mt-2.5 h-1 rounded-full bg-white/[0.06]">
-        <div className={`h-full rounded-full ${barClass}`} style={{ width: `${progress}%` }} />
+      <div className="desk-divide desk-rule">
+        {items.map(item => (
+          <Link key={`${item.swimmer_id}-${item.source}`} to={`/swimmers/${item.swimmer_id}`}
+            className="flex items-start gap-3 px-4 py-2.5 active:bg-white/5">
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-pool-100 truncate">
+                {item.name}
+                <span className={`ml-2 text-[10px] font-semibold uppercase tracking-wider ${item.kind === 'illness' ? 'text-amber-300' : 'text-red-300'}`}>
+                  {item.kind === 'illness' ? 'Ill' : 'Injury'}
+                </span>
+              </p>
+              <p className="text-xs text-pool-400 truncate">
+                {item.title}{item.impact ? ` · ${item.impact}` : ''}
+              </p>
+            </div>
+            <span className="text-[11px] text-pool-500 shrink-0 mt-0.5">
+              {item.until ? `until ${shortDate(item.until)}` : item.since ? `since ${shortDate(item.since)}` : ''}
+            </span>
+          </Link>
+        ))}
       </div>
-    </Link>
+    </section>
   )
 }
 
@@ -649,7 +811,7 @@ function AssistantInboxPreview({ inbox }) {
   )
 }
 
-function SessionDebriefPrompts({ items }) {
+function SessionDebriefPrompts({ items, onSkip, busyKey }) {
   if (!items.length) return null
 
   return (
@@ -660,20 +822,29 @@ function SessionDebriefPrompts({ items }) {
       </div>
       <div className="desk-divide desk-rule">
         {items.map(item => (
-          <div key={item.session_id} className="px-4 py-3 flex items-center gap-3">
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-pool-100 truncate">{item.title}</p>
-              <p className="text-xs text-pool-400 mt-0.5">
-                {item.days_since === 0 ? 'Today' : item.days_since === 1 ? 'Yesterday' : `${item.days_since} days ago`}
-                {` · ${item.attended} swimmer${item.attended === 1 ? '' : 's'}`}
-              </p>
+          <div key={item.session_id} className="px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium text-pool-100 truncate">{item.title}</p>
+                <p className="text-xs text-pool-400 mt-0.5">
+                  {item.days_since === 0 ? 'Today' : item.days_since === 1 ? 'Yesterday' : `${item.days_since} days ago`}
+                  {` · ${item.attended} swimmer${item.attended === 1 ? '' : 's'}`}
+                </p>
+              </div>
+              <Link
+                to={`/debrief?session=${item.session_id}`}
+                className="desk-btn desk-btn--teal desk-btn--sm"
+              >
+                Debrief
+              </Link>
             </div>
-            <Link
-              to={`/debrief?session=${item.session_id}`}
-              className="desk-btn desk-btn--teal desk-btn--sm"
+            <button
+              onClick={() => onSkip(item)}
+              disabled={busyKey === item.session_id}
+              className="desk-quiet mt-1 disabled:opacity-50"
             >
-              Debrief
-            </Link>
+              {busyKey === item.session_id ? 'Skipping…' : 'Skip debrief'}
+            </button>
           </div>
         ))}
       </div>
@@ -866,6 +1037,9 @@ export default function Dashboard() {
   const [busyCheckInKey, setBusyCheckInKey] = useState('')
   const [busyResultsMeetId, setBusyResultsMeetId] = useState('')
   const [awaitingDebrief, setAwaitingDebrief] = useState([])
+  const [busyDebriefSessionId, setBusyDebriefSessionId] = useState('')
+  const [galas, setGalas] = useState({ meets: [], swimmer_count: 0 })
+  const [unwell, setUnwell] = useState([])
   const [calendarError, setCalendarError] = useState('')
   const [reload, setReload] = useState(0)
   const firstLoad = useRef(true)
@@ -915,7 +1089,11 @@ export default function Dashboard() {
       api.getSquadAvailability().catch(() => ({ items: [], current_count: 0, upcoming_count: 0 })),
       api.getDueCoachCheckIns().catch(() => ({ items: [] })),
       api.getSessionsAwaitingDebrief().catch(() => ({ items: [] })),
-    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData, checkIns, debriefs]) => {
+      api.getUpcomingGalas().catch(() => ({ meets: [], swimmer_count: 0 })),
+      api.getUnwellSwimmers().catch(() => ({ items: [] })),
+    ]).then(([cal, notes, ctx, pulseData, countdowns, inbox, season, availabilityData, checkIns, debriefs, galaData, unwellData]) => {
+      setGalas(galaData)
+      setUnwell(unwellData.items || [])
       setCalendar(cal)
       setCoachingNotes(notes)
       setCoachingProfile(ctx)
@@ -943,6 +1121,17 @@ export default function Dashboard() {
       alert(`Could not dismiss that prompt: ${error.message}`)
     }
     setBusyResultsMeetId('')
+  }
+
+  const skipDebrief = async (item) => {
+    setBusyDebriefSessionId(item.session_id)
+    try {
+      await api.skipSessionDebrief(item.session_id)
+      setAwaitingDebrief(prev => prev.filter(row => row.session_id !== item.session_id))
+    } catch (error) {
+      alert(`Could not skip that debrief: ${error.message}`)
+    }
+    setBusyDebriefSessionId('')
   }
 
   const dismissNote = async (id) => {
@@ -1078,6 +1267,11 @@ export default function Dashboard() {
 
       <SetupChecklist />
 
+      {/* This week of the plan, then who can't train fully, then the galas */}
+      {plannerSquads.length > 0 && <PlanWeekCard squads={plannerSquads} />}
+      {!loading && <UnwellCard items={unwell} />}
+      {!loading && <GalasCard data={galas} unwell={unwell} />}
+
       {!loading && (
         <SessionDesk
           sessions={sessionQueue}
@@ -1092,7 +1286,13 @@ export default function Dashboard() {
         />
       )}
 
-      {!loading && <SessionDebriefPrompts items={awaitingDebrief} />}
+      {!loading && (
+        <SessionDebriefPrompts
+          items={awaitingDebrief}
+          onSkip={skipDebrief}
+          busyKey={busyDebriefSessionId}
+        />
+      )}
 
       {!loading && (
         <MeetResultsPrompts
@@ -1113,42 +1313,12 @@ export default function Dashboard() {
 
       <StaffAsksCard />
 
-      {plannerSquads.length > 0 && <PlanWeekCard squads={plannerSquads} />}
       {!loading && !activeSeason && plannerSquads.length === 0 && <SeasonStartCard onStarted={handleSeasonStarted} />}
       {!loading && activeSeason && <CurrentSeasonCard season={activeSeason} pulse={pulse} notice={seasonNotice} />}
 
       {!loading && <AvailabilityCard report={availability} />}
 
       <AssistantInboxPreview inbox={assistantInbox} />
-
-      {/* Group target meet countdowns */}
-      {meetCountdowns.group_targets.length > 0 && (
-        <section className="space-y-2">
-          {meetCountdowns.group_targets.map(t => (
-            <GroupTargetCard key={`${t.group}-${t.meet_id}`} target={t} />
-          ))}
-        </section>
-      )}
-
-      {/* Upcoming meets (quieter) */}
-      {meetCountdowns.upcoming_meets.length > 0 && (
-        <section>
-          <div className="flex items-center justify-between mb-1.5">
-            <p className="text-xs font-semibold text-pool-400 uppercase tracking-wider">Meets coming up</p>
-            <Link to="/meets" className="text-xs text-pool-500 hover:text-pool-300">All →</Link>
-          </div>
-          <div className="desk-card desk-divide">
-            {meetCountdowns.upcoming_meets.map(m => (
-              <Link key={m.meet_id} to={`/meets/${m.meet_id}`} className="flex items-center justify-between px-4 py-2.5 active:bg-white/5">
-                <span className="text-sm text-pool-300">{m.name}</span>
-                <span className="text-xs text-pool-500 tabular-nums">
-                  {m.days_out === 0 ? 'today' : m.days_out === 1 ? 'tomorrow' : `${m.days_out}d`}
-                </span>
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
 
       <CoachingWatchpoints notes={coachingNotes} onDismiss={dismissNote} />
 

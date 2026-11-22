@@ -74,6 +74,68 @@ class HomeScreenTests(unittest.TestCase):
             steps = {s["key"]: s["done"] for s in http.get("/setup/checklist", headers=h).json()["steps"]}
             self.assertEqual(steps, {"pool": True, "swimmers": True, "plan": True, "scale": False, "club": False})
 
+    def test_galas_coming_up_say_who_is_going_and_how_much_it_matters(self):
+        today = date.today()
+        with SessionLocal() as db:
+            amy = models.Swimmer(name="Amy", squad="Silver 1")
+            ben = models.Swimmer(name="Ben", squad="Silver 1")
+            cal = models.Swimmer(name="Cal", squad="Bronze")
+            gone = models.Swimmer(name="Gone", squad="Bronze", active=False)
+            db.add_all([amy, ben, cal, gone])
+            county = models.Meet(name="County Champs", date=today + timedelta(days=12), date_to=today + timedelta(days=13))
+            open_ = models.Meet(name="Club Open", date=today + timedelta(days=40))
+            past = models.Meet(name="Last month", date=today - timedelta(days=30))
+            db.add_all([county, open_, past])
+            db.flush()
+            db.add(models.MeetTarget(meet_id=county.id, swimmer_id=amy.id, priority="A", events=["100 Freestyle"]))
+            # Ben has no targets, only entries: his best entry priority counts
+            db.add(models.MeetEntry(meet_id=county.id, swimmer_id=ben.id, event_name="50 Back", canonical_event="50BK", priority="C"))
+            db.add(models.MeetEntry(meet_id=county.id, swimmer_id=ben.id, event_name="100 Back", canonical_event="100BK", priority="B"))
+            db.add(models.MeetEntry(meet_id=county.id, swimmer_id=cal.id, event_name="50 Free", canonical_event="50FR", status="withdrawn"))
+            db.add(models.MeetEntry(meet_id=county.id, swimmer_id=gone.id, event_name="50 Free", canonical_event="50FR"))
+            db.add(models.MeetTarget(meet_id=open_.id, swimmer_id=cal.id, priority="b"))
+            db.commit()
+        http, h = self.client()
+        with http:
+            out = http.get("/dashboard/galas", headers=h).json()
+        self.assertEqual([m["name"] for m in out["meets"]], ["County Champs", "Club Open"], "nearest first, past ones gone")
+        county = out["meets"][0]
+        self.assertEqual(county["days_out"], 12)
+        self.assertEqual([(s["name"], s["priority"]) for s in county["swimmers"]], [("Amy", "A"), ("Ben", "B")],
+                         "A first; withdrawn and inactive swimmers aren't going")
+        self.assertEqual(county["swimmers"][1]["events"], ["50 Back", "100 Back"])
+        self.assertEqual(county["priority_counts"], {"A": 1, "B": 1, "C": 0})
+        self.assertEqual(county["target_for"], ["Silver 1"])
+        self.assertEqual(out["meets"][1]["target_for"], ["Bronze"])
+        self.assertEqual(out["meets"][1]["swimmers"][0]["priority"], "B")
+        self.assertEqual(out["swimmer_count"], 3)
+
+    def test_injured_and_ill_swimmers_together(self):
+        today = date.today()
+        with SessionLocal() as db:
+            amy = models.Swimmer(name="Amy", squad="Silver 1")
+            ben = models.Swimmer(name="Ben", squad="Silver 1")
+            cal = models.Swimmer(name="Cal", squad="Silver 1", status="injury")
+            dan = models.Swimmer(name="Dan", squad="Silver 1")
+            eve = models.Swimmer(name="Eve", squad="Silver 1")
+            db.add_all([amy, ben, cal, dan, eve])
+            db.flush()
+            db.add(models.SwimmerCurrentNote(swimmer_id=amy.id, kind="illness", title="Flu", date_from=today))
+            db.add(models.SwimmerCurrentNote(swimmer_id=ben.id, kind="injury", title="Left shoulder", date_from=today - timedelta(days=3),
+                                             impact="No fly"))
+            db.add(models.SwimmerCurrentNote(swimmer_id=eve.id, kind="other", title="Exams", date_from=today))
+            db.add(models.SwimmerException(swimmer_id=dan.id, reason="injury", date_from=today, date_to=today + timedelta(days=5), notes="Ankle"))
+            db.add(models.SwimmerException(swimmer_id=ben.id, reason="injury", date_from=today, date_to=today + timedelta(days=5)))
+            db.commit()
+        http, h = self.client()
+        with http:
+            items = http.get("/dashboard/unwell", headers=h).json()["items"]
+        self.assertEqual([(i["name"], i["kind"], i["source"]) for i in items],
+                         [("Ben", "injury", "note"), ("Cal", "injury", "profile"), ("Dan", "injury", "absence"), ("Amy", "illness", "note")],
+                         "injuries then illness; once per swimmer; other notes aren't here")
+        self.assertEqual(items[0]["impact"], "No fly")
+        self.assertEqual(items[2]["title"], "Ankle")
+
 
 if __name__ == "__main__":
     unittest.main()

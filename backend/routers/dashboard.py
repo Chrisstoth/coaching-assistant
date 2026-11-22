@@ -2,14 +2,14 @@
 Dashboard API — squad pulse and quick-view data.
 """
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
-from backend.services.availability import availability_ranges, is_excused
+from backend.services.availability import availability_ranges, is_excused, normalise_reason
 
 router = APIRouter()
 
@@ -101,6 +101,171 @@ def meet_countdowns(db: DBSession = Depends(get_db)):
     }
 
 
+PRIORITY_ORDER = {"A": 0, "B": 1, "C": 2}
+
+
+@router.get("/galas")
+def upcoming_galas(db: DBSession = Depends(get_db)):
+    """
+    The galas coming up, nearest first, each with who's going and how much it
+    matters to each of them (their A/B/C priority for that meet).
+
+    Who's going: a swimmer with targets for the meet or an entry that isn't
+    withdrawn. Their priority is the one set on their targets, or else the
+    highest on any of their entries. A squad's "target" meet is the first one
+    any of its swimmers has targets for (the old countdown card).
+    """
+    today = date.today()
+    cutoff = today + timedelta(weeks=24)
+    meets = [m for m in db.query(models.Meet).filter(
+        models.Meet.date != None,
+        models.Meet.date <= cutoff,
+        models.Meet.date >= today - timedelta(days=7),
+    ).order_by(models.Meet.date).all() if (m.date_to or m.date) >= today][:8]
+    if not meets:
+        return {"meets": [], "swimmer_count": 0}
+
+    meet_ids = [m.id for m in meets]
+    targets = db.query(models.MeetTarget).filter(models.MeetTarget.meet_id.in_(meet_ids)).all()
+    entries = db.query(models.MeetEntry).filter(
+        models.MeetEntry.meet_id.in_(meet_ids),
+        models.MeetEntry.status != "withdrawn",
+    ).all()
+    swimmer_ids = {t.swimmer_id for t in targets} | {e.swimmer_id for e in entries}
+    swimmers = {s.id: s for s in db.query(models.Swimmer).filter(
+        models.Swimmer.id.in_(swimmer_ids),
+        models.Swimmer.active == True,
+    ).all()} if swimmer_ids else {}
+
+    going: dict = defaultdict(dict)   # meet_id → swimmer_id → {...}
+
+    def row(meet_id, swimmer_id):
+        if swimmer_id not in swimmers:
+            return None
+        s = swimmers[swimmer_id]
+        return going[meet_id].setdefault(swimmer_id, {
+            "swimmer_id": s.id, "name": s.name, "squad": s.squad,
+            "priority": None, "events": [],
+        })
+
+    for t in targets:
+        r = row(t.meet_id, t.swimmer_id)
+        if not r:
+            continue
+        if (t.priority or "").upper() in PRIORITY_ORDER:
+            r["priority"] = t.priority.upper()
+        r["targeted"] = True
+        for ev in t.events or []:
+            if ev and ev not in r["events"]:
+                r["events"].append(ev)
+    for e in entries:
+        r = row(e.meet_id, e.swimmer_id)
+        if not r:
+            continue
+        if e.event_name and e.event_name not in r["events"]:
+            r["events"].append(e.event_name)
+        p = (e.priority or "").upper()
+        if not r.get("targeted") and p in PRIORITY_ORDER and (
+                r["priority"] is None or PRIORITY_ORDER[p] < PRIORITY_ORDER[r["priority"]]):
+            r["priority"] = p
+
+    # each squad's target meet: the first one its swimmers have targets for
+    squad_target: dict = {}
+    for m in meets:
+        for t in targets:
+            s = swimmers.get(t.swimmer_id)
+            if t.meet_id == m.id and s:
+                squad_target.setdefault(s.squad or "Squad", m.id)
+
+    out = []
+    for m in meets:
+        people = sorted(going[m.id].values(), key=lambda r: (PRIORITY_ORDER.get(r["priority"], 3), r["name"]))
+        for r in people:
+            r.pop("targeted", None)
+        counts = {p: sum(1 for r in people if r["priority"] == p) for p in PRIORITY_ORDER}
+        out.append({
+            "meet_id": m.id,
+            "name": m.name,
+            "date": str(m.date),
+            "date_to": str(m.date_to) if m.date_to else None,
+            "location": m.location,
+            "course": m.course,
+            "days_out": max(0, (m.date - today).days),
+            "on_now": m.date <= today,
+            "target_for": sorted(sq for sq, mid in squad_target.items() if mid == m.id),
+            "priority_counts": counts,
+            "swimmers": people,
+        })
+    return {
+        "meets": out,
+        "swimmer_count": len({r["swimmer_id"] for m in out for r in m["swimmers"]}),
+    }
+
+
+@router.get("/unwell")
+def unwell_swimmers(db: DBSession = Depends(get_db)):
+    """
+    Who is injured or ill right now: the coach's "Right now" notes, then any
+    injury logged as an absence, then swimmers marked injured on their profile,
+    each only when nothing above already covers them.
+    """
+    from backend.services import current_notes as CN
+    today = date.today()
+    on_squad = ("active", "injury")
+    items, covered = [], set()
+    for n in CN.active_notes(db, None, today):
+        if n.kind not in ("injury", "illness"):
+            continue
+        if n.swimmer and (not n.swimmer.active or n.swimmer.status not in on_squad):
+            continue
+        covered.add(n.swimmer_id)
+        items.append({
+            "swimmer_id": n.swimmer_id,
+            "name": n.swimmer.name if n.swimmer else "Swimmer",
+            "kind": n.kind,
+            "title": n.title,
+            "impact": n.impact,
+            "since": n.date_from.isoformat() if n.date_from else None,
+            "until": n.until.isoformat() if n.until else None,
+            "source": "note",
+        })
+    absences = db.query(models.SwimmerException, models.Swimmer).join(
+        models.Swimmer, models.SwimmerException.swimmer_id == models.Swimmer.id,
+    ).filter(
+        models.SwimmerException.date_from <= today,
+        models.SwimmerException.date_to >= today,
+        models.Swimmer.active == True,
+        models.Swimmer.status.in_(on_squad),
+    ).all()
+    for ex, swimmer in absences:
+        if swimmer.id in covered or normalise_reason(ex.reason) != "injury":
+            continue
+        covered.add(swimmer.id)
+        items.append({
+            "swimmer_id": swimmer.id,
+            "name": swimmer.name,
+            "kind": "injury",
+            "title": ex.notes or "Injured",
+            "impact": None,
+            "since": ex.date_from.isoformat(),
+            "until": ex.date_to.isoformat(),
+            "source": "absence",
+        })
+    for swimmer in db.query(models.Swimmer).filter(
+        models.Swimmer.active == True, models.Swimmer.status == "injury",
+    ).all():
+        if swimmer.id in covered:
+            continue
+        items.append({
+            "swimmer_id": swimmer.id, "name": swimmer.name, "kind": "injury",
+            "title": "Marked injured on their profile", "impact": None,
+            "since": None, "until": None, "source": "profile",
+        })
+    order = {"injury": 0, "illness": 1}
+    items.sort(key=lambda r: (order.get(r["kind"], 2), r["name"]))
+    return {"items": items}
+
+
 @router.get("/sessions-awaiting-debrief")
 def sessions_awaiting_debrief(db: DBSession = Depends(get_db)):
     """
@@ -117,6 +282,8 @@ def sessions_awaiting_debrief(db: DBSession = Depends(get_db)):
         models.Session.status == "completed",
         # Nobody expects a debrief of a session someone else took.
         models.Session.taken_by_other.isnot(True),
+        # The coach chose not to debrief this one.
+        models.Session.debrief_skipped_at == None,
     ).order_by(models.Session.date.desc()).all()
 
     items = []
@@ -140,6 +307,17 @@ def sessions_awaiting_debrief(db: DBSession = Depends(get_db)):
             "attended": attended,
         })
     return {"items": items}
+
+
+@router.post("/sessions-awaiting-debrief/{session_id}/skip")
+def skip_session_debrief(session_id: int, db: DBSession = Depends(get_db)):
+    """Take this session off Home's debrief card without debriefing it."""
+    session = db.query(models.Session).filter(models.Session.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.debrief_skipped_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"skipped": True, "session_id": session.id}
 
 
 def _meet_has_results(db: DBSession, meet, last_day: date) -> bool:

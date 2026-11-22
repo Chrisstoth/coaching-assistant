@@ -523,6 +523,8 @@ export const api = {
   getSquadPulse: () => request('GET', '/dashboard/squad-pulse'),
   getSquadAvailability: (days = 42) => request('GET', `/dashboard/availability?days=${days}`),
   getMeetCountdowns: () => request('GET', '/dashboard/meet-countdowns'),
+  getUpcomingGalas: () => request('GET', '/dashboard/galas'),
+  getUnwellSwimmers: () => request('GET', '/dashboard/unwell'),
 
   // Skills
   planSessionSkill: (data) => request('POST', '/skills/plan-session', data),
@@ -660,6 +662,7 @@ export const api = {
   clearCurrentNote: (id, why) => request('POST', `/current-notes/${id}/clear`, { why: why || null }),
   reopenCurrentNote: (id) => request('POST', `/current-notes/${id}/reopen`),
   getSessionsAwaitingDebrief: () => request('GET', '/dashboard/sessions-awaiting-debrief'),
+  skipSessionDebrief: (sessionId) => request('POST', `/dashboard/sessions-awaiting-debrief/${sessionId}/skip`),
   retryAIOperation: (id) => request('POST', `/ai-operations/${id}/retry`),
 
   // Periodization
