@@ -209,6 +209,10 @@ def commit_debrief(debrief_id: int, body: CommitProposals, db: DBSession = Depen
     counts = claude_service.commit_debrief_proposals(row, db)
     row.status = "committed"
     row.committed_at = datetime.now(timezone.utc)
+    # "Debrief and finish": the session it was about is finished with it.
+    session = db.get(models.Session, row.session_id) if row.session_id else None
+    if session and session.status != "cancelled":
+        session.status = "completed"
     db.commit()
     db.refresh(row)
     return {**_out(row, db), "committed": counts}

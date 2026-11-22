@@ -257,7 +257,8 @@ function Builder({ id }) {
     setNoteFor(null)
     const line = note?.set_ref?.line_id
     if (line) { noted.current.add(line); builderRef.current?.setNoted([...noted.current]) }
-    flash(note?.pending ? "Noted. It's on this phone and sends when there's signal." : 'Noted.')
+    const about = [...(note?.swimmer_names || []), note?.set_ref?.label].filter(Boolean).join(' · ')
+    flash(note?.pending ? "Noted. It's on this phone and sends when there's signal." : `Noted${about ? `: ${about}` : '.'}`)
   }
   // Poolside, mark the sets already noted this session.
   useEffect(() => {

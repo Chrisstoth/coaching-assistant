@@ -1130,6 +1130,10 @@ class SessionNoteIn(BaseModel):
     swimmer_ids: list[int] = []
     set_ref: Optional[dict] = None
     noted_at: Optional[str] = None
+    # Work out who, which set and what kind from the words (the phone sends the
+    # session's sets so the label matches what the coach sees).
+    understand: bool = False
+    sets: list[dict] = []
 
 
 class SessionNoteEdit(BaseModel):
@@ -1137,6 +1141,11 @@ class SessionNoteEdit(BaseModel):
     swimmer_ids: Optional[list[int]] = None
     set_ref: Optional[dict] = None
     clear_set: bool = False
+    kind: Optional[str] = None
+
+
+class SessionFinish(BaseModel):
+    debrief: bool = False
 
 
 @router.put("/{session_id}/ready")
@@ -1188,7 +1197,7 @@ def list_session_notes(session_id: int, db: DBSession = Depends(get_db)):
 @router.post("/{session_id}/notes", status_code=201)
 def add_session_note(session_id: int, body: SessionNoteIn, db: DBSession = Depends(get_db)):
     """A note made during the session. Safe to repeat: the phone's id makes it one note."""
-    _get_or_404(session_id, db)
+    session = _get_or_404(session_id, db)
     text_value = (body.text or "").strip()[:session_notes.MAX_TEXT]
     if not text_value:
         raise HTTPException(status_code=422, detail="Write or say the note first.")
@@ -1199,12 +1208,23 @@ def add_session_note(session_id: int, body: SessionNoteIn, db: DBSession = Depen
             if existing.session_id != session_id:
                 raise HTTPException(status_code=409, detail="That note belongs to another session.")
             return session_notes.notes_out(db, [existing])[0]
+    swimmer_ids = session_notes.clean_swimmer_ids(db, body.swimmer_ids)
+    set_ref = session_notes.clean_set_ref(body.set_ref)
+    kind, tagged_by = None, "coach" if (swimmer_ids or set_ref) else None
+    if body.understand:
+        # A set tapped poolside stays; the words decide the rest.
+        heard = session_notes.understand(db, session, text_value, body.sets, want_set=set_ref is None)
+        swimmer_ids = swimmer_ids or heard["swimmer_ids"]
+        set_ref = set_ref or heard["set_ref"]
+        kind, tagged_by = heard["kind"], "auto"
     note = models.SessionNote(
         session_id=session_id,
         client_id=client_id,
         text=text_value,
-        swimmer_ids=session_notes.clean_swimmer_ids(db, body.swimmer_ids),
-        set_ref=session_notes.clean_set_ref(body.set_ref),
+        swimmer_ids=swimmer_ids,
+        set_ref=set_ref,
+        kind=kind,
+        tagged_by=tagged_by,
         noted_at=session_notes.parse_noted_at(body.noted_at),
     )
     db.add(note)
@@ -1223,13 +1243,34 @@ def edit_session_note(session_id: int, note_id: int, body: SessionNoteEdit, db: 
         note.text = text_value
     if body.swimmer_ids is not None:
         note.swimmer_ids = session_notes.clean_swimmer_ids(db, body.swimmer_ids)
+        note.tagged_by = "coach"
     if body.clear_set:
         note.set_ref = None
+        note.tagged_by = "coach"
     elif body.set_ref is not None:
         note.set_ref = session_notes.clean_set_ref(body.set_ref)
+        note.tagged_by = "coach"
+    if body.kind is not None:
+        note.kind = session_notes.clean_kind(body.kind)
     db.commit()
     db.refresh(note)
     return session_notes.notes_out(db, [note])[0]
+
+
+@router.post("/{session_id}/finish")
+def finish_session(session_id: int, body: SessionFinish, db: DBSession = Depends(get_db)):
+    """
+    The coach has finished with this session. Without a debrief, Home stops
+    asking for one; with one, the debrief (when committed) finishes it too.
+    """
+    session = _get_or_404(session_id, db)
+    if session.status == "cancelled":
+        raise HTTPException(status_code=409, detail="This session was cancelled.")
+    session.status = "completed"
+    if not body.debrief:
+        session.debrief_skipped_at = session.debrief_skipped_at or datetime.now(timezone.utc)
+    db.commit()
+    return {"id": session.id, "status": session.status, "debrief_skipped": bool(session.debrief_skipped_at)}
 
 
 @router.delete("/{session_id}/notes/{note_id}", status_code=204)
@@ -1573,10 +1614,20 @@ def _calendar_item(day_date: date, today: date, slot, session, db: DBSession) ->
     }
 
 
+def _debrief_state(s: models.Session, db: DBSession) -> Optional[dict]:
+    """This session's latest debrief: {"id", "status"} (committed = done), or None."""
+    row = db.query(models.SessionDebrief).filter(
+        models.SessionDebrief.session_id == s.id,
+    ).order_by(models.SessionDebrief.id.desc()).first()
+    return {"id": row.id, "status": row.status} if row else None
+
+
 def _session_detail(s: models.Session, db: DBSession) -> dict:
     groups = db.query(models.SessionGroup).filter(models.SessionGroup.session_id == s.id).all()
     return {
         **_session_summary(s),
+        "debrief_skipped": bool(s.debrief_skipped_at),
+        "debrief": _debrief_state(s, db),
         "coach_notes": s.coach_notes,
         "as_swum": s.as_swum,
         "builder": bool(s.builder),

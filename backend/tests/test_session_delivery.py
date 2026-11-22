@@ -135,6 +135,69 @@ class SessionDeliveryTests(unittest.TestCase):
             self.assertNotIn(sid, asked(), "Home stops asking once skipped")
             self.assertEqual(http.post("/dashboard/sessions-awaiting-debrief/999999/skip", headers=h).status_code, 404)
 
+    def test_a_said_note_works_out_who_which_set_and_what_it_is(self):
+        from unittest.mock import patch
+        with SessionLocal() as db:
+            sid = self._finished_session(db, FRIDAY, marks={"Amy": True, "Ben": True})
+            db.commit()
+        sets = [{"value": "block:b1", "block_id": "b1", "line_id": None, "label": "Main set"},
+                {"value": "line:l1", "block_id": "b1", "line_id": "l1", "label": "Main set · 8×100 free"}]
+        answer = {"swimmer_ids": [self.swimmers["Amy"], 99999], "set": "line:l1", "kind": "technique"}
+        http, h = self.client()
+        with http, patch("backend.services.session_notes._ask_model", return_value=answer) as asked:
+            r = http.post(f"/sessions/{sid}/notes", headers=h, json={
+                "text": "Amy's turns are slow on the 100s", "client_id": "c-1", "understand": True, "sets": sets})
+            self.assertEqual(r.status_code, 201, r.text)
+            note = r.json()
+            self.assertIn("Amy", asked.call_args[0][0], "the squad's names go with the words")
+            self.assertIn("8×100 free", asked.call_args[0][0], "and the session's sets")
+        self.assertEqual(note["swimmer_ids"], [self.swimmers["Amy"]], "an id it made up is dropped")
+        self.assertEqual(note["set_ref"]["label"], "Main set · 8×100 free")
+        self.assertEqual((note["kind"], note["tagged_by"]), ("technique", "auto"))
+
+    def test_without_the_model_names_in_the_words_still_count(self):
+        from unittest.mock import patch
+        with SessionLocal() as db:
+            sid = self._finished_session(db, FRIDAY, marks={"Amy": True, "Ben": True})
+            db.commit()
+        http, h = self.client()
+        with http, patch("backend.services.session_notes._ask_model", return_value=None):
+            note = http.post(f"/sessions/{sid}/notes", headers=h, json={
+                "text": "ben was brilliant on the kick", "understand": True,
+                "set_ref": {"block_id": "b2", "line_id": None, "label": "Kick"}}).json()
+        self.assertEqual(note["swimmer_ids"], [self.swimmers["Ben"]])
+        self.assertEqual(note["set_ref"]["label"], "Kick", "a set tapped poolside stays")
+        self.assertIsNone(note["kind"])
+
+    def test_finishing_without_a_debrief(self):
+        yesterday = date.today() - timedelta(days=1)
+        with SessionLocal() as db:
+            s = models.Session(date=yesterday, squad="Silver 1", status="active")
+            db.add(s)
+            db.flush()
+            db.add(models.SessionEntry(session_id=s.id, swimmer_id=self.swimmers["Amy"], attended=True))
+            db.commit()
+            sid = s.id
+        http, h = self.client()
+        with http:
+            r = http.post(f"/sessions/{sid}/finish", headers=h, json={"debrief": False})
+            self.assertEqual(r.json(), {"id": sid, "status": "completed", "debrief_skipped": True})
+            detail = http.get(f"/sessions/{sid}", headers=h).json()
+            self.assertEqual((detail["status"], detail["debrief_skipped"], detail["debrief"]), ("completed", True, None))
+            asked = {i["session_id"] for i in http.get("/dashboard/sessions-awaiting-debrief", headers=h).json()["items"]}
+            self.assertNotIn(sid, asked)
+            # with a debrief to come: finished, and still asked for
+            with SessionLocal() as db:
+                other = models.Session(date=yesterday, squad="Silver 1", status="active")
+                db.add(other)
+                db.flush()
+                db.add(models.SessionEntry(session_id=other.id, swimmer_id=self.swimmers["Amy"], attended=True))
+                db.commit()
+                oid = other.id
+            self.assertFalse(http.post(f"/sessions/{oid}/finish", headers=h, json={"debrief": True}).json()["debrief_skipped"])
+            asked = {i["session_id"] for i in http.get("/dashboard/sessions-awaiting-debrief", headers=h).json()["items"]}
+            self.assertIn(oid, asked)
+
     def test_absences_on_a_covered_register_dont_count_against_a_swimmer(self):
         from backend.services.claude_service import build_attendance_stats
         with SessionLocal() as db:

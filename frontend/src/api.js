@@ -399,6 +399,7 @@ export const api = {
   getSessionNotes: (sessionId) => request('GET', `/sessions/${sessionId}/notes`),
   addSessionNote: saveSessionNoteWithOfflineFallback,
   editSessionNote: (sessionId, noteId, data) => request('PUT', `/sessions/${sessionId}/notes/${noteId}`, data),
+  finishSession: (sessionId, debrief = false) => request('POST', `/sessions/${sessionId}/finish`, { debrief }),
   deleteSessionNote: (sessionId, noteId) => request('DELETE', `/sessions/${sessionId}/notes/${noteId}`),
 
   // Import

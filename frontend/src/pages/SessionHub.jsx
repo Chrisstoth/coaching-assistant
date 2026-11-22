@@ -82,6 +82,137 @@ function useSummary(built) {
   }, [built])
 }
 
+function readOpen(key) {
+  try { return localStorage.getItem(key) === '1' } catch { return false }
+}
+function saveOpen(key, open) {
+  try { localStorage.setItem(key, open ? '1' : '0') } catch { /* private window */ }
+}
+
+// This session at a glance, folded away until wanted: aims, each group's metres and time, the blocks.
+function SessionSummary({ summary, id, cancelled }) {
+  const [open, setOpen] = useState(() => readOpen('hub.summary.open'))
+  const toggle = () => setOpen(value => { saveOpen('hub.summary.open', !value); return !value })
+  const one = summary.totals.length === 1 ? summary.totals[0] : null
+  const glance = [
+    one ? `${fmtDist(one.dist)} m · ${timeText(one)}` : summary.totals.length ? `${summary.totals.length} groups` : '',
+    summary.aims.length ? `${summary.aims.length} aim${summary.aims.length === 1 ? '' : 's'}` : '',
+  ].filter(Boolean).join(' · ')
+  return (
+    <section className="bg-pool-800 border border-pool-700 rounded-2xl">
+      <button type="button" onClick={toggle} aria-expanded={open} className="w-full flex items-center gap-3 px-4 py-3.5 text-left">
+        <span className="text-xs font-semibold text-accent-300 uppercase tracking-wider">This session</span>
+        <span className="flex-1 text-xs text-pool-400 text-right truncate">{glance}</span>
+        <span className={`text-pool-500 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true">⌄</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 space-y-3">
+          {summary.aims.length > 0 && (
+            <ul className="space-y-1">
+              {summary.aims.map(a => <li key={a} className="text-sm text-pool-200">· {a}</li>)}
+            </ul>
+          )}
+          {summary.totals.length > 0 && (
+            <div className="space-y-1">
+              {summary.totals.map(t => (
+                <div key={t.gid || 'all'} className="flex items-center gap-2 text-sm">
+                  {t.color && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: t.color }} />}
+                  <span className="font-medium text-pool-100 flex-1 truncate">{groupLabel(t.g)}</span>
+                  <span className="text-pool-300 tabular-nums">{fmtDist(t.dist)} m · {timeText(t)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="border-t border-pool-700/70 pt-2 space-y-1">
+            {summary.blocks.map(b => (
+              <div key={b.id} className="flex items-baseline gap-2 text-xs">
+                <span className="text-pool-200 font-medium truncate">{b.name}</span>
+                {b.groups.length > 0 && <span className="text-pool-500 truncate">{b.groups.join(', ')}</span>}
+                <span className="ml-auto text-pool-500 tabular-nums shrink-0">{fmtDist(b.dist)} m</span>
+              </div>
+            ))}
+          </div>
+          {!cancelled && <Link to={`/builder/${id}?view=pool`} className="inline-block text-xs text-pool-400">Poolside ›</Link>}
+        </div>
+      )}
+    </section>
+  )
+}
+
+/* The end of the page: finish the session, with a debrief or without. Once it's
+   finished, says how, with the way back into the debrief. */
+function FinishSession({ id, session, covered, chaseRegister, noteCount, onFinished }) {
+  const navigate = useNavigate()
+  const [busy, setBusy] = useState('')
+  const debrief = session.debrief
+  const debriefed = debrief?.status === 'committed'
+  const debriefing = Boolean(debrief) && !debriefed
+  const finished = session.status === 'completed'
+  const notes = noteCount ? `Your ${noteCount} note${noteCount === 1 ? ' is' : 's are'} already in.` : ''
+
+  const withDebrief = async () => {
+    setBusy('debrief')
+    // Finished now; the debrief is still asked for on Home until it's done.
+    try { onFinished(await api.finishSession(id, true)) } catch { /* the debrief finishes it when saved */ }
+    navigate(`/debrief?session=${id}`)
+  }
+  const without = async () => {
+    setBusy('skip')
+    try { onFinished(await api.finishSession(id, false)) }
+    catch (e) { window.alert(e.message || 'Could not finish it.') }
+    finally { setBusy('') }
+  }
+
+  if (finished && (debriefed || session.debrief_skipped || (covered && !debriefing))) {
+    return (
+      <section className="rounded-2xl border border-emerald-800/50 bg-emerald-950/25 px-4 py-3.5">
+        <p className="text-sm font-semibold text-emerald-200">
+          {debriefed ? 'Finished and debriefed ✓' : 'Finished ✓'}
+        </p>
+        <p className="text-xs text-pool-400 mt-1">
+          {debriefed
+            ? <Link to={`/debrief?session=${id}`} className="font-semibold text-teal-300">Open the debrief</Link>
+            : <>No debrief. <Link to={`/debrief?session=${id}`} className="font-semibold text-teal-300">Debrief it anyway</Link></>}
+        </p>
+      </section>
+    )
+  }
+
+  return (
+    <section className="space-y-2.5 pt-1">
+      {chaseRegister && (
+        <Link to={`/sessions/${id}/register`} state={{ from: 'session' }} className="block text-xs text-amber-200">
+          The register isn&apos;t taken yet. <span className="font-semibold underline">Take it first</span>
+        </Link>
+      )}
+      {covered ? (
+        <>
+          <button type="button" onClick={without} disabled={Boolean(busy)}
+            className="w-full rounded-2xl bg-teal-600 px-4 py-4 text-base font-bold text-white disabled:opacity-60">
+            {busy === 'skip' ? 'Finishing…' : 'Mark it finished'}
+          </button>
+          <p className="text-xs text-pool-500 text-center">
+            No debrief expected. <Link to={`/debrief?session=${id}`} className="font-semibold text-teal-300">Debrief it anyway</Link>
+          </p>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={withDebrief} disabled={Boolean(busy)}
+            className="w-full flex items-center justify-center gap-2.5 rounded-2xl bg-teal-600 px-4 py-4 text-base font-bold text-white disabled:opacity-60">
+            <span aria-hidden="true">🎤</span>
+            {busy === 'debrief' ? 'Opening…' : debriefing ? 'Carry on the debrief' : 'Debrief and finish'}
+          </button>
+          {notes && <p className="text-[11px] text-pool-500 text-center -mt-1">{notes}</p>}
+          <button type="button" onClick={without} disabled={Boolean(busy)}
+            className="w-full rounded-2xl border border-pool-600 bg-pool-800 px-4 py-3.5 text-sm font-semibold text-pool-200 disabled:opacity-60">
+            {busy === 'skip' ? 'Finishing…' : 'Skip the debrief and finish'}
+          </button>
+        </>
+      )}
+    </section>
+  )
+}
+
 export default function SessionHub() {
   const { id } = useParams()
   if (id === 'new') return <NewSession />
@@ -289,27 +420,6 @@ function Hub({ id }) {
         </section>
       )}
 
-      {!cancelled && covered && (ended || taken || done) && (
-        <p className="text-xs text-pool-500 px-0.5">
-          No debrief expected.{' '}
-          <Link to={`/debrief?session=${id}`} className="font-semibold text-teal-300">Debrief it anyway</Link>
-          {noteCount ? ` (your ${noteCount} note${noteCount === 1 ? ' is' : 's are'} in)` : ''}
-        </p>
-      )}
-
-      {!cancelled && !covered && (ended || taken || done) && (
-        <Link to={`/debrief?session=${id}`}
-          className="flex items-center justify-between rounded-2xl border border-teal-700/50 bg-teal-950/35 px-4 py-3.5 active:opacity-80">
-          <span>
-            <span className="block text-sm font-semibold text-teal-100">Debrief</span>
-            <span className="block text-xs text-teal-400/80 mt-0.5">
-              Talk it through while it's fresh.{noteCount ? ` Your ${noteCount} note${noteCount === 1 ? ' is' : 's are'} already in.` : ''}
-            </span>
-          </span>
-          <span className="text-xl shrink-0 ml-3" aria-hidden="true">🎤</span>
-        </Link>
-      )}
-
       {!cancelled && (
         <RightNow sessionId={session.id} poolside className="bg-pool-800 border border-pool-700 rounded-2xl px-4 py-3" />
       )}
@@ -318,39 +428,7 @@ function Hub({ id }) {
         <SessionNotesPanel sessionId={session.id} swimmers={swimmers} builderSession={plan?.session || null} onCount={setNoteCount} />
       )}
 
-      {summary && written && (
-        <section className="bg-pool-800 border border-pool-700 rounded-2xl p-4 space-y-3">
-          <div className="flex items-center justify-between">
-            <p className="text-xs font-semibold text-accent-300 uppercase tracking-wider">The session</p>
-            {!cancelled && <Link to={`/builder/${id}?view=pool`} className="text-xs text-pool-400">Poolside ›</Link>}
-          </div>
-          {summary.aims.length > 0 && (
-            <ul className="space-y-1">
-              {summary.aims.map(a => <li key={a} className="text-sm text-pool-200">· {a}</li>)}
-            </ul>
-          )}
-          {summary.totals.length > 0 && (
-            <div className="space-y-1">
-              {summary.totals.map(t => (
-                <div key={t.gid || 'all'} className="flex items-center gap-2 text-sm">
-                  {t.color && <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: t.color }} />}
-                  <span className="font-medium text-pool-100 flex-1 truncate">{groupLabel(t.g)}</span>
-                  <span className="text-pool-300 tabular-nums">{fmtDist(t.dist)} m · {timeText(t)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="border-t border-pool-700/70 pt-2 space-y-1">
-            {summary.blocks.map(b => (
-              <div key={b.id} className="flex items-baseline gap-2 text-xs">
-                <span className="text-pool-200 font-medium truncate">{b.name}</span>
-                {b.groups.length > 0 && <span className="text-pool-500 truncate">{b.groups.join(', ')}</span>}
-                <span className="ml-auto text-pool-500 tabular-nums shrink-0">{fmtDist(b.dist)} m</span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
+      {summary && written && <SessionSummary summary={summary} id={id} cancelled={cancelled} />}
 
       {!cancelled && <SessionTargets sessionId={session.id} />}
 
@@ -376,6 +454,11 @@ function Hub({ id }) {
             </p>
           ))}
         </section>
+      )}
+
+      {!cancelled && (ended || taken || done) && (
+        <FinishSession id={id} session={session} covered={covered} chaseRegister={chaseRegister} noteCount={noteCount}
+          onFinished={res => setSession(s => ({ ...s, status: res.status, debrief_skipped: res.debrief_skipped }))} />
       )}
 
       <section>
