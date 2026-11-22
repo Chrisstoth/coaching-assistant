@@ -2282,6 +2282,147 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(times[0]["event"], "50 Freestyle SCM")
         self.assertEqual(times[0]["time_seconds"], 55.25)
 
+    def test_club_results_only_adds_times_for_swimmers_already_in_app(self):
+        by_id = self.client.post(
+            "/swimmers", headers=self.headers,
+            json={"name": "Club Known One", "gender": "F", "squad": "Club Test", "swimrankings_id": "910001"},
+        )
+        self.assertEqual(by_id.status_code, 201, by_id.text)
+        by_name = self.client.post(
+            "/swimmers", headers=self.headers,
+            json={"name": "Club Known Two", "gender": "M", "squad": "Club Test"},
+        )
+        self.assertEqual(by_name.status_code, 201, by_name.text)
+        squad_mate = self.client.post(
+            "/swimmers", headers=self.headers,
+            json={"name": "Club Not In File", "gender": "F", "squad": "Club Test"},
+        )
+        self.assertEqual(squad_mate.status_code, 201, squad_mate.text)
+        before_count = len(self.client.get("/swimmers", headers=self.headers).json())
+
+        payload = (
+            "Time,Date,Name,ID,Stroke,Course,Meet,Gender,DoB\n"
+            "28.10,01/06/2026,Club Known One,910001,50 Freestyle,S,Club Open,F,02/03/2011\n"
+            "1:05.20,02/06/2026,club known two,910002,100 Backstroke,L,Club Open,M,12/11/2011\n"
+            "30.00,01/06/2026,Other Squad Swimmer,910099,50 Freestyle,S,Club Open,F,01/01/2012\n"
+            "30.50,01/06/2026,Club Knwn One,910098,50 Freestyle,S,Club Open,F,01/01/2012\n"
+        ).encode()
+
+        def upload():
+            return self.client.post(
+                "/times/import/combined", headers=self.headers,
+                data={"mode": "club"},
+                files={"file": ("club.csv", payload, "text/csv")},
+            )
+
+        first = upload()
+        self.assertEqual(first.status_code, 200, first.text)
+        body = first.json()
+        self.assertEqual(body["swimmers_matched"], 2)
+        self.assertEqual(body["times_imported"], 2)
+        self.assertEqual(body["swimmers_not_in_app"], 2)
+        self.assertEqual(body["skipped_swimmer_names"], ["Club Knwn One", "Other Squad Swimmer"])
+        self.assertEqual(body["swimrankings_ids_linked"], 1)
+
+        swimmers = self.client.get("/swimmers", headers=self.headers).json()
+        self.assertEqual(len(swimmers), before_count)
+        self.assertFalse(any(s["name"] == "Other Squad Swimmer" for s in swimmers))
+        mate = self.client.get(f"/swimmers/{squad_mate.json()['id']}", headers=self.headers).json()
+        self.assertTrue(mate["active"])
+        two = self.client.get(f"/swimmers/{by_name.json()['id']}", headers=self.headers).json()
+        self.assertEqual(two["name"], "Club Known Two")
+        self.assertEqual(two["squad"], "Club Test")
+        two_times = self.client.get(f"/swimmers/{by_name.json()['id']}/times", headers=self.headers).json()
+        self.assertEqual([(t["event"], t["time_seconds"]) for t in two_times], [("100 Backstroke LCM", 65.2)])
+
+        second = upload()
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(second.json()["times_imported"], 0)
+        self.assertEqual(second.json()["duplicate_rows_skipped"], 2)
+
+    def test_gala_organiser_entries_link_reads_squad_entries_and_timetable(self):
+        page = """<html><body><div class='container'><h2>Test Qualifier 2026</h2>
+        <ul><li>Session 1 (28/11/2026 02:15 PM) - Warm Up at 01:30 PM</li>
+        <li>Session 2 (29/11/2026 09:00 AM) - Warm Up at 08:00 AM</li></ul>
+        <h4>Individual Female Swims</h4><table class='table'>
+        <tr><th>Club</th><th>Swimmer</th><th>Age</th><th>No. of Swims</th>
+        <th class='text-center'>50<br>Free<br>2.1</th><th class='text-center'>100<br>Back<br>1.2</th></tr>
+        <tr><td>Test SC</td><td>LINKTEST, Jane (5550001)</td><td>15</td><td align=center>2</td>
+        <td>00:28.90 *</td><td style='background-color: green; color: white;'>01:12.00</td></tr>
+        <tr><td>Test SC</td><td>LINKTEST, Kate (5550002)</td><td>14</td><td align=center>1</td>
+        <td>&nbsp;</td><td>01:10.50</td></tr>
+        <tr><td>Elsewhere SC</td><td>STRANGER, Person (5550099)</td><td>14</td><td align=center>1</td>
+        <td>00:30.00</td><td>&nbsp;</td></tr></table>
+        <h4>Individual Male Swims</h4><table class='table'>
+        <tr><th>Club</th><th>Swimmer</th><th>Age</th><th>No. of Swims</th>
+        <th class='text-center'>50<br>Free<br>1.3</th></tr>
+        <tr><td>Test SC</td><td>LINKTEST, Tom (5550003)</td><td>16</td><td align=center>1</td>
+        <td>00:25.10</td></tr></table></div></body></html>"""
+
+        def make(name, gender, swimrankings_id=None):
+            response = self.client.post("/swimmers", headers=self.headers, json={
+                "name": name, "gender": gender, "swimrankings_id": swimrankings_id,
+            })
+            self.assertEqual(response.status_code, 201, response.text)
+            return response.json()["id"]
+
+        jane = make("Jane Linktest", "F", "5550001")
+        make("Kate Linktest", "F")
+        make("Tom Linktest", "M", "5550003")
+        meet = self.client.post("/meets", headers=self.headers, json={"name": "Link Meet", "date": "2026-11-28"})
+        self.assertEqual(meet.status_code, 201, meet.text)
+        meet_id = meet.json()["id"]
+
+        with patch("backend.routers.meets.fetch_entries_page", return_value=page):
+            extracted = self.client.post(
+                f"/meets/{meet_id}/extract-entries-link", headers=self.headers,
+                json={"url": "https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=TEST"},
+            )
+        self.assertEqual(extracted.status_code, 200, extracted.text)
+        body = extracted.json()
+        self.assertEqual(body["swimmers"], {
+            "Jane Linktest": ["50 Freestyle"],
+            "Kate Linktest": ["100 Backstroke"],
+            "Tom Linktest": ["50 Freestyle"],
+        })
+        self.assertEqual(body["entry_times"]["Jane Linktest"], {"50 Freestyle": "28.90"})
+        self.assertEqual(body["withdrawn"], [{"name": "Jane Linktest", "event": "100 Backstroke", "status": "withdrawn"}])
+        self.assertEqual(body["other_swimmers"], 1)
+        sessions = body["schedule"]["sessions"]
+        self.assertEqual([s["date"] for s in sessions], ["2026-11-28", "2026-11-29"])
+        self.assertEqual(sessions[0]["start_time"], "14:15")
+        self.assertEqual(sessions[0]["warm_up_time"], "13:30")
+
+        timetable = self.client.post(
+            f"/meets/{meet_id}/timetable/import", headers=self.headers,
+            json={**body["schedule"], "replace": True},
+        )
+        self.assertEqual(timetable.status_code, 200, timetable.text)
+        combined = self.client.post(
+            f"/meets/{meet_id}/combine-extractions", headers=self.headers,
+            json={"events": body["schedule"]["events"], "swimmers": body["swimmers"],
+                  "entry_times": body["entry_times"], "auto_assign": True},
+        )
+        self.assertEqual(combined.status_code, 200, combined.text)
+
+        with SessionLocal() as db:
+            entry = db.query(models.MeetEntry).filter(
+                models.MeetEntry.meet_id == meet_id, models.MeetEntry.swimmer_id == jane,
+            ).one()
+            self.assertEqual(entry.entry_time, "28.90")
+            # Girls' 50 Free is in session 2; the boys' one (session 1) must not be picked.
+            self.assertEqual(entry.meet_event.gender, "F")
+            self.assertEqual(entry.meet_event.meet_session.date.isoformat(), "2026-11-29")
+
+    def test_entries_link_refuses_private_addresses(self):
+        meet = self.client.post("/meets", headers=self.headers, json={"name": "Private Link Meet", "date": "2026-11-28"})
+        self.assertEqual(meet.status_code, 201, meet.text)
+        response = self.client.post(
+            f"/meets/{meet.json()['id']}/extract-entries-link", headers=self.headers,
+            json={"url": "http://127.0.0.1:8000/secret"},
+        )
+        self.assertEqual(response.status_code, 422, response.text)
+
     def test_excel_session_template_previews_checks_links_and_saves_once(self):
         with SessionLocal() as db:
             slot = models.PoolSlot(

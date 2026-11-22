@@ -202,6 +202,130 @@ function FoundationProfileImport({ setResult }) {
 
 
 function CombinedImport({ setResult, setLoading, loading }) {
+  const [mode, setMode] = useState('club')
+
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1">
+        <p className="text-xs text-pool-400">What&apos;s in this file?</p>
+        <div className="grid grid-cols-2 bg-pool-800 rounded-xl p-1 gap-1">
+          {[
+            { id: 'club', label: 'Whole club' },
+            { id: 'squad', label: 'Just my squad' },
+          ].map(option => (
+            <button
+              key={option.id}
+              onClick={() => { setMode(option.id); setResult(null) }}
+              className={`py-2 rounded-lg text-sm font-medium transition-colors ${
+                mode === option.id ? 'bg-accent-600 text-white' : 'text-pool-400'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {mode === 'club'
+        ? <ClubResultsImport setResult={setResult} setLoading={setLoading} loading={loading} />
+        : <SquadWorkbookImport setResult={setResult} setLoading={setLoading} loading={loading} />}
+    </div>
+  )
+}
+
+
+function ClubResultsImport({ setResult, setLoading, loading }) {
+  const [file, setFile] = useState(null)
+  const [summary, setSummary] = useState(null)
+  const [showSkipped, setShowSkipped] = useState(false)
+
+  const submit = async () => {
+    if (!file) return
+    setLoading(true)
+    setResult(null)
+    setSummary(null)
+    setShowSkipped(false)
+    try {
+      setSummary(await api.importClubResults(file))
+      setFile(null)
+    } catch (e) {
+      setResult({ error: e.message })
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-pool-400 text-sm">
+        Import a results export for the whole club. Only swimmers already in the app get times —
+        everyone else is skipped. Nobody is added, moved squad or marked inactive, and no existing times are removed.
+      </p>
+
+      <label className="block bg-pool-800 rounded-xl p-4 text-center cursor-pointer border-2 border-dashed border-pool-600 hover:border-accent-500 transition-colors">
+        <input
+          type="file"
+          accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          className="hidden"
+          onChange={(e) => { setFile(e.target.files[0]); setSummary(null) }}
+        />
+        {file ? (
+          <p className="text-sm text-pool-200">{file.name}</p>
+        ) : (
+          <>
+            <p className="text-sm text-accent-400 font-medium">Select club results file</p>
+            <p className="text-xs text-pool-500 mt-1">.csv or .xlsx — Name, ID, Stroke, Course, Time, Date</p>
+          </>
+        )}
+      </label>
+
+      <button
+        onClick={submit}
+        disabled={loading || !file}
+        className="w-full bg-accent-600 disabled:opacity-40 rounded-xl py-3 font-semibold text-sm"
+      >
+        {loading ? 'Importing club results…' : 'Import Club Results'}
+      </button>
+
+      {summary && (
+        <div className="bg-pool-800 rounded-xl p-4 text-sm space-y-1.5">
+          <p className="font-semibold text-accent-400">Imported</p>
+          <p className="text-pool-300">
+            {summary.times_imported} new time{summary.times_imported === 1 ? '' : 's'} for {summary.swimmers_matched} of your swimmers
+          </p>
+          {summary.duplicate_rows_skipped > 0 && (
+            <p className="text-pool-400 text-xs">{summary.duplicate_rows_skipped} already in the app — skipped</p>
+          )}
+          {summary.swimrankings_ids_linked > 0 && (
+            <p className="text-pool-400 text-xs">
+              Linked {summary.swimrankings_ids_linked} swimmer{summary.swimrankings_ids_linked === 1 ? '' : 's'} to their swimrankings ID by name
+            </p>
+          )}
+          {summary.swimmers_not_in_app > 0 && (
+            <div className="text-xs text-pool-400">
+              <button onClick={() => setShowSkipped(!showSkipped)} className="text-accent-400">
+                {summary.swimmers_not_in_app} swimmer{summary.swimmers_not_in_app === 1 ? '' : 's'} not in the app — skipped
+                {' '}({showSkipped ? 'hide' : 'show'})
+              </button>
+              {showSkipped && (
+                <p className="mt-1 text-pool-500 leading-relaxed">{summary.skipped_swimmer_names.join(', ')}</p>
+              )}
+            </div>
+          )}
+          {summary.errors?.length > 0 && (
+            <div className="rounded-lg bg-amber-900/20 border border-amber-800/40 px-3 py-2 space-y-1">
+              <p className="text-[11px] text-amber-300">{summary.invalid_rows_skipped} row{summary.invalid_rows_skipped === 1 ? '' : 's'} could not be read:</p>
+              {summary.errors.map((message, index) => (
+                <p key={index} className="text-[11px] text-amber-300">{message}</p>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+
+function SquadWorkbookImport({ setResult, setLoading, loading }) {
   const [file, setFile] = useState(null)
   const [trackerFile, setTrackerFile] = useState(null)
   const [squad, setSquad] = useState('Silver 1')

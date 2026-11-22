@@ -326,36 +326,32 @@ def import_swimrankings_csv(
 COMBINED_REQUIRED_COLUMNS = {
     "Time", "Date", "Name", "ID", "Stroke", "Course", "Gender", "DoB",
 }
+CLUB_RESULTS_REQUIRED_COLUMNS = {"Time", "Date", "Name", "Stroke", "Course"}
 
 
-def import_combined_swims_xlsx(
-    file_content: bytes,
-    squad: str,
-    db: DBSession,
-    replace_existing: bool = True,
-    reconcile_roster: bool = True,
-    tracker_content: Optional[bytes] = None,
-) -> dict:
-    """
-    Import one Swim England-style workbook containing the current roster and all swims.
-
-    Each unique ID becomes/updates one swimmer. When replace_existing is true, existing
-    race times for swimmers in the workbook are replaced so the workbook is the source
-    of truth. Coaching profiles, observations and other swimmer data are preserved.
-    """
-    try:
-        df = pd.read_excel(io.BytesIO(file_content), sheet_name=0)
-    except Exception as exc:
-        raise ValueError(f"Could not read workbook: {exc}") from exc
-
+def read_swims_table(file_content: bytes, filename: str = "") -> pd.DataFrame:
+    """Read a swims export as .xlsx or .csv (comma, tab or semicolon separated)."""
+    if (filename or "").lower().endswith(".csv"):
+        last_error = None
+        for encoding in ("utf-8-sig", "latin-1"):
+            try:
+                df = pd.read_csv(io.BytesIO(file_content), sep=None, engine="python", encoding=encoding)
+                break
+            except Exception as exc:  # try the next encoding
+                last_error = exc
+        else:
+            raise ValueError(f"Could not read CSV: {last_error}")
+    else:
+        try:
+            df = pd.read_excel(io.BytesIO(file_content), sheet_name=0)
+        except Exception as exc:
+            raise ValueError(f"Could not read workbook: {exc}") from exc
     df.columns = [str(c).strip() for c in df.columns]
-    missing = sorted(COMBINED_REQUIRED_COLUMNS - set(df.columns))
-    if missing:
-        raise ValueError(f"Combined workbook is missing required columns: {', '.join(missing)}")
-    if df.empty:
-        raise ValueError("Combined workbook contains no swims")
+    return df
 
-    # Parse and validate all race rows before replacing anything in the database.
+
+def _parse_swim_rows(df: pd.DataFrame, require_id: bool = True) -> tuple[list[dict], list[str]]:
+    """Validate every race row before anything touches the database."""
     parsed_rows = []
     errors = []
     split_cols = [c for c in df.columns if re.fullmatch(r"Split \d+", c)]
@@ -369,7 +365,8 @@ def import_combined_swims_xlsx(
         course = {"S": "SCM", "SC": "SCM", "SCM": "SCM",
                   "L": "LCM", "LC": "LCM", "LCM": "LCM"}.get(raw_course)
 
-        if not external_id or not name or not event_base or time_seconds is None or not swim_date or not course:
+        if (require_id and not external_id) or not name or not event_base \
+                or time_seconds is None or not swim_date or not course:
             errors.append(f"Row {row_number}: missing or invalid ID, name, event, time, date, or course")
             continue
 
@@ -408,7 +405,155 @@ def import_combined_swims_xlsx(
             "splits": splits if any(value is not None for value in splits) else None,
             "age_at_swim": optional_float("Age"),
         })
+    return parsed_rows, errors
 
+
+def _swim_time_from_row(row: dict, swimmer_id: int, source: str) -> models.SwimTime:
+    return models.SwimTime(
+        swimmer_id=swimmer_id,
+        event=row["event"],
+        stroke=row["stroke"],
+        course=row["course"],
+        distance=row["distance"],
+        time_seconds=row["time_seconds"],
+        wa_points=row["wa_points"],
+        wa_points_age=row["wa_points_age"],
+        date=row["date"],
+        meet=row["meet"],
+        venue=row["venue"],
+        level=row["level"],
+        round=row["round"],
+        splits=row["splits"],
+        age_at_swim=row["age_at_swim"],
+        source=source,
+    )
+
+
+def _name_key(name: Optional[str]) -> str:
+    return " ".join((name or "").lower().split())
+
+
+def import_club_results(file_content: bytes, filename: str, db: DBSession) -> dict:
+    """
+    Import a whole-club results export, keeping only swimmers already in the app.
+
+    Swimmers are matched by swimrankings ID, or by exact name when the ID is not
+    known yet. Nobody is created, renamed, moved squad or marked inactive, and no
+    existing times are removed: new swims are added and repeats are skipped.
+    """
+    df = read_swims_table(file_content, filename)
+    missing = sorted(CLUB_RESULTS_REQUIRED_COLUMNS - set(df.columns))
+    if missing:
+        raise ValueError(f"Club results file is missing required columns: {', '.join(missing)}")
+    if df.empty:
+        raise ValueError("Club results file contains no swims")
+
+    parsed_rows, errors = _parse_swim_rows(df, require_id=False)
+    if not parsed_rows:
+        raise ValueError("Club results file contains no valid swim rows")
+    if len(errors) > max(20, int(len(df) * 0.05)):
+        raise ValueError(f"Too many invalid rows ({len(errors)} of {len(df)}); no data was changed")
+
+    swimmers = db.query(models.Swimmer).all()
+    by_id = {s.swimrankings_id: s for s in swimmers if s.swimrankings_id}
+    by_name: dict[str, list] = {}
+    for swimmer in swimmers:
+        by_name.setdefault(_name_key(swimmer.name), []).append(swimmer)
+
+    resolved: dict[str, Optional[models.Swimmer]] = {}
+    ids_linked = 0
+    not_in_app: dict[str, int] = {}
+    for row in parsed_rows:
+        external_id = row["external_id"]
+        person_key = f"id:{external_id}" if external_id else f"name:{_name_key(row['name'])}"
+        if person_key not in resolved:
+            swimmer = by_id.get(external_id) if external_id else None
+            if swimmer is None:
+                # An exact name only counts when it cannot be a different person:
+                # if both sides carry a swimrankings ID they would have matched above.
+                candidates = [
+                    s for s in by_name.get(_name_key(row["name"]), [])
+                    if not external_id or not s.swimrankings_id
+                ]
+                if len(candidates) == 1:
+                    swimmer = candidates[0]
+                    if external_id and not swimmer.swimrankings_id:
+                        swimmer.swimrankings_id = external_id
+                        by_id[external_id] = swimmer
+                        ids_linked += 1
+            resolved[person_key] = swimmer
+        row["swimmer"] = resolved[person_key]
+        if row["swimmer"] is None:
+            not_in_app[row["name"]] = not_in_app.get(row["name"], 0) + 1
+
+    matched_ids = {s.id for s in resolved.values() if s is not None}
+    known_keys = {
+        (swimmer_id, event, swim_date, time_seconds)
+        for swimmer_id, event, swim_date, time_seconds in (
+            db.query(
+                models.SwimTime.swimmer_id,
+                models.SwimTime.event,
+                models.SwimTime.date,
+                models.SwimTime.time_seconds,
+            )
+            .filter(models.SwimTime.swimmer_id.in_(matched_ids))
+            .all()
+        )
+    } if matched_ids else set()
+
+    imported = 0
+    duplicate_rows = 0
+    for row in parsed_rows:
+        swimmer = row["swimmer"]
+        if swimmer is None:
+            continue
+        key = (swimmer.id, row["event"], row["date"], row["time_seconds"])
+        if key in known_keys:
+            duplicate_rows += 1
+            continue
+        known_keys.add(key)
+        db.add(_swim_time_from_row(row, swimmer.id, "club_results"))
+        imported += 1
+
+    db.commit()
+    return {
+        "mode": "club",
+        "swimmers_matched": len(matched_ids),
+        "times_imported": imported,
+        "duplicate_rows_skipped": duplicate_rows,
+        "swimmers_not_in_app": len(not_in_app),
+        "rows_for_swimmers_not_in_app": sum(not_in_app.values()),
+        "skipped_swimmer_names": sorted(not_in_app),
+        "swimrankings_ids_linked": ids_linked,
+        "invalid_rows_skipped": len(errors),
+        "errors": errors[:20],
+    }
+
+
+def import_combined_swims_xlsx(
+    file_content: bytes,
+    squad: str,
+    db: DBSession,
+    replace_existing: bool = True,
+    reconcile_roster: bool = True,
+    tracker_content: Optional[bytes] = None,
+    filename: str = "combined.xlsx",
+) -> dict:
+    """
+    Import one Swim England-style workbook containing the current roster and all swims.
+
+    Each unique ID becomes/updates one swimmer. When replace_existing is true, existing
+    race times for swimmers in the workbook are replaced so the workbook is the source
+    of truth. Coaching profiles, observations and other swimmer data are preserved.
+    """
+    df = read_swims_table(file_content, filename)
+    missing = sorted(COMBINED_REQUIRED_COLUMNS - set(df.columns))
+    if missing:
+        raise ValueError(f"Combined workbook is missing required columns: {', '.join(missing)}")
+    if df.empty:
+        raise ValueError("Combined workbook contains no swims")
+
+    parsed_rows, errors = _parse_swim_rows(df, require_id=True)
     if not parsed_rows:
         raise ValueError("Combined workbook contains no valid swim rows")
     if len(errors) > max(20, int(len(df) * 0.05)):
@@ -531,24 +676,7 @@ def import_combined_swims_xlsx(
             duplicate_rows += 1
             continue
         known_keys.add(key)
-        db.add(models.SwimTime(
-            swimmer_id=swimmer.id,
-            event=row["event"],
-            stroke=row["stroke"],
-            course=row["course"],
-            distance=row["distance"],
-            time_seconds=row["time_seconds"],
-            wa_points=row["wa_points"],
-            wa_points_age=row["wa_points_age"],
-            date=row["date"],
-            meet=row["meet"],
-            venue=row["venue"],
-            level=row["level"],
-            round=row["round"],
-            splits=row["splits"],
-            age_at_swim=row["age_at_swim"],
-            source="combined_xlsx",
-        ))
+        db.add(_swim_time_from_row(row, swimmer.id, "combined_xlsx"))
         imported += 1
 
     db.commit()

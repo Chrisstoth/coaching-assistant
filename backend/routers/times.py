@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
-from backend.services.importer import import_swimrankings_csv, import_combined_swims_xlsx
+from backend.services.importer import import_swimrankings_csv, import_combined_swims_xlsx, import_club_results
 from backend.services.qualification_service import recalculate_standard_set
 
 router = APIRouter()
@@ -27,20 +27,31 @@ async def import_combined_workbook(
     squad: str = Form("Silver 1"),
     replace_existing: bool = Form(True),
     reconcile_roster: bool = Form(True),
+    mode: str = Form("squad"),
     db: DBSession = Depends(get_db),
 ):
-    """Import current squad members and all their race times from one .xlsx workbook."""
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(status_code=400, detail="Combined import must be an .xlsx workbook")
+    """Import race times from one .xlsx or .csv export.
+
+    mode="squad": the file is the current squad — swimmers are created/updated.
+    mode="club": the file covers the whole club — only swimmers already in the
+    app get times; everyone else is skipped and nobody is added or changed.
+    """
+    filename = (file.filename or "").lower()
+    if not filename.endswith((".xlsx", ".csv")):
+        raise HTTPException(status_code=400, detail="Import must be an .xlsx workbook or a .csv file")
     content = await file.read()
     tracker_content = await tracker_file.read() if tracker_file else None
     try:
-        result = import_combined_swims_xlsx(
-            content, squad, db,
-            replace_existing=replace_existing,
-            reconcile_roster=reconcile_roster,
-            tracker_content=tracker_content,
-        )
+        if mode == "club":
+            result = import_club_results(content, filename, db)
+        else:
+            result = import_combined_swims_xlsx(
+                content, squad, db,
+                replace_existing=replace_existing,
+                reconcile_roster=reconcile_roster,
+                tracker_content=tracker_content,
+                filename=filename,
+            )
         result["qualification_sets_refreshed"] = _refresh_confirmed_qualification_sets(db)
         return result
     except ValueError as exc:

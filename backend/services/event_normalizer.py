@@ -85,19 +85,32 @@ def sync_meet_session_events(session: models.MeetSession, db: DBSession) -> list
     return created
 
 
-def find_meet_event(meet_id: int, event_name: str, db: DBSession) -> Optional[models.MeetEvent]:
+def find_meet_event(
+    meet_id: int, event_name: str, db: DBSession, gender: Optional[str] = None,
+) -> Optional[models.MeetEvent]:
+    """Find the timetable event for an entry; when girls and boys swim the same
+    event in different sessions, prefer the one matching the swimmer's gender."""
     canonical = canonicalize_event(event_name)
-    exact = db.query(models.MeetEvent).filter(
+    candidates = db.query(models.MeetEvent).filter(
         models.MeetEvent.meet_id == meet_id,
         models.MeetEvent.canonical_event == canonical,
-    ).order_by(models.MeetEvent.order_index).first()
-    return exact
+    ).order_by(models.MeetEvent.order_index).all()
+    if not candidates:
+        return None
+    wanted = (gender or "").strip().upper()[:1]
+    if wanted:
+        for preferred in (wanted, None):
+            for event in candidates:
+                event_gender = (event.gender or "").strip().upper()[:1] or None
+                if event_gender == preferred:
+                    return event
+    return candidates[0]
 
 
 def relink_meet_entries(meet_id: int, db: DBSession) -> None:
     entries = db.query(models.MeetEntry).filter(models.MeetEntry.meet_id == meet_id).all()
     for entry in entries:
-        matched = find_meet_event(meet_id, entry.event_name, db)
+        matched = find_meet_event(meet_id, entry.event_name, db, entry.swimmer.gender if entry.swimmer else None)
         entry.canonical_event = canonicalize_event(entry.event_name)
         entry.meet_event_id = matched.id if matched else None
 
@@ -119,7 +132,8 @@ def upsert_meet_entry(
         models.MeetEntry.swimmer_id == swimmer_id,
         models.MeetEntry.canonical_event == canonical,
     ).first()
-    event = find_meet_event(meet_id, event_name, db)
+    swimmer = db.get(models.Swimmer, swimmer_id)
+    event = find_meet_event(meet_id, event_name, db, swimmer.gender if swimmer else None)
     if not entry:
         entry = models.MeetEntry(
             meet_id=meet_id,

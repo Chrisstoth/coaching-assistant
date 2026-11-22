@@ -16,6 +16,14 @@ from backend.services.event_normalizer import (
     canonicalize_event, event_parts, sync_meet_session_events, upsert_meet_entry,
 )
 from backend.services.importer import parse_time_to_seconds
+from backend.services.entries_link import (
+    EntriesLinkError,
+    fetch_page as fetch_entries_page,
+    is_gala_organiser,
+    page_text as entries_page_text,
+    parse_gala_organiser_entries,
+    schedule_from_sessions,
+)
 
 router = APIRouter()
 
@@ -572,7 +580,93 @@ async def extract_entries(
         text_content = entries_content.decode('utf-8', errors='ignore')
         entries_data = openai_service.parse_entries_text(text_content)
 
-    # Cross-reference swimmers with fuzzy matching
+    return _match_extracted_entries(entries_data, swimmer_names, meet_id)
+
+
+class EntriesLinkIn(BaseModel):
+    url: str
+
+
+@router.post("/{meet_id}/extract-entries-link")
+def extract_entries_from_link(meet_id: int, body: EntriesLinkIn, db: DBSession = Depends(get_db)):
+    """Read accepted entries from a web link (Gala Organiser read directly; other sites via AI)."""
+    _get_or_404(meet_id, db)
+    try:
+        page = fetch_entries_page(body.url)
+        if not is_gala_organiser(body.url):
+            swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
+            entries_data = openai_service.parse_entries_text(entries_page_text(page)[:60000])
+            return _match_extracted_entries(entries_data, {s.name.lower(): s for s in swimmers}, meet_id)
+        parsed = parse_gala_organiser_entries(page)
+    except EntriesLinkError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).all()
+    by_id = {s.swimrankings_id: s for s in swimmers if s.swimrankings_id}
+    by_name: dict[str, list] = {}
+    for swimmer in swimmers:
+        by_name.setdefault(" ".join(swimmer.name.lower().split()), []).append(swimmer)
+
+    def find_swimmer(person: dict):
+        if person["swimrankings_id"] and person["swimrankings_id"] in by_id:
+            return by_id[person["swimrankings_id"]]
+        first, surname = person["first_name"].lower(), person["surname"].lower()
+        # Clubs sometimes type the names the wrong way round, so try both orders.
+        for key in (f"{first} {surname}", f"{surname} {first}"):
+            candidates = [
+                s for s in by_name.get(" ".join(key.split()), [])
+                if not s.swimrankings_id or not person["swimrankings_id"]
+            ]
+            if len(candidates) == 1:
+                return candidates[0]
+        return None
+
+    matched_swimmers: dict[str, list] = {}
+    entry_times: dict[str, dict] = {}
+    details = []
+    withdrawn = []
+    other_swimmers = 0
+    for person in parsed["swimmers"]:
+        swimmer = find_swimmer(person)
+        if swimmer is None:
+            other_swimmers += 1
+            continue
+        accepted = [event for event in person["events"] if event["status"] == "accepted"]
+        withdrawn.extend(
+            {"name": swimmer.name, "event": event["event"], "status": event["status"]}
+            for event in person["events"] if event["status"] != "accepted"
+        )
+        if not accepted:
+            continue
+        matched_swimmers.setdefault(swimmer.name, [])
+        entry_times.setdefault(swimmer.name, {})
+        for event in accepted:
+            if event["event"] not in matched_swimmers[swimmer.name]:
+                matched_swimmers[swimmer.name].append(event["event"])
+            entry_times[swimmer.name][event["event"]] = event["entry_time"]
+        details.append({
+            "name": swimmer.name,
+            "listed_as": person["name"],
+            "club": person["club"],
+            "events": accepted,
+        })
+
+    return {
+        "source": "galaorganiser",
+        "meet_title": parsed["meet_title"],
+        "swimmers": matched_swimmers,
+        "entry_times": entry_times,
+        "details": sorted(details, key=lambda item: item["name"]),
+        "withdrawn": withdrawn,
+        "unmatched": [],
+        "other_swimmers": other_swimmers,
+        "schedule": schedule_from_sessions(parsed["sessions"]) if parsed["sessions"] else None,
+        "meet_id": meet_id,
+    }
+
+
+def _match_extracted_entries(entries_data: dict, swimmer_names: dict, meet_id: int) -> dict:
+    """Cross-reference AI-extracted names with the squad using fuzzy matching."""
     extracted_swimmers = {}
     unmatched = []
 
@@ -626,6 +720,7 @@ async def combine_extractions(
     events = body.get("events", [])
     swimmers_to_assign = body.get("swimmers", {})
     auto_assign = body.get("auto_assign", False)
+    entry_times = body.get("entry_times") or {}  # {"swimmer name": {"100 Freestyle": "1:02.45"}}
 
     result = {
         "events": events,
@@ -659,6 +754,19 @@ async def combine_extractions(
                         db.add(target)
                         db.flush()
                         _sync_target_entries(target, db, source="document")
+
+                    times_for_swimmer = {
+                        canonicalize_event(event): time
+                        for event, time in (entry_times.get(swimmer_name) or {}).items() if time
+                    }
+                    if times_for_swimmer:
+                        db.flush()
+                        for entry in db.query(models.MeetEntry).filter(
+                            models.MeetEntry.meet_id == meet_id,
+                            models.MeetEntry.swimmer_id == swimmer_map[swimmer_name].id,
+                        ).all():
+                            if entry.canonical_event in times_for_swimmer:
+                                entry.entry_time = times_for_swimmer[entry.canonical_event]
 
                     result["assigned"].append(swimmer_name)
                 except Exception as e:

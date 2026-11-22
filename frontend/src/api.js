@@ -412,6 +412,12 @@ export const api = {
     fd.append('reconcile_roster', String(reconcileRoster))
     return request('POST', '/times/import/combined', fd, true)
   },
+  importClubResults: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('mode', 'club')
+    return request('POST', '/times/import/combined', fd, true)
+  },
   importRoster: (file) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -483,6 +489,8 @@ export const api = {
     fd.append('entries_file', entriesFile)
     return request('POST', `/meets/${meetId}/extract-entries`, fd, true)
   },
+  extractEntriesFromLink: (meetId, url) =>
+    request('POST', `/meets/${meetId}/extract-entries-link`, { url }),
   combineExtractions: (meetId, data) => {
     return request('POST', `/meets/${meetId}/combine-extractions`, data)
   },

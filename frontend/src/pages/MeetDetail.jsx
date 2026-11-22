@@ -335,6 +335,7 @@ export default function MeetDetail() {
   const [deleting, setDeleting] = useState(false)
   const [scheduleFile, setScheduleFile] = useState(null)
   const [entriesFile, setEntriesFile] = useState(null)
+  const [entriesLink, setEntriesLink] = useState('')
   const [extractingSchedule, setExtractingSchedule] = useState(false)
   const [extractingEntries, setExtractingEntries] = useState(false)
   const [scheduleExtracted, setScheduleExtracted] = useState(null)
@@ -488,6 +489,21 @@ export default function MeetDetail() {
     setExtractingEntries(false)
   }
 
+  const handleExtractEntriesFromLink = async () => {
+    if (!entriesLink.trim()) return
+    setExtractingEntries(true)
+    try {
+      const result = await api.extractEntriesFromLink(id, entriesLink.trim())
+      setEntriesExtracted(result)
+      // Gala Organiser pages also list the sessions, so the timetable comes for free.
+      if (result.schedule && !scheduleExtracted) setScheduleExtracted(result.schedule)
+      setEntriesLink('')
+    } catch (e) {
+      alert('Error reading entries link: ' + e.message)
+    }
+    setExtractingEntries(false)
+  }
+
   const handleCombineAndAssign = async () => {
     if (!scheduleExtracted || !entriesExtracted) {
       alert('Please extract both schedule and entries first')
@@ -499,6 +515,7 @@ export default function MeetDetail() {
       await api.combineExtractions(id, {
         events: scheduleExtracted.events || [],
         swimmers: entriesExtracted.swimmers || {},
+        entry_times: entriesExtracted.entry_times || {},
         auto_assign: true,
       })
       setScheduleExtracted(null)
@@ -860,6 +877,26 @@ export default function MeetDetail() {
           >
             {extractingEntries ? 'Extracting…' : entriesExtracted ? '✓ Extracted' : 'Extract Entries'}
           </button>
+          {entriesExtracted === null && (
+            <div className="pt-1 space-y-2">
+              <p className="text-[11px] text-pool-500 text-center">or paste the entries web link</p>
+              <input
+                type="url"
+                inputMode="url"
+                value={entriesLink}
+                onChange={(e) => setEntriesLink(e.target.value)}
+                placeholder="https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=…"
+                className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+              />
+              <button
+                onClick={handleExtractEntriesFromLink}
+                disabled={extractingEntries || !entriesLink.trim()}
+                className="w-full bg-accent-600 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold"
+              >
+                {extractingEntries ? 'Reading link…' : 'Read Entries Link'}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Review schedule extraction */}
@@ -920,13 +957,35 @@ export default function MeetDetail() {
               </button>
             </div>
             <div className="space-y-1">
-              {Object.entries(entriesExtracted.swimmers).map(([name, events]) => (
-                <div key={name} className="bg-purple-900/30 rounded p-2 text-xs">
-                  <p className="text-purple-200 font-medium">{name}</p>
-                  <p className="text-purple-400 mt-0.5">{events.join(', ')}</p>
-                </div>
-              ))}
+              {Object.entries(entriesExtracted.swimmers).map(([name, events]) => {
+                const times = entriesExtracted.entry_times?.[name] || {}
+                return (
+                  <div key={name} className="bg-purple-900/30 rounded p-2 text-xs">
+                    <p className="text-purple-200 font-medium">{name}</p>
+                    <p className="text-purple-400 mt-0.5">
+                      {events.map(event => times[event] ? `${event} (${times[event]})` : event).join(', ')}
+                    </p>
+                  </div>
+                )
+              })}
             </div>
+            {entriesExtracted.source === 'galaorganiser' && Object.keys(entriesExtracted.swimmers).length === 0 && (
+              <p className="text-xs text-yellow-400">
+                None of your swimmers were found in these entries. Check the swimmers have their swimrankings ID saved,
+                or that their names match.
+              </p>
+            )}
+            {entriesExtracted.withdrawn?.length > 0 && (
+              <p className="text-xs text-purple-400">
+                Not swimming (withdrawn/refunded, left out):{' '}
+                {entriesExtracted.withdrawn.map(item => `${item.name} ${item.event}`).join(', ')}
+              </p>
+            )}
+            {entriesExtracted.other_swimmers > 0 && (
+              <p className="text-[11px] text-purple-500">
+                {entriesExtracted.other_swimmers} other swimmers at this gala aren&apos;t in the app — ignored.
+              </p>
+            )}
             {entriesExtracted.unmatched && entriesExtracted.unmatched.length > 0 && (
               <div>
                 <p className="text-xs text-yellow-400 mt-2 mb-1">Unmatched entries:</p>
