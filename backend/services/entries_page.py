@@ -1,79 +1,31 @@
-"""Read accepted entries for a meet from a web link.
+"""Read accepted meet entries from a Gala Organiser "meet entries" page.
 
-Gala Organiser "meet entries" pages are read directly (no AI): every swimmer row
-carries their swimrankings ID, entry times, and the session/event number of each
-swim. Other sites are fetched and handed back as plain text for the AI reader.
+The page reaches the app from the coach's own browser (copied and pasted, or
+saved and uploaded): Gala Organiser puts a "not a robot" check in front of
+servers, so it cannot be fetched from here. Every swimmer row carries their
+swimrankings ID, entry times, and the session/event number of each swim, so it
+is read directly (no AI). Other pages are reduced to plain text for the AI.
 """
-import ipaddress
 import re
-import socket
 from datetime import datetime
 from html import unescape
 from html.parser import HTMLParser
 from typing import Optional
-from urllib.parse import urlparse
 
-import httpx
-
-MAX_PAGE_BYTES = 5 * 1024 * 1024
-_BROWSER_HEADERS = {
-    # Gala Organiser refuses requests that do not look like a browser.
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-GB,en;q=0.9",
-}
 _STROKES = {
     "free": "Freestyle", "back": "Backstroke", "breast": "Breaststroke",
     "fly": "Butterfly", "im": "Individual Medley",
 }
-_STATUS_BY_COLOUR = {"green": "withdrawn", "blue": "refunded"}
+# Withdrawn/rejected entries are highlighted green, refunded ones blue. A page
+# copied from a browser carries the colour as rgb()/hex rather than its name.
+_STATUS_BY_COLOUR = [
+    (re.compile(r"background(?:-color)?:(?:green|rgb\(0,128,0\)|#008000|#080)(?![0-9a-z])"), "withdrawn"),
+    (re.compile(r"background(?:-color)?:(?:blue|rgb\(0,0,255\)|#0000ff|#00f)(?![0-9a-z])"), "refunded"),
+]
 
 
-class EntriesLinkError(ValueError):
+class EntriesPageError(ValueError):
     pass
-
-
-# ---------------------------------------------------------------------------
-# Fetching
-# ---------------------------------------------------------------------------
-
-def _check_public_url(url: str) -> str:
-    parsed = urlparse((url or "").strip())
-    if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise EntriesLinkError("That doesn't look like a web link — it should start with https://")
-    try:
-        addresses = {info[4][0] for info in socket.getaddrinfo(parsed.hostname, None)}
-    except socket.gaierror as exc:
-        raise EntriesLinkError(f"Couldn't find the website {parsed.hostname}") from exc
-    for address in addresses:
-        ip = ipaddress.ip_address(address.split("%")[0])
-        if not ip.is_global:
-            raise EntriesLinkError("That link points somewhere private and can't be opened")
-    return parsed.geturl()
-
-
-def fetch_page(url: str) -> str:
-    url = _check_public_url(url)
-    try:
-        with httpx.Client(headers=_BROWSER_HEADERS, timeout=20, follow_redirects=True) as client:
-            response = client.get(url)
-    except httpx.HTTPError as exc:
-        raise EntriesLinkError(f"Couldn't open the link: {exc}") from exc
-    if response.status_code >= 400:
-        raise EntriesLinkError(f"The website refused the link (error {response.status_code})")
-    # Every redirect hop must also stay on the public internet.
-    _check_public_url(str(response.url))
-    if len(response.content) > MAX_PAGE_BYTES:
-        raise EntriesLinkError("That page is too large to read")
-    return response.text
-
-
-def is_gala_organiser(url: str) -> bool:
-    host = (urlparse((url or "").strip()).hostname or "").lower()
-    return host == "galaorganiser.co.uk" or host.endswith(".galaorganiser.co.uk")
 
 
 # ---------------------------------------------------------------------------
@@ -234,10 +186,8 @@ def parse_gala_organiser_entries(html: str) -> dict:
                 entry_time, converted = _clean_entry_time(cell["text"])
                 if not entry_time:
                     continue
-                status = next(
-                    (label for colour, label in _STATUS_BY_COLOUR.items() if f"background-color: {colour}" in cell["style"]),
-                    "accepted",
-                )
+                style = re.sub(r"\s+", "", cell["style"])
+                status = next((label for pattern, label in _STATUS_BY_COLOUR if pattern.search(style)), "accepted")
                 record["events"].append({
                     "event": column["event"],
                     "entry_time": entry_time,
@@ -248,7 +198,7 @@ def parse_gala_organiser_entries(html: str) -> dict:
                 })
 
     if not swimmers:
-        raise EntriesLinkError("Couldn't find an entries table on that page")
+        raise EntriesPageError("Couldn't find an entries table on that page")
 
     sessions = []
     for text in reader.list_items:

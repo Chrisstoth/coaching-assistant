@@ -2340,7 +2340,7 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(second.json()["times_imported"], 0)
         self.assertEqual(second.json()["duplicate_rows_skipped"], 2)
 
-    def test_gala_organiser_entries_link_reads_squad_entries_and_timetable(self):
+    def test_gala_organiser_entries_page_reads_squad_entries_and_timetable(self):
         page = """<html><body><div class='container'><h2>Test Qualifier 2026</h2>
         <ul><li>Session 1 (28/11/2026 02:15 PM) - Warm Up at 01:30 PM</li>
         <li>Session 2 (29/11/2026 09:00 AM) - Warm Up at 08:00 AM</li></ul>
@@ -2373,11 +2373,9 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(meet.status_code, 201, meet.text)
         meet_id = meet.json()["id"]
 
-        with patch("backend.routers.meets.fetch_entries_page", return_value=page):
-            extracted = self.client.post(
-                f"/meets/{meet_id}/extract-entries-link", headers=self.headers,
-                json={"url": "https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=TEST"},
-            )
+        extracted = self.client.post(
+            f"/meets/{meet_id}/extract-entries-paste", headers=self.headers, json={"html": page},
+        )
         self.assertEqual(extracted.status_code, 200, extracted.text)
         body = extracted.json()
         self.assertEqual(body["swimmers"], {
@@ -2393,25 +2391,29 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(sessions[0]["start_time"], "14:15")
         self.assertEqual(sessions[0]["warm_up_time"], "13:30")
 
-        # The app hands over the page its own browser fetched; the server must not fetch it.
-        from backend.services.entries_link import EntriesLinkError
-        refused = EntriesLinkError("The website refused the link (error 403)")
-        with patch("backend.routers.meets.fetch_entries_page", side_effect=refused) as fetch:
-            handed_over = self.client.post(
-                f"/meets/{meet_id}/extract-entries-link", headers=self.headers,
-                json={"url": "https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=TEST", "html": page},
-            )
-            self.assertEqual(handed_over.status_code, 200, handed_over.text)
-            self.assertEqual(handed_over.json()["swimmers"], body["swimmers"])
-            fetch.assert_not_called()
+        # Copied from a browser, colours arrive as rgb() and headings may be lost.
+        copied = (page.replace("background-color: green", "background-color: rgb(0, 128, 0)")
+                  .replace("<h4>Individual Female Swims</h4>", "").replace("<h4>Individual Male Swims</h4>", ""))
+        pasted = self.client.post(
+            f"/meets/{meet_id}/extract-entries-paste", headers=self.headers, json={"html": copied},
+        )
+        self.assertEqual(pasted.status_code, 200, pasted.text)
+        self.assertEqual(pasted.json()["swimmers"], body["swimmers"])
+        self.assertEqual(pasted.json()["withdrawn"], body["withdrawn"])
 
-            # Without the page, a refusal explains how to use a saved page instead.
-            blocked = self.client.post(
-                f"/meets/{meet_id}/extract-entries-link", headers=self.headers,
-                json={"url": "https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=TEST"},
+        # Plain text (no table on the clipboard) goes to the AI reader.
+        ai_reading = {"swimmers": [{"name": "Kate Linktest", "events": ["100 Backstroke"]}]}
+        with patch("backend.routers.meets.openai_service.parse_entries_text", return_value=ai_reading) as ai:
+            text_only = self.client.post(
+                f"/meets/{meet_id}/extract-entries-paste", headers=self.headers,
+                json={"text": "Kate Linktest 100 Back 1:10.50"},
             )
-            self.assertEqual(blocked.status_code, 422, blocked.text)
-            self.assertIn("Save as PDF", blocked.json()["detail"])
+        self.assertEqual(text_only.status_code, 200, text_only.text)
+        self.assertEqual(text_only.json()["swimmers"], {"Kate Linktest": ["100 Backstroke"]})
+        ai.assert_called_once()
+
+        nothing = self.client.post(f"/meets/{meet_id}/extract-entries-paste", headers=self.headers, json={"text": "  "})
+        self.assertEqual(nothing.status_code, 422, nothing.text)
 
         saved_page = self.client.post(
             f"/meets/{meet_id}/extract-entries", headers=self.headers,
@@ -2440,15 +2442,6 @@ class CoreFlowTests(unittest.TestCase):
             # Girls' 50 Free is in session 2; the boys' one (session 1) must not be picked.
             self.assertEqual(entry.meet_event.gender, "F")
             self.assertEqual(entry.meet_event.meet_session.date.isoformat(), "2026-11-29")
-
-    def test_entries_link_refuses_private_addresses(self):
-        meet = self.client.post("/meets", headers=self.headers, json={"name": "Private Link Meet", "date": "2026-11-28"})
-        self.assertEqual(meet.status_code, 201, meet.text)
-        response = self.client.post(
-            f"/meets/{meet.json()['id']}/extract-entries-link", headers=self.headers,
-            json={"url": "http://127.0.0.1:8000/secret"},
-        )
-        self.assertEqual(response.status_code, 422, response.text)
 
     def test_excel_session_template_previews_checks_links_and_saves_once(self):
         with SessionLocal() as db:

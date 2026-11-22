@@ -19,15 +19,6 @@
   status = 200
   force = true
 
-# Gala Organiser refuses requests from cloud servers (the API on Render gets a
-# 403), so the app fetches meet entries pages through Netlify from the coach's
-# browser and hands the page to the API to read.
-[[redirects]]
-  from = "/galaorganiser/*"
-  to = "https://www.galaorganiser.co.uk/:splat"
-  status = 200
-  force = true
-
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -16,10 +16,8 @@ from backend.services.event_normalizer import (
     canonicalize_event, event_parts, sync_meet_session_events, upsert_meet_entry,
 )
 from backend.services.importer import parse_time_to_seconds
-from backend.services.entries_link import (
-    EntriesLinkError,
-    fetch_page as fetch_entries_page,
-    is_gala_organiser,
+from backend.services.entries_page import (
+    EntriesPageError,
     page_text as entries_page_text,
     parse_gala_organiser_entries,
     schedule_from_sessions,
@@ -583,45 +581,36 @@ async def extract_entries(
             # A saved Gala Organiser page is read directly; any other page goes to the AI as text.
             try:
                 return _gala_organiser_entries_response(parse_gala_organiser_entries(text_content), db, meet_id)
-            except EntriesLinkError:
+            except EntriesPageError:
                 text_content = entries_page_text(text_content)[:60000]
         entries_data = openai_service.parse_entries_text(text_content)
 
     return _match_extracted_entries(entries_data, swimmer_names, meet_id)
 
 
-class EntriesLinkIn(BaseModel):
-    url: str
-    # The page as the coach's own browser fetched it. Gala Organiser refuses
-    # cloud servers, so the app fetches it through Netlify and sends it here.
-    html: Optional[str] = Field(default=None, max_length=5 * 1024 * 1024)
+class EntriesPasteIn(BaseModel):
+    # What the coach copied from the entries page in their own browser. Gala
+    # Organiser puts a "not a robot" check in front of servers, so the page
+    # has to come from the coach's browser rather than being fetched here.
+    html: Optional[str] = Field(default=None, max_length=10 * 1024 * 1024)
+    text: Optional[str] = Field(default=None, max_length=2 * 1024 * 1024)
 
 
-@router.post("/{meet_id}/extract-entries-link")
-def extract_entries_from_link(meet_id: int, body: EntriesLinkIn, db: DBSession = Depends(get_db)):
-    """Read accepted entries from a web link (Gala Organiser read directly; other sites via AI)."""
+@router.post("/{meet_id}/extract-entries-paste")
+def extract_entries_from_paste(meet_id: int, body: EntriesPasteIn, db: DBSession = Depends(get_db)):
+    """Read entries pasted from a web page: Gala Organiser tables directly, anything else via AI."""
     _get_or_404(meet_id, db)
-    if body.html and is_gala_organiser(body.url):
+    if body.html:
         try:
             return _gala_organiser_entries_response(parse_gala_organiser_entries(body.html), db, meet_id)
-        except EntriesLinkError:
-            pass  # not the entries page after all — try fetching it here instead
-    try:
-        page = fetch_entries_page(body.url)
-        if not is_gala_organiser(body.url):
-            swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
-            entries_data = openai_service.parse_entries_text(entries_page_text(page)[:60000])
-            return _match_extracted_entries(entries_data, {s.name.lower(): s for s in swimmers}, meet_id)
-        parsed = parse_gala_organiser_entries(page)
-    except EntriesLinkError as exc:
-        detail = str(exc)
-        if is_gala_organiser(body.url) and "refused" in detail:
-            detail = (
-                "Gala Organiser wouldn't let the app open that page. On the entries page, use "
-                "Share → Print/Save as PDF (or Save Page) and upload that file under Extract Entries instead."
-            )
-        raise HTTPException(status_code=422, detail=detail) from exc
-    return _gala_organiser_entries_response(parsed, db, meet_id)
+        except EntriesPageError:
+            pass
+    text = (body.text or "").strip() or (entries_page_text(body.html) if body.html else "")
+    if not text.strip():
+        raise HTTPException(status_code=422, detail="Nothing was pasted — copy the entries page and paste it again")
+    swimmers = db.query(models.Swimmer).filter(models.Swimmer.status == 'active').all()
+    entries_data = openai_service.parse_entries_text(text[:60000])
+    return _match_extracted_entries(entries_data, {s.name.lower(): s for s in swimmers}, meet_id)
 
 
 def _gala_organiser_entries_response(parsed: dict, db: DBSession, meet_id: int) -> dict:

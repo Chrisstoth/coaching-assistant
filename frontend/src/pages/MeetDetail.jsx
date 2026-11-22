@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
+import { slimPastedHtml } from '../pastedPage'
 import AskTheStaff from '../components/AskTheStaff'
 
 const LEVEL_LABELS = { club: 'Club', regional: 'Regional', national: 'National', international: 'International' }
@@ -335,7 +336,7 @@ export default function MeetDetail() {
   const [deleting, setDeleting] = useState(false)
   const [scheduleFile, setScheduleFile] = useState(null)
   const [entriesFile, setEntriesFile] = useState(null)
-  const [entriesLink, setEntriesLink] = useState('')
+  const [pastedEntries, setPastedEntries] = useState(null) // { html, text }
   const [extractingSchedule, setExtractingSchedule] = useState(false)
   const [extractingEntries, setExtractingEntries] = useState(false)
   const [scheduleExtracted, setScheduleExtracted] = useState(null)
@@ -489,17 +490,25 @@ export default function MeetDetail() {
     setExtractingEntries(false)
   }
 
-  const handleExtractEntriesFromLink = async () => {
-    if (!entriesLink.trim()) return
+  const handlePasteEntries = (e) => {
+    e.preventDefault()
+    const html = slimPastedHtml(e.clipboardData.getData('text/html'))
+    const text = e.clipboardData.getData('text/plain')
+    if (!html && !text.trim()) return
+    setPastedEntries({ html, text })
+  }
+
+  const handleExtractPastedEntries = async () => {
+    if (!pastedEntries) return
     setExtractingEntries(true)
     try {
-      const result = await api.extractEntriesFromLink(id, entriesLink.trim())
+      const result = await api.extractEntriesFromPaste(id, { html: pastedEntries.html, text: pastedEntries.text })
       setEntriesExtracted(result)
       // Gala Organiser pages also list the sessions, so the timetable comes for free.
       if (result.schedule && !scheduleExtracted) setScheduleExtracted(result.schedule)
-      setEntriesLink('')
+      setPastedEntries(null)
     } catch (e) {
-      alert('Error reading entries link: ' + e.message)
+      alert('Error reading pasted entries: ' + e.message)
     }
     setExtractingEntries(false)
   }
@@ -879,21 +888,29 @@ export default function MeetDetail() {
           </button>
           {entriesExtracted === null && (
             <div className="pt-1 space-y-2">
-              <p className="text-[11px] text-pool-500 text-center">or paste the entries web link</p>
-              <input
-                type="url"
-                inputMode="url"
-                value={entriesLink}
-                onChange={(e) => setEntriesLink(e.target.value)}
-                placeholder="https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=…"
-                className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none"
+              <p className="text-[11px] text-pool-500 text-center">or paste the entries page</p>
+              <p className="text-[11px] text-pool-500 leading-relaxed">
+                Open the entries page (e.g. Gala Organiser), select all and copy, then paste below.
+                A Gala Organiser page is read exactly — entry times, sessions and withdrawals included.
+              </p>
+              <textarea
+                rows={2}
+                value=""
+                onChange={() => {}}
+                onPaste={handlePasteEntries}
+                placeholder={pastedEntries ? '✓ Page pasted — paste again to replace' : 'Tap and hold here, then Paste'}
+                className={`w-full rounded-lg px-3 py-2 text-sm border focus:outline-none resize-none ${
+                  pastedEntries
+                    ? 'bg-emerald-900/20 border-emerald-700 placeholder:text-emerald-300'
+                    : 'bg-pool-700 border-pool-600 focus:border-accent-500'
+                }`}
               />
               <button
-                onClick={handleExtractEntriesFromLink}
-                disabled={extractingEntries || !entriesLink.trim()}
+                onClick={handleExtractPastedEntries}
+                disabled={extractingEntries || !pastedEntries}
                 className="w-full bg-accent-600 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold"
               >
-                {extractingEntries ? 'Reading link…' : 'Read Entries Link'}
+                {extractingEntries ? 'Reading…' : 'Read Pasted Entries'}
               </button>
             </div>
           )}
