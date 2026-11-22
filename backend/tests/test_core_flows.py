@@ -2393,6 +2393,33 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(sessions[0]["start_time"], "14:15")
         self.assertEqual(sessions[0]["warm_up_time"], "13:30")
 
+        # The app hands over the page its own browser fetched; the server must not fetch it.
+        from backend.services.entries_link import EntriesLinkError
+        refused = EntriesLinkError("The website refused the link (error 403)")
+        with patch("backend.routers.meets.fetch_entries_page", side_effect=refused) as fetch:
+            handed_over = self.client.post(
+                f"/meets/{meet_id}/extract-entries-link", headers=self.headers,
+                json={"url": "https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=TEST", "html": page},
+            )
+            self.assertEqual(handed_over.status_code, 200, handed_over.text)
+            self.assertEqual(handed_over.json()["swimmers"], body["swimmers"])
+            fetch.assert_not_called()
+
+            # Without the page, a refusal explains how to use a saved page instead.
+            blocked = self.client.post(
+                f"/meets/{meet_id}/extract-entries-link", headers=self.headers,
+                json={"url": "https://www.galaorganiser.co.uk/entry/meet_entries.php?Meet=TEST"},
+            )
+            self.assertEqual(blocked.status_code, 422, blocked.text)
+            self.assertIn("Save as PDF", blocked.json()["detail"])
+
+        saved_page = self.client.post(
+            f"/meets/{meet_id}/extract-entries", headers=self.headers,
+            files={"entries_file": ("entries.html", page.encode(), "text/html")},
+        )
+        self.assertEqual(saved_page.status_code, 200, saved_page.text)
+        self.assertEqual(saved_page.json()["swimmers"], body["swimmers"])
+
         timetable = self.client.post(
             f"/meets/{meet_id}/timetable/import", headers=self.headers,
             json={**body["schedule"], "replace": True},

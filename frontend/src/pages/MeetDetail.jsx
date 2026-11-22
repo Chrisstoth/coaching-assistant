@@ -859,12 +859,12 @@ export default function MeetDetail() {
         <div className="border border-pool-700 rounded-lg p-3 space-y-2">
           <p className="text-xs font-semibold text-pool-300">2. Extract Entries</p>
           <div>
-            <label htmlFor="entries-input" className="text-xs text-pool-400 block mb-1">Accepted entries PDF or image</label>
+            <label htmlFor="entries-input" className="text-xs text-pool-400 block mb-1">Accepted entries PDF, image or saved web page</label>
             <input
               id="entries-input"
               type="file"
               onChange={(e) => setEntriesFile(e.target.files?.[0] || null)}
-              accept=".pdf,image/*"
+              accept=".pdf,image/*,.html,.htm,text/html"
               disabled={entriesExtracted !== null}
               className="block w-full text-sm text-pool-400 border border-pool-600 rounded-lg p-2.5 bg-pool-700 cursor-pointer disabled:opacity-50"
             />

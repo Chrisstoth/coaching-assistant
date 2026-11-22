@@ -5,6 +5,13 @@ import fs from 'fs'
 
 const API_TARGET = process.env.VITE_API_TARGET || 'https://coaching-assistant-api.onrender.com'
 
+// Mirrors the /galaorganiser/* proxy in netlify.toml (meet entries pages).
+const GALA_ORGANISER_PROXY = {
+  target: 'https://www.galaorganiser.co.uk',
+  changeOrigin: true,
+  rewrite: (path) => path.replace(/^\/galaorganiser/, ''),
+}
+
 let httpsConfig = false
 try {
   httpsConfig = {
@@ -56,6 +63,7 @@ export default defineConfig({
         secure: false,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/galaorganiser': GALA_ORGANISER_PROXY,
     },
   },
   preview: {
@@ -72,6 +80,7 @@ export default defineConfig({
         secure: false,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },
+      '/galaorganiser': GALA_ORGANISER_PROXY,
     },
   },
 })

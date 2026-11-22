@@ -489,8 +489,20 @@ export const api = {
     fd.append('entries_file', entriesFile)
     return request('POST', `/meets/${meetId}/extract-entries`, fd, true)
   },
-  extractEntriesFromLink: (meetId, url) =>
-    request('POST', `/meets/${meetId}/extract-entries-link`, { url }),
+  extractEntriesFromLink: async (meetId, url) => {
+    // Gala Organiser refuses the API server, so fetch the page through the
+    // site's own /galaorganiser proxy (netlify.toml) and send the page along.
+    let html = null
+    try {
+      const link = new URL(url)
+      if (/(^|\.)galaorganiser\.co\.uk$/i.test(link.hostname)) {
+        const res = await fetch(`/galaorganiser${link.pathname}${link.search}`, { cache: 'no-store' })
+        const text = res.ok ? await res.text() : ''
+        if (/<table/i.test(text) && /swimmer/i.test(text)) html = text
+      }
+    } catch (_) { /* fall back to the server fetching it */ }
+    return request('POST', `/meets/${meetId}/extract-entries-link`, { url, html })
+  },
   combineExtractions: (meetId, data) => {
     return request('POST', `/meets/${meetId}/combine-extractions`, data)
   },

@@ -573,11 +573,18 @@ async def extract_entries(
 
     entries_content = await entries_file.read()
     mime_type = entries_file.content_type or "text/plain"
+    filename = (entries_file.filename or "").lower()
 
     if mime_type.startswith("image/"):
         entries_data = openai_service.parse_entries_image(entries_content, mime_type)
     else:
         text_content = entries_content.decode('utf-8', errors='ignore')
+        if "html" in mime_type or filename.endswith((".html", ".htm")):
+            # A saved Gala Organiser page is read directly; any other page goes to the AI as text.
+            try:
+                return _gala_organiser_entries_response(parse_gala_organiser_entries(text_content), db, meet_id)
+            except EntriesLinkError:
+                text_content = entries_page_text(text_content)[:60000]
         entries_data = openai_service.parse_entries_text(text_content)
 
     return _match_extracted_entries(entries_data, swimmer_names, meet_id)
@@ -585,12 +592,20 @@ async def extract_entries(
 
 class EntriesLinkIn(BaseModel):
     url: str
+    # The page as the coach's own browser fetched it. Gala Organiser refuses
+    # cloud servers, so the app fetches it through Netlify and sends it here.
+    html: Optional[str] = Field(default=None, max_length=5 * 1024 * 1024)
 
 
 @router.post("/{meet_id}/extract-entries-link")
 def extract_entries_from_link(meet_id: int, body: EntriesLinkIn, db: DBSession = Depends(get_db)):
     """Read accepted entries from a web link (Gala Organiser read directly; other sites via AI)."""
     _get_or_404(meet_id, db)
+    if body.html and is_gala_organiser(body.url):
+        try:
+            return _gala_organiser_entries_response(parse_gala_organiser_entries(body.html), db, meet_id)
+        except EntriesLinkError:
+            pass  # not the entries page after all — try fetching it here instead
     try:
         page = fetch_entries_page(body.url)
         if not is_gala_organiser(body.url):
@@ -599,8 +614,18 @@ def extract_entries_from_link(meet_id: int, body: EntriesLinkIn, db: DBSession =
             return _match_extracted_entries(entries_data, {s.name.lower(): s for s in swimmers}, meet_id)
         parsed = parse_gala_organiser_entries(page)
     except EntriesLinkError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        detail = str(exc)
+        if is_gala_organiser(body.url) and "refused" in detail:
+            detail = (
+                "Gala Organiser wouldn't let the app open that page. On the entries page, use "
+                "Share → Print/Save as PDF (or Save Page) and upload that file under Extract Entries instead."
+            )
+        raise HTTPException(status_code=422, detail=detail) from exc
+    return _gala_organiser_entries_response(parsed, db, meet_id)
 
+
+def _gala_organiser_entries_response(parsed: dict, db: DBSession, meet_id: int) -> dict:
+    """Match a parsed Gala Organiser entries page against the swimmers in the app."""
     swimmers = db.query(models.Swimmer).filter(models.Swimmer.active == True).all()
     by_id = {s.swimrankings_id: s for s in swimmers if s.swimrankings_id}
     by_name: dict[str, list] = {}
