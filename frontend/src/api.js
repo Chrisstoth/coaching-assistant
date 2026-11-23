@@ -47,9 +47,10 @@ async function request(method, path, body = null, isFormData = false, options = 
   const token = getToken()
   const headers = isFormData ? {} : { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const opts = { method, headers, ...options }
+  const { base = BASE, ...fetchOptions } = options
+  const opts = { method, headers, ...fetchOptions }
   if (body) opts.body = isFormData ? body : JSON.stringify(body)
-  const res = await fetch(`${BASE}${path}`, opts)
+  const res = await fetch(`${base}${path}`, opts)
   if (res.status === 401) {
     clearToken()
     window.location.href = '/login'
@@ -412,10 +413,20 @@ export const api = {
     fd.append('reconcile_roster', String(reconcileRoster))
     return request('POST', '/times/import/combined', fd, true)
   },
-  importClubResults: (file) => {
+  importClubResults: async (file) => {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('mode', 'club')
+    // A whole-club file can take longer to work through than the Netlify
+    // relay will wait, so send it straight to the API server when we can.
+    if (LIVE_BASE !== BASE) {
+      try {
+        return await request('POST', '/times/import/combined', fd, true, { base: LIVE_BASE })
+      } catch (error) {
+        if (error.status) throw error
+        // Couldn't reach the server directly; try through the relay.
+      }
+    }
     return request('POST', '/times/import/combined', fd, true)
   },
   importRoster: (file) => {
@@ -502,6 +513,8 @@ export const api = {
   importMeetTimetable: (meetId, data) => request('POST', `/meets/${meetId}/timetable/import`, data),
   getMeetResults: (meetId) => request('GET', `/meets/${meetId}/results`),
   saveMeetResults: (meetId, results) => request('POST', `/meets/${meetId}/results`, { results }),
+  importPastedResults: (meetId, pages, course) =>
+    request('POST', `/meets/${meetId}/results/paste`, { pages, course: course || null }),
   dismissMeetResultsPrompt: (meetId) => request('POST', `/meets/${meetId}/dismiss-results-prompt`),
 
   // Qualification standards and deterministic comparisons

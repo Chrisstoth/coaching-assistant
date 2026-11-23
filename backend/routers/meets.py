@@ -3,7 +3,7 @@ import base64
 import difflib
 import io
 import re
-from datetime import datetime, date as date_type, timezone
+from datetime import datetime, date as date_type, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
@@ -15,7 +15,8 @@ from backend.services import openai_service
 from backend.services.event_normalizer import (
     canonicalize_event, event_parts, sync_meet_session_events, upsert_meet_entry,
 )
-from backend.services.importer import parse_time_to_seconds
+from backend.services.importer import SquadMatcher, parse_time_to_seconds
+from backend.services.results_page import ResultsPageError, course_from_title, parse_results_pages
 from backend.services.entries_page import (
     EntriesPageError,
     page_text as entries_page_text,
@@ -855,7 +856,14 @@ def get_meet_results(meet_id: int, db: DBSession = Depends(get_db)):
         swimmer = swimmers.get(swimmer_id)
         if not swimmer:
             continue
+        # A time typed in without a round first, else the first published round
+        # (a heat); any further rounds (finals) are listed after.
         result = recorded_by_key.pop((swimmer_id, canonical, ""), None)
+        if result is None:
+            round_key = next(
+                (key for key in recorded_by_key if key[0] == swimmer_id and key[1] == canonical), None,
+            )
+            result = recorded_by_key.pop(round_key) if round_key else None
         rows.append({
             **row,
             "swimmer_name": swimmer.name,
@@ -965,6 +973,133 @@ def save_meet_results(meet_id: int, body: MeetResultsSubmit, db: DBSession = Dep
 
     db.commit()
     return {"saved": saved, "cleared": cleared, "errors": errors, **get_meet_results(meet_id, db)}
+
+
+class PastedPage(BaseModel):
+    html: Optional[str] = None
+    text: Optional[str] = None
+
+
+class ResultsPasteIn(BaseModel):
+    pages: list[PastedPage]
+    course: Optional[str] = None        # SCM / LCM, when the gala doesn't say
+
+
+@router.post("/{meet_id}/results/paste")
+def import_pasted_results(meet_id: int, body: ResultsPasteIn, db: DBSession = Depends(get_db)):
+    """
+    Add this gala's results from pasted swimmingresults.org "results by club"
+    pages. Only swimmers already in the app are kept, and swims the app already
+    has (typed in, or from any import, whatever the gala was called) are skipped.
+    """
+    meet = _get_or_404(meet_id, db)
+    try:
+        parsed = parse_results_pages([page.model_dump() for page in body.pages])
+    except ResultsPageError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    titles = parsed["titles"]
+    if len(titles) > 1:
+        raise HTTPException(
+            status_code=400,
+            detail="These pages are from more than one meet (" + "; ".join(titles) + "). "
+                   "Paste each meet's results into its own gala.",
+        )
+    if not meet.date:
+        raise HTTPException(status_code=400, detail="Set the gala's date first: the results page doesn't show it.")
+    course = (body.course or meet.course or (course_from_title(titles[0]) if titles else None) or "").upper()
+    if course not in ("SCM", "LCM"):
+        raise HTTPException(status_code=400, detail="Was this gala short course or long course? Choose one and read again.")
+    if not meet.course:
+        meet.course = course
+
+    swimmers = db.query(models.Swimmer).all()
+    matcher = SquadMatcher(swimmers)
+    matched = [(swim, matcher.find(swim["member"], swim["name"])) for swim in parsed["swims"]]
+    matched = [(swim, swimmer) for swim, swimmer in matched if swimmer is not None]
+    if not matched:
+        raise HTTPException(
+            status_code=400,
+            detail="None of the swimmers on this page are in the app. Check it's your club's page, "
+                   "and that the swimmers have their Swim England / swimrankings number saved.",
+        )
+    matcher.link_ids(swimmers)
+
+    # The page has no dates, so a swim counts as one the app already has when
+    # it's the same swimmer, event, course and time during this gala's days.
+    first_day = meet.date
+    last_day = meet.date_to or (meet.date + timedelta(days=3))
+    swimmer_ids = {swimmer.id for _, swimmer in matched}
+    existing = db.query(models.SwimTime).filter(models.SwimTime.swimmer_id.in_(swimmer_ids)).all()
+    existing = [
+        row for row in existing
+        if row.meet_id == meet.id or (row.date and first_day <= row.date <= last_day)
+    ]
+
+    def same_swim(row, swimmer_id, canonical):
+        return (row.swimmer_id == swimmer_id
+                and canonicalize_event(row.event) == canonical
+                and (row.course or course) == course)
+
+    added = already = corrected = 0
+    for swim, swimmer in matched:
+        canonical = canonicalize_event(swim["event"])
+        seconds = round(swim["seconds"], 2)
+        candidates = [row for row in existing if same_swim(row, swimmer.id, canonical)]
+        twin = next((row for row in candidates if round(row.time_seconds or 0, 2) == seconds), None)
+        if twin:
+            if twin.meet_id is None:
+                twin.meet_id = meet.id
+            if twin.wa_points is None and swim["wa_points"]:
+                twin.wa_points = swim["wa_points"]
+            already += 1
+            continue
+        # The same race typed in on this gala with a different time: the
+        # published result wins.
+        typed = next(
+            (row for row in candidates
+             if row.meet_id == meet.id and (row.round or "") == (swim["round"] or "")),
+            None,
+        )
+        if typed:
+            typed.time_seconds = seconds
+            typed.wa_points = swim["wa_points"]
+            corrected += 1
+            continue
+        distance, stroke = event_parts(swim["event"])
+        row = models.SwimTime(
+            swimmer_id=swimmer.id,
+            event=f"{canonical.title()} {course}",
+            stroke=stroke.title() if stroke else None,
+            course=course,
+            distance=distance,
+            time_seconds=seconds,
+            wa_points=swim["wa_points"],
+            date=meet.date,
+            meet=meet.name,
+            venue=meet.location,
+            level=meet.level,
+            round=swim["round"],
+            source="results_page",
+            meet_id=meet.id,
+        )
+        db.add(row)
+        existing.append(row)
+        added += 1
+
+    db.commit()
+    return {
+        "meet_title": titles[0] if titles else None,
+        "course": course,
+        "swimmers_matched": len(swimmer_ids),
+        "times_added": added,
+        "already_in_app": already,
+        "times_corrected": corrected,
+        "not_timed": parsed["not_timed"],
+        "swimmers_not_in_app": sorted(matcher.not_in_app),
+        "swimrankings_ids_linked": len(matcher.ids_to_link),
+        **get_meet_results(meet_id, db),
+    }
 
 
 @router.post("/{meet_id}/dismiss-results-prompt")

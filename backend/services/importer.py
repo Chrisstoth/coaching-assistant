@@ -6,6 +6,7 @@ import io
 import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, time as dt_time, timedelta
+from functools import lru_cache
 from typing import Optional
 import pandas as pd
 from openpyxl import load_workbook
@@ -13,6 +14,7 @@ from rapidfuzz import process as fuzzy_process
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
+from backend.services.event_normalizer import canonicalize_event
 
 
 # ---------------------------------------------------------------------------
@@ -60,12 +62,19 @@ def parse_date_value(value) -> Optional[date]:
         return value.date()
     if isinstance(value, date):
         return value
-    text = str(value).strip()
-    parsed = (
-        pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text)
-        else pd.to_datetime(text, dayfirst=True, errors="coerce")
-    )
+    return _parse_date_text(str(value).strip())
+
+
+@lru_cache(maxsize=8192)
+def _parse_date_text(text: str) -> Optional[date]:
+    # The common forms directly: asking pandas for each of tens of thousands
+    # of rows in a results file is most of an import's time.
+    for pattern in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            pass
+    parsed = pd.to_datetime(text, dayfirst=True, errors="coerce")
     return None if pd.isna(parsed) else parsed.date()
 
 
@@ -332,14 +341,23 @@ CLUB_RESULTS_REQUIRED_COLUMNS = {"Time", "Date", "Name", "Stroke", "Course"}
 def read_swims_table(file_content: bytes, filename: str = "") -> pd.DataFrame:
     """Read a swims export as .xlsx or .csv (comma, tab or semicolon separated)."""
     if (filename or "").lower().endswith(".csv"):
+        lines = file_content[:4096].decode("latin-1").splitlines() if file_content else []
+        first_line = lines[0] if lines else ""
+        separator = max((",", "\t", ";"), key=first_line.count)
         last_error = None
-        for encoding in ("utf-8-sig", "latin-1"):
-            try:
-                df = pd.read_csv(io.BytesIO(file_content), sep=None, engine="python", encoding=encoding)
+        df = None
+        # The C reader with the separator from the header line is many times
+        # faster than letting pandas sniff, which matters for a whole-club file.
+        for options in ({"sep": separator}, {"sep": None, "engine": "python"}):
+            for encoding in ("utf-8-sig", "latin-1"):
+                try:
+                    df = pd.read_csv(io.BytesIO(file_content), encoding=encoding, **options)
+                    break
+                except Exception as exc:  # try the next encoding / reader
+                    last_error = exc
+            if df is not None:
                 break
-            except Exception as exc:  # try the next encoding
-                last_error = exc
-        else:
+        if df is None:
             raise ValueError(f"Could not read CSV: {last_error}")
     else:
         try:
@@ -347,6 +365,13 @@ def read_swims_table(file_content: bytes, filename: str = "") -> pd.DataFrame:
         except Exception as exc:
             raise ValueError(f"Could not read workbook: {exc}") from exc
     df.columns = [str(c).strip() for c in df.columns]
+    # A hand-kept file can lose its first heading (e.g. "Time" cut to "n");
+    # if that column holds race times, it is the Time column.
+    if "Time" not in df.columns and len(df.columns) and not df.empty:
+        sample = [value for value in df.iloc[:50, 0].tolist() if clean_optional_text(value)]
+        timed = [value for value in sample if re.fullmatch(r"(?:\d{1,2}:)?\d{1,2}:?\d{1,2}\.\d{1,2}", str(value).strip())]
+        if sample and len(timed) >= 0.9 * len(sample):
+            df = df.rename(columns={df.columns[0]: "Time"})
     return df
 
 
@@ -355,7 +380,8 @@ def _parse_swim_rows(df: pd.DataFrame, require_id: bool = True) -> tuple[list[di
     parsed_rows = []
     errors = []
     split_cols = [c for c in df.columns if re.fullmatch(r"Split \d+", c)]
-    for row_number, (_, row) in enumerate(df.iterrows(), start=2):
+    for position, (index, row) in enumerate(df.iterrows()):
+        row_number = index + 2 if isinstance(index, int) else position + 2
         external_id = clean_swimrankings_id(row.get("ID"))
         name = clean_optional_text(row.get("Name"))
         event_base = clean_optional_text(row.get("Stroke"))
@@ -404,6 +430,7 @@ def _parse_swim_rows(df: pd.DataFrame, require_id: bool = True) -> tuple[list[di
             "round": clean_optional_text(row.get("Round")),
             "splits": splits if any(value is not None for value in splits) else None,
             "age_at_swim": optional_float("Age"),
+            "swimmer": row.get("_swimmer"),
         })
     return parsed_rows, errors
 
@@ -433,13 +460,83 @@ def _name_key(name: Optional[str]) -> str:
     return " ".join((name or "").lower().split())
 
 
+class SquadMatcher:
+    """
+    Find which app swimmer a results row belongs to, without creating anyone.
+
+    A swimrankings / Swim England member number matches first. An exact name
+    only counts when it cannot be a different person: if both sides carry a
+    number they would have matched on it. A name match with a number in the
+    results remembers that number (ids_to_link) so it can be saved on the
+    swimmer. Rows for people not in the app are counted by name.
+    """
+
+    def __init__(self, swimmers):
+        self.by_id = {s.swimrankings_id: s for s in swimmers if s.swimrankings_id}
+        self.by_name: dict[str, list] = {}
+        for swimmer in swimmers:
+            self.by_name.setdefault(_name_key(swimmer.name), []).append(swimmer)
+        self.resolved: dict[str, Optional[models.Swimmer]] = {}
+        self.ids_to_link: dict[int, str] = {}
+        self.not_in_app: dict[str, int] = {}
+
+    def find(self, external_id: Optional[str], name: Optional[str]):
+        person_key = f"id:{external_id}" if external_id else f"name:{_name_key(name)}"
+        if person_key not in self.resolved:
+            swimmer = self.by_id.get(external_id) if external_id else None
+            if swimmer is None and name:
+                candidates = [
+                    s for s in self.by_name.get(_name_key(name), [])
+                    if not external_id or not s.swimrankings_id
+                ]
+                if len(candidates) == 1:
+                    swimmer = candidates[0]
+                    if external_id and swimmer.id not in self.ids_to_link:
+                        self.ids_to_link[swimmer.id] = external_id
+                        self.by_id[external_id] = swimmer
+            self.resolved[person_key] = swimmer
+        swimmer = self.resolved[person_key]
+        if swimmer is None and name:
+            self.not_in_app[name] = self.not_in_app.get(name, 0) + 1
+        return swimmer
+
+    def link_ids(self, swimmers) -> None:
+        for swimmer in swimmers:
+            if swimmer.id in self.ids_to_link:
+                swimmer.swimrankings_id = self.ids_to_link[swimmer.id]
+
+
+@lru_cache(maxsize=4096)
+def _event_key(event: str) -> str:
+    return canonicalize_event(event)
+
+
+def _course_of(course: Optional[str], event: Optional[str]) -> Optional[str]:
+    course = (course or "").upper()
+    if course in ("SCM", "LCM"):
+        return course
+    event = (event or "").upper()
+    return "LCM" if "LCM" in event else "SCM" if "SCM" in event else None
+
+
+def _swim_key(swimmer_id, event, course, swim_date, time_seconds):
+    """
+    One swim, however it reached the app: the gala name and the way the event
+    is written ("100 Free", "100m Freestyle SCM") don't matter; the swimmer,
+    event, course, day and time do.
+    """
+    return (swimmer_id, _event_key(event or ""), _course_of(course, event), swim_date,
+            round(float(time_seconds), 2))
+
+
 def import_club_results(file_content: bytes, filename: str, db: DBSession) -> dict:
     """
     Import a whole-club results export, keeping only swimmers already in the app.
 
     Swimmers are matched by swimrankings ID, or by exact name when the ID is not
     known yet. Nobody is created, renamed, moved squad or marked inactive, and no
-    existing times are removed: new swims are added and repeats are skipped.
+    existing times are removed: new swims are added, and swims the app already
+    has (from any import, or typed in from a gala) are skipped.
     """
     df = read_swims_table(file_content, filename)
     missing = sorted(CLUB_RESULTS_REQUIRED_COLUMNS - set(df.columns))
@@ -448,72 +545,87 @@ def import_club_results(file_content: bytes, filename: str, db: DBSession) -> di
     if df.empty:
         raise ValueError("Club results file contains no swims")
 
+    swimmers = db.query(models.Swimmer).all()
+    matcher = SquadMatcher(swimmers)
+
+    # Work out who each row is before reading any swims: in a whole-club file
+    # most rows belong to swimmers who aren't in the app, and reading their
+    # times and dates would be nearly all of the work.
+    id_column = df["ID"] if "ID" in df.columns else [None] * len(df)
+    row_swimmers = [
+        matcher.find(clean_swimrankings_id(raw_id), clean_optional_text(raw_name))
+        for raw_id, raw_name in zip(id_column, df["Name"])
+    ]
+    resolved, ids_to_link, not_in_app = matcher.resolved, matcher.ids_to_link, matcher.not_in_app
+
+    keep = [swimmer is not None for swimmer in row_swimmers]
+    df = df.assign(_swimmer=row_swimmers)[keep]
+    if df.empty:
+        raise ValueError(
+            "None of the swimmers in this file are in the app. Check it's the right file, "
+            "and that names or swimrankings IDs match the swimmers in the app."
+        )
+
     parsed_rows, errors = _parse_swim_rows(df, require_id=False)
     if not parsed_rows:
-        raise ValueError("Club results file contains no valid swim rows")
+        raise ValueError("Club results file contains no valid swims for swimmers in the app")
     if len(errors) > max(20, int(len(df) * 0.05)):
         raise ValueError(f"Too many invalid rows ({len(errors)} of {len(df)}); no data was changed")
 
-    swimmers = db.query(models.Swimmer).all()
-    by_id = {s.swimrankings_id: s for s in swimmers if s.swimrankings_id}
-    by_name: dict[str, list] = {}
-    for swimmer in swimmers:
-        by_name.setdefault(_name_key(swimmer.name), []).append(swimmer)
-
-    resolved: dict[str, Optional[models.Swimmer]] = {}
-    ids_linked = 0
-    not_in_app: dict[str, int] = {}
-    for row in parsed_rows:
-        external_id = row["external_id"]
-        person_key = f"id:{external_id}" if external_id else f"name:{_name_key(row['name'])}"
-        if person_key not in resolved:
-            swimmer = by_id.get(external_id) if external_id else None
-            if swimmer is None:
-                # An exact name only counts when it cannot be a different person:
-                # if both sides carry a swimrankings ID they would have matched above.
-                candidates = [
-                    s for s in by_name.get(_name_key(row["name"]), [])
-                    if not external_id or not s.swimrankings_id
-                ]
-                if len(candidates) == 1:
-                    swimmer = candidates[0]
-                    if external_id and not swimmer.swimrankings_id:
-                        swimmer.swimrankings_id = external_id
-                        by_id[external_id] = swimmer
-                        ids_linked += 1
-            resolved[person_key] = swimmer
-        row["swimmer"] = resolved[person_key]
-        if row["swimmer"] is None:
-            not_in_app[row["name"]] = not_in_app.get(row["name"], 0) + 1
+    matcher.link_ids(swimmers)
 
     matched_ids = {s.id for s in resolved.values() if s is not None}
-    known_keys = {
-        (swimmer_id, event, swim_date, time_seconds)
-        for swimmer_id, event, swim_date, time_seconds in (
-            db.query(
-                models.SwimTime.swimmer_id,
-                models.SwimTime.event,
-                models.SwimTime.date,
-                models.SwimTime.time_seconds,
-            )
-            .filter(models.SwimTime.swimmer_id.in_(matched_ids))
-            .all()
+    # Each swim the app already has: None once it has splits, else the id of
+    # the stored swim (or the new swim from this file) that still lacks them.
+    known: dict[tuple, object] = {}
+    for swim_id, swimmer_id, event, course, swim_date, seconds, splits in (
+        db.query(
+            models.SwimTime.id,
+            models.SwimTime.swimmer_id,
+            models.SwimTime.event,
+            models.SwimTime.course,
+            models.SwimTime.date,
+            models.SwimTime.time_seconds,
+            models.SwimTime.splits,
         )
-    } if matched_ids else set()
+        .filter(models.SwimTime.swimmer_id.in_(matched_ids), models.SwimTime.time_seconds.isnot(None))
+        .all()
+    ):
+        key = _swim_key(swimmer_id, event, course, swim_date, seconds)
+        if known.get(key) is None:
+            known[key] = None if splits else swim_id
 
     imported = 0
     duplicate_rows = 0
+    splits_for: dict[int, dict] = {}
     for row in parsed_rows:
         swimmer = row["swimmer"]
-        if swimmer is None:
-            continue
-        key = (swimmer.id, row["event"], row["date"], row["time_seconds"])
-        if key in known_keys:
+        key = _swim_key(swimmer.id, row["event"], row["course"], row["date"], row["time_seconds"])
+        # A swim the app holds without a course still counts as the same swim.
+        same = key if key in known else key[:2] + (None,) + key[3:]
+        if same in known:
             duplicate_rows += 1
+            # Already here, but without the splits this file has: add them.
+            needs_splits = known[same]
+            if row["splits"] and needs_splits is not None:
+                if isinstance(needs_splits, models.SwimTime):
+                    needs_splits.splits = row["splits"]
+                else:
+                    splits_for[needs_splits] = row
+                known[same] = None
             continue
-        known_keys.add(key)
-        db.add(_swim_time_from_row(row, swimmer.id, "club_results"))
+        swim = _swim_time_from_row(row, swimmer.id, "club_results")
+        known[key] = None if row["splits"] else swim
+        db.add(swim)
         imported += 1
+
+    for start in range(0, len(splits_for), 500):
+        ids = list(splits_for)[start:start + 500]
+        for swim in db.query(models.SwimTime).filter(models.SwimTime.id.in_(ids)).all():
+            row = splits_for[swim.id]
+            swim.splits = row["splits"]
+            if swim.wa_points is None and row.get("wa_points") is not None:
+                swim.wa_points = row["wa_points"]
 
     db.commit()
     return {
@@ -521,10 +633,11 @@ def import_club_results(file_content: bytes, filename: str, db: DBSession) -> di
         "swimmers_matched": len(matched_ids),
         "times_imported": imported,
         "duplicate_rows_skipped": duplicate_rows,
+        "splits_added": len(splits_for),
         "swimmers_not_in_app": len(not_in_app),
         "rows_for_swimmers_not_in_app": sum(not_in_app.values()),
         "skipped_swimmer_names": sorted(not_in_app),
-        "swimrankings_ids_linked": ids_linked,
+        "swimrankings_ids_linked": len(ids_to_link),
         "invalid_rows_skipped": len(errors),
         "errors": errors[:20],
     }

@@ -292,7 +292,10 @@ function ClubResultsImport({ setResult, setLoading, loading }) {
             {summary.times_imported} new time{summary.times_imported === 1 ? '' : 's'} for {summary.swimmers_matched} of your swimmers
           </p>
           {summary.duplicate_rows_skipped > 0 && (
-            <p className="text-pool-400 text-xs">{summary.duplicate_rows_skipped} already in the app — skipped</p>
+            <p className="text-pool-400 text-xs">
+              {summary.duplicate_rows_skipped} already in the app — skipped
+              {summary.splits_added > 0 && ` (splits added to ${summary.splits_added} that had none)`}
+            </p>
           )}
           {summary.swimrankings_ids_linked > 0 && (
             <p className="text-pool-400 text-xs">

@@ -5,6 +5,7 @@ import { SWIM_EVENTS } from '../swimEvents'
 import { slimPastedHtml } from '../pastedPage'
 import AskTheStaff from '../components/AskTheStaff'
 
+const ROUND_LABELS = { H: 'heat', F: 'final', S: 'semi', A: 'A final', B: 'B final' }
 const LEVEL_LABELS = { club: 'Club', regional: 'Regional', national: 'National', international: 'International' }
 
 const PRIORITY_COLORS = {
@@ -217,16 +218,45 @@ function MeetResultsPanel({ meetId, meet }) {
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [errors, setErrors] = useState([])
+  const [pastedPages, setPastedPages] = useState([])
+  const [pasteCourse, setPasteCourse] = useState('')
+  const [readingPaste, setReadingPaste] = useState(false)
+  const [pasteSummary, setPasteSummary] = useState(null)
 
-  const rowKey = (row) => `${row.swimmer_id}::${row.canonical_event}`
+  const rowKey = (row) => `${row.swimmer_id}::${row.canonical_event}::${row.round || ''}`
 
-  const load = async () => {
-    const result = await api.getMeetResults(meetId)
-    setData(result)
+  const showResults = (result) => {
+    setData({ meet: result.meet, rows: result.rows, recorded_count: result.recorded_count })
     setTimes(Object.fromEntries(result.rows.map(row => [rowKey(row), row.recorded_time || ''])))
   }
 
+  const load = async () => showResults(await api.getMeetResults(meetId))
+
   useEffect(() => { load().catch(() => {}) }, [meetId])
+
+  // Each paste adds a page, so a club whose results run over several pages
+  // can paste them one after another.
+  const handlePasteResults = (e) => {
+    e.preventDefault()
+    const html = slimPastedHtml(e.clipboardData.getData('text/html'))
+    const text = e.clipboardData.getData('text/plain')
+    if (!html && !text.trim()) return
+    setPastedPages(pages => [...pages, { html, text }])
+    setPasteSummary(null)
+  }
+
+  const readPastedResults = async () => {
+    setReadingPaste(true)
+    try {
+      const result = await api.importPastedResults(meetId, pastedPages, pasteCourse)
+      setPasteSummary(result)
+      setPastedPages([])
+      showResults(result)
+    } catch (e) {
+      alert('Could not read the results: ' + e.message)
+    }
+    setReadingPaste(false)
+  }
 
   const save = async () => {
     setSaving(true)
@@ -239,15 +269,13 @@ function MeetResultsPanel({ meetId, meet }) {
         time: times[rowKey(row)] || '',
       })))
       setErrors(result.errors || [])
-      setData({ meet: result.meet, rows: result.rows, recorded_count: result.recorded_count })
-      setTimes(Object.fromEntries(result.rows.map(row => [rowKey(row), row.recorded_time || ''])))
+      showResults(result)
     } catch (e) { alert(`Could not save results: ${e.message}`) }
     setSaving(false)
   }
 
-  if (!data || !data.rows.length) return null
-
   const meetIsOver = meet.date && new Date((meet.date_to || meet.date) + 'T23:59:59') < new Date()
+  if (!data || (!data.rows.length && !meetIsOver)) return null
   const bySwimmer = data.rows.reduce((acc, row) => {
     (acc[row.swimmer_name] = acc[row.swimmer_name] || []).push(row)
     return acc
@@ -270,6 +298,69 @@ function MeetResultsPanel({ meetId, meet }) {
       </div>
 
       {open && (
+        <div className="rounded-lg border border-pool-700/60 p-3 space-y-2">
+          <p className="text-xs font-semibold text-pool-300">Paste from swimmingresults.org</p>
+          <p className="text-[11px] text-pool-500 leading-relaxed">
+            On swimmingresults.org open Results by club, choose your club and this meet, select the whole
+            page and copy it, then paste below. If the results run over more than one page, paste each one.
+            Only swimmers in the app are added, and times already here are skipped.
+          </p>
+          {!meet.course && (
+            <select value={pasteCourse} onChange={e => setPasteCourse(e.target.value)}
+              className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-accent-500 focus:outline-none">
+              <option value="">Course — read from the meet name</option>
+              <option value="SCM">Short course (25m)</option>
+              <option value="LCM">Long course (50m)</option>
+            </select>
+          )}
+          <textarea
+            rows={2}
+            value=""
+            onChange={() => {}}
+            onPaste={handlePasteResults}
+            placeholder={pastedPages.length
+              ? `✓ ${pastedPages.length} page${pastedPages.length === 1 ? '' : 's'} pasted — paste the next page, or read them`
+              : 'Tap and hold here, then Paste'}
+            className={`w-full rounded-lg px-3 py-2 text-sm border focus:outline-none resize-none ${
+              pastedPages.length
+                ? 'bg-emerald-900/20 border-emerald-700 placeholder:text-emerald-300'
+                : 'bg-pool-700 border-pool-600 focus:border-accent-500'
+            }`}
+          />
+          <div className="flex gap-2">
+            <button onClick={readPastedResults} disabled={readingPaste || !pastedPages.length}
+              className="flex-1 bg-accent-600 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold">
+              {readingPaste ? 'Reading…' : 'Add pasted results'}
+            </button>
+            {pastedPages.length > 0 && !readingPaste && (
+              <button onClick={() => setPastedPages([])} className="px-3 text-xs text-pool-400">Clear</button>
+            )}
+          </div>
+          {pasteSummary && (
+            <div className="rounded-lg bg-emerald-900/20 border border-emerald-800/40 px-3 py-2 space-y-1">
+              <p className="text-[11px] text-emerald-300">
+                {pasteSummary.times_added} time{pasteSummary.times_added === 1 ? '' : 's'} added
+                for {pasteSummary.swimmers_matched} swimmer{pasteSummary.swimmers_matched === 1 ? '' : 's'}
+                {pasteSummary.already_in_app > 0 && ` · ${pasteSummary.already_in_app} already in the app`}
+                {pasteSummary.times_corrected > 0 && ` · ${pasteSummary.times_corrected} corrected to the published time`}
+              </p>
+              {pasteSummary.meet_title && (
+                <p className="text-[11px] text-pool-400">From: {pasteSummary.meet_title}</p>
+              )}
+              {pasteSummary.swimmers_not_in_app.length > 0 && (
+                <p className="text-[11px] text-pool-500">
+                  Not in the app, left out: {pasteSummary.swimmers_not_in_app.join(', ')}
+                </p>
+              )}
+              {pasteSummary.not_timed.length > 0 && (
+                <p className="text-[11px] text-pool-500">No time: {pasteSummary.not_timed.join('; ')}</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {open && data.rows.length > 0 && (
         <div className="space-y-3">
           <p className="text-[11px] text-pool-500">
             Enter times as 1:02.45 or 62.45. Saved times go into each swimmer&apos;s times history.
@@ -282,6 +373,7 @@ function MeetResultsPanel({ meetId, meet }) {
                 <div key={rowKey(row)} className="flex items-center gap-2">
                   <span className="flex-1 text-xs text-pool-400 min-w-0 truncate">
                     {row.event}
+                    {row.round && <span className="text-pool-500"> · {ROUND_LABELS[row.round] || row.round}</span>}
                     {row.target_time && <span className="text-pool-600"> · target {row.target_time}</span>}
                   </span>
                   <input
@@ -313,7 +405,9 @@ function MeetResultsPanel({ meetId, meet }) {
         <div className="divide-y divide-pool-700/40">
           {data.rows.filter(row => row.recorded_time).slice(0, 8).map(row => (
             <div key={rowKey(row)} className="flex items-center justify-between py-1.5">
-              <span className="text-xs text-pool-300 min-w-0 truncate">{row.swimmer_name} · {row.event}</span>
+              <span className="text-xs text-pool-300 min-w-0 truncate">
+                {row.swimmer_name} · {row.event}{row.round ? ` · ${ROUND_LABELS[row.round] || row.round}` : ''}
+              </span>
               <span className="text-sm text-pool-100 tabular-nums shrink-0 ml-2">{row.recorded_time}</span>
             </div>
           ))}

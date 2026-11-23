@@ -2340,6 +2340,152 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(second.json()["times_imported"], 0)
         self.assertEqual(second.json()["duplicate_rows_skipped"], 2)
 
+        # The same swim written differently (gala name, event spelling, course
+        # letters, time format) is still the same swim; a new one is added.
+        respelled = self.client.post(
+            "/times/import/combined", headers=self.headers,
+            data={"mode": "club"},
+            files={"file": ("club.csv", (
+                "Time;Date;Name;Stroke;Course;Meet\n"
+                "65.2;2026-06-02;Club Known Two;100m Back;LC;Summer Champs\n"
+                "1:04.90;2026-07-10;Club Known Two;100m Back;LC;Summer Champs\n"
+            ).encode(), "text/csv")},
+        )
+        self.assertEqual(respelled.status_code, 200, respelled.text)
+        self.assertEqual(respelled.json()["duplicate_rows_skipped"], 1)
+        self.assertEqual(respelled.json()["times_imported"], 1)
+
+        nobody = self.client.post(
+            "/times/import/combined", headers=self.headers,
+            data={"mode": "club"},
+            files={"file": ("club.csv", b"Time,Date,Name,Stroke,Course\n30.00,01/06/2026,Nobody Here,50 Free,S\n", "text/csv")},
+        )
+        self.assertEqual(nobody.status_code, 400, nobody.text)
+        self.assertIn("None of the swimmers", nobody.json()["detail"])
+
+        # A file with splits fills them in on swims already here without them,
+        # even when its first heading has been cut short ("n" for "Time"), and
+        # a swim listed twice in one file keeps the copy that has splits.
+        with_splits = self.client.post(
+            "/times/import/combined", headers=self.headers,
+            data={"mode": "club"},
+            files={"file": ("club.csv", (
+                "n,Date,Name,Stroke,Course,Split 1,Split 2\n"
+                "01:05.20,02/06/2026,Club Known Two,100 Backstroke,L,00:31.8,00:33.4\n"
+                "01:03.00,20/07/2026,Club Known Two,100 Backstroke,L,,\n"
+                "01:03.00,20/07/2026,Club Known Two,100 Backstroke,L,00:30.9,00:32.1\n"
+            ).encode(), "text/csv")},
+        )
+        self.assertEqual(with_splits.status_code, 200, with_splits.text)
+        self.assertEqual(with_splits.json()["times_imported"], 1)
+        self.assertEqual(with_splits.json()["duplicate_rows_skipped"], 2)
+        self.assertEqual(with_splits.json()["splits_added"], 1)
+        two_times = self.client.get(f"/swimmers/{by_name.json()['id']}/times", headers=self.headers).json()
+        splits = {t["time_seconds"]: t["splits"] for t in two_times}
+        self.assertEqual(splits[65.2], [31.8, 33.4])
+        self.assertEqual(splits[63.0], [30.9, 32.1])
+
+    def test_pasted_swimmingresults_page_adds_gala_results_once(self):
+        def make(name, swimrankings_id=None):
+            response = self.client.post("/swimmers", headers=self.headers, json={
+                "name": name, "gender": "M", "swimrankings_id": swimrankings_id,
+            })
+            self.assertEqual(response.status_code, 201, response.text)
+            return response.json()["id"]
+
+        jacob = make("Jacob Pastetest", "7356331")
+        thomas = make("Thomas Pastetest")  # no number yet: matched by name, number saved
+        meet = self.client.post("/meets", headers=self.headers, json={
+            "name": "BUCS SC", "date": "2026-11-14", "date_to": "2026-11-16",
+        })
+        self.assertEqual(meet.status_code, 201, meet.text)
+        meet_id = meet.json()["id"]
+
+        # Already in the app from a results file, under a different gala name and event spelling.
+        with SessionLocal() as db:
+            db.add(models.SwimTime(
+                swimmer_id=jacob, event="50m Free", course="SCM", time_seconds=23.41,
+                date=date(2026, 11, 15), meet="BUCS 2026", source="club_results",
+            ))
+            db.commit()
+
+        header = "Member\tName\tYoB\tEligibility Category\tClub Swum\tEvent\tRound\tTime\tWA Pts"
+        top = "Results of Meet by Club\nClub  \nBasildon Ph\nBUCS Short Course Championships 2026-27 - NE262738\n\n"
+        page_one = top + "\n".join([
+            header,
+            "7356331\tJacob Pastetest\t07\tOpen/Male\tBasildon Ph\t50 Freestyle\tH\t23.41\t614",
+            "7356331\tJacob Pastetest\t07\tOpen/Male\tBasildon Ph\t100 Freestyle\tH\t51.08\t676",
+            "7356331\tJacob Pastetest\t07\tOpen/Male\tBasildon Ph\t100 Freestyle\tF\t50.90\t683",
+            "7264439\tThomas Pastetest\t06\tOpen/Male\tBasildon Ph\t200 Freestyle\tH\t2:07.40\t463",
+            "7999999\tSomeone Elsewhere\t06\tOpen/Male\tBasildon Ph\t200 Freestyle\tH\t2:10.00\t440",
+        ])
+        page_two = top + "\n".join([
+            header,
+            "7264439\tThomas Pastetest\t06\tOpen/Male\tBasildon Ph\t50 Backstroke\tH\t29.69\t412",
+            "7264439\tThomas Pastetest\t06\tOpen/Male\tBasildon Ph\t100 Backstroke\tH\tDQ\t",
+        ])
+
+        def paste(pages, course=None, target=meet_id):
+            return self.client.post(
+                f"/meets/{target}/results/paste", headers=self.headers,
+                json={"pages": pages, "course": course},
+            )
+
+        first = paste([{"text": page_one}, {"text": page_two}])
+        self.assertEqual(first.status_code, 200, first.text)
+        body = first.json()
+        self.assertEqual(body["course"], "SCM")  # read from "Short Course" in the meet name
+        self.assertEqual(body["meet_title"], "BUCS Short Course Championships 2026-27 - NE262738")
+        self.assertEqual(body["times_added"], 4)
+        self.assertEqual(body["already_in_app"], 1)
+        self.assertEqual(body["swimmers_matched"], 2)
+        self.assertEqual(body["swimmers_not_in_app"], ["Someone Elsewhere"])
+        self.assertEqual(body["swimrankings_ids_linked"], 1)
+        self.assertEqual(len(body["not_timed"]), 1)
+        self.assertEqual(body["recorded_count"], 5)
+        rounds = sorted((row["event"], row["round"]) for row in body["rows"] if row["swimmer_id"] == jacob)
+        self.assertEqual(rounds, [("100 Freestyle SCM", "F"), ("100 Freestyle SCM", "H"), ("50m Free", None)])
+
+        with SessionLocal() as db:
+            self.assertEqual(db.get(models.Swimmer, thomas).swimrankings_id, "7264439")
+            self.assertEqual(db.get(models.Meet, meet_id).course, "SCM")
+            jacob_times = db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == jacob).all()
+            self.assertEqual(len(jacob_times), 3)
+            self.assertTrue(all(row.meet_id == meet_id for row in jacob_times))
+
+        # Pasting the same pages again adds nothing.
+        again = paste([{"text": page_one}, {"text": page_two}])
+        self.assertEqual(again.status_code, 200, again.text)
+        self.assertEqual((again.json()["times_added"], again.json()["already_in_app"]), (0, 5))
+
+        # A phone copies each cell on its own line, so the HTML table is read instead.
+        long_meet = self.client.post("/meets", headers=self.headers, json={"name": "Summer LC", "date": "2026-07-01"})
+        long_id = long_meet.json()["id"]
+        cells = ["7356331", "Jacob Pastetest", "07", "Open/Male", "Basildon Ph", "50 Freestyle", "H", "24.10", "560"]
+        html = (
+            "<h2>County Champs 2026 - 1ER261234</h2><table><tr>"
+            + "".join(f"<th>{h}</th>" for h in header.split("\t")) + "</tr><tr>"
+            + "".join(f"<td>{c}</td>" for c in cells) + "</tr></table>"
+        )
+        no_course = paste([{"html": html, "text": "\n".join(cells)}], target=long_id)
+        self.assertEqual(no_course.status_code, 400, no_course.text)
+        self.assertIn("short course or long course", no_course.json()["detail"])
+        from_html = paste([{"html": html, "text": "\n".join(cells)}], course="LCM", target=long_id)
+        self.assertEqual(from_html.status_code, 200, from_html.text)
+        self.assertEqual(from_html.json()["times_added"], 1)
+        self.assertEqual(from_html.json()["rows"][0]["event"], "50 Freestyle LCM")
+
+        # Text that lost its tabs (e.g. copied from a PDF) still reads.
+        loose = page_one.replace("\t", " ")
+        self.assertEqual(paste([{"text": loose}]).json()["already_in_app"], 4)
+
+        mixed = paste([{"text": page_one}, {"html": html}])
+        self.assertEqual(mixed.status_code, 400, mixed.text)
+        self.assertIn("more than one meet", mixed.json()["detail"])
+
+        nothing = paste([{"text": "Results of Meet by Club"}])
+        self.assertEqual(nothing.status_code, 400, nothing.text)
+
     def test_gala_organiser_entries_page_reads_squad_entries_and_timetable(self):
         page = """<html><body><div class='container'><h2>Test Qualifier 2026</h2>
         <ul><li>Session 1 (28/11/2026 02:15 PM) - Warm Up at 01:30 PM</li>
