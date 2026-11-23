@@ -297,6 +297,11 @@ function ClubResultsImport({ setResult, setLoading, loading }) {
               {summary.splits_added > 0 && ` (splits added to ${summary.splits_added} that had none)`}
             </p>
           )}
+          {summary.swims_linked_to_galas > 0 && (
+            <p className="text-pool-400 text-xs">
+              {summary.swims_linked_to_galas} swim{summary.swims_linked_to_galas === 1 ? '' : 's'} added to the galas they were swum at
+            </p>
+          )}
           {summary.swimrankings_ids_linked > 0 && (
             <p className="text-pool-400 text-xs">
               Linked {summary.swimrankings_ids_linked} swimmer{summary.swimrankings_ids_linked === 1 ? '' : 's'} to their swimrankings ID by name

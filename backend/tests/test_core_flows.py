@@ -2385,6 +2385,52 @@ class CoreFlowTests(unittest.TestCase):
         self.assertEqual(splits[65.2], [31.8, 33.4])
         self.assertEqual(splits[63.0], [30.9, 32.1])
 
+    def test_imported_swims_are_tied_to_the_gala_they_were_swum_at(self):
+        swimmer = self.client.post("/swimmers", headers=self.headers, json={
+            "name": "Gala Linktest", "gender": "F", "swimrankings_id": "7400001",
+        })
+        self.assertEqual(swimmer.status_code, 201, swimmer.text)
+        swimmer_id = swimmer.json()["id"]
+        day = date.today() - timedelta(days=3)
+        meet = self.client.post("/meets", headers=self.headers, json={
+            "name": "Winter Open", "date": day.isoformat(), "date_to": (day + timedelta(days=1)).isoformat(),
+            "course": "SCM",
+        })
+        meet_id = meet.json()["id"]
+        target = self.client.post(f"/meets/{meet_id}/targets", headers=self.headers, json={
+            "swimmer_id": swimmer_id, "events": ["100 Freestyle", "50 Backstroke"],
+        })
+        self.assertEqual(target.status_code, 201, target.text)
+        countdowns = self.client.get("/dashboard/meet-countdowns", headers=self.headers).json()
+        self.assertIn(meet_id, [item["meet_id"] for item in countdowns["awaiting_results"]])
+
+        when = lambda d: d.strftime("%d/%m/%Y")  # noqa: E731
+        payload = (
+            "Time,Date,Name,ID,Stroke,Course,Meet\n"
+            # The file calls the gala something else entirely.
+            f"1:02.10,{when(day)},Gala Linktest,7400001,100 Freestyle,S,WO 2026 - 1ER261111\n"
+            f"33.40,{when(day + timedelta(days=1))},Gala Linktest,7400001,50 Backstroke,S,WO 2026 - 1ER261111\n"
+            # Not one of her events here, another course, and the week before: left alone.
+            f"2:30.00,{when(day)},Gala Linktest,7400001,200 Breaststroke,S,WO 2026 - 1ER261111\n"
+            f"1:05.00,{when(day)},Gala Linktest,7400001,100 Freestyle,L,Other LC Meet\n"
+            f"1:03.00,{when(day - timedelta(days=7))},Gala Linktest,7400001,100 Freestyle,S,Earlier Meet\n"
+        ).encode()
+        imported = self.client.post(
+            "/times/import/combined", headers=self.headers, data={"mode": "club"},
+            files={"file": ("club.csv", payload, "text/csv")},
+        )
+        self.assertEqual(imported.status_code, 200, imported.text)
+        self.assertEqual(imported.json()["times_imported"], 5)
+        self.assertEqual(imported.json()["swims_linked_to_galas"], 2)
+
+        results = self.client.get(f"/meets/{meet_id}/results", headers=self.headers).json()
+        self.assertEqual(results["recorded_count"], 2)
+        self.assertEqual(sorted(row["recorded_time"] for row in results["rows"] if row["recorded_time"]),
+                         ["1:02.10", "33.40"])
+        countdowns = self.client.get("/dashboard/meet-countdowns", headers=self.headers).json()
+        self.assertNotIn(meet_id, [item["meet_id"] for item in countdowns["awaiting_results"]],
+                         "The gala stops asking for results it already has.")
+
     def test_pasted_swimmingresults_page_adds_gala_results_once(self):
         def make(name, swimrankings_id=None):
             response = self.client.post("/swimmers", headers=self.headers, json={

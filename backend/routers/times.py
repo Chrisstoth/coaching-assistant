@@ -8,6 +8,7 @@ from backend import models
 from backend.services.importer import import_swimrankings_csv, import_combined_swims_xlsx, import_club_results
 from backend.services.qualification_service import recalculate_standard_set
 from backend.services.lanewatch import pair_races_quietly
+from backend.services.meet_links import link_swims_to_meets
 
 router = APIRouter()
 
@@ -55,6 +56,8 @@ async def import_combined_workbook(
                 filename=filename,
             )
         result["qualification_sets_refreshed"] = _refresh_confirmed_qualification_sets(db)
+        # Tie the new swims to the galas in the app they were swum at.
+        result["swims_linked_to_galas"] = link_swims_to_meets(db)
         # New swims may be races already analysed in LaneWatch.
         background.add_task(pair_races_quietly)
         return result
@@ -77,6 +80,7 @@ async def import_csv(
     content = await file.read()
     result = import_swimrankings_csv(content, event_name, db)
     result["qualification_sets_refreshed"] = _refresh_confirmed_qualification_sets(db)
+    result["swims_linked_to_galas"] = link_swims_to_meets(db)
     return result
 
 
