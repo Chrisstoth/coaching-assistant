@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
-import { defaultSelection, pairsToSave, signInErrorMessage, signInToLaneWatch } from '../laneWatch'
+import { callbackAddress, defaultSelection, pairsToSave } from '../laneWatch'
 
 // Connect LaneWatch Hub so the Performance Analyst can read race analysis
 // (15m, underwater, stroke rate, back-half drop), then pair each LaneWatch
@@ -138,27 +138,22 @@ export default function LaneWatchPanel() {
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [emailForm, setEmailForm] = useState(false)
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
 
   const load = () => api.getLaneWatchStatus().then(setStatus).catch(e => setError(e.message))
   useEffect(() => { load() }, [])
 
-  const connect = async (method) => {
-    if (!status?.sign_in) return
+  // Off to LaneWatch to sign in and approve; it sends the coach back to
+  // /lanewatch/callback, which finishes the connection.
+  const connect = async () => {
     setBusy(true)
     setError('')
     try {
-      const token = await signInToLaneWatch(status.sign_in, method, { email, password })
-      setPassword('')
-      await api.connectLaneWatch(token)
-      setEmailForm(false)
-      await load()
+      const { url } = await api.startLaneWatchConnect(callbackAddress(window.location.origin))
+      window.location.assign(url)
     } catch (e) {
-      setError(e.code ? signInErrorMessage(e) : e.message)
+      setError(e.message)
+      setBusy(false)
     }
-    setBusy(false)
   }
 
   const disconnect = async () => {
@@ -205,39 +200,14 @@ export default function LaneWatchPanel() {
 
         {status && !status.connected && (
           <div className="space-y-2">
-            <p className="text-xs text-pool-500">Sign in with your LaneWatch coach account to connect.</p>
-            <div className="flex flex-wrap gap-2">
-              <button onClick={() => connect('google')} disabled={busy}
-                className="px-3 py-2 text-xs font-semibold bg-pool-700 border border-pool-600 rounded-lg disabled:opacity-40">
-                Sign in with Google
-              </button>
-              <button onClick={() => connect('apple')} disabled={busy}
-                className="px-3 py-2 text-xs font-semibold bg-pool-700 border border-pool-600 rounded-lg disabled:opacity-40">
-                Sign in with Apple
-              </button>
-              <button onClick={() => setEmailForm(v => !v)} disabled={busy}
-                className="px-3 py-2 text-xs font-semibold bg-pool-700 border border-pool-600 rounded-lg disabled:opacity-40">
-                Email and password
-              </button>
-            </div>
-            {emailForm && (
-              <form className="space-y-2" onSubmit={e => { e.preventDefault(); connect('email') }}>
-                <input type="email" autoComplete="username" value={email} onChange={e => setEmail(e.target.value)}
-                  placeholder="LaneWatch email"
-                  className="w-full bg-pool-700 border border-pool-600 rounded-xl px-3 py-2 text-sm text-pool-100" />
-                <input type="password" autoComplete="current-password" value={password}
-                  onChange={e => setPassword(e.target.value)} placeholder="LaneWatch password"
-                  className="w-full bg-pool-700 border border-pool-600 rounded-xl px-3 py-2 text-sm text-pool-100" />
-                <button type="submit" disabled={busy || !email || !password}
-                  className="w-full py-2 text-sm font-semibold bg-accent-600 rounded-xl disabled:opacity-40">
-                  {busy ? 'Connecting…' : 'Connect'}
-                </button>
-                <p className="text-[11px] text-pool-500">
-                  Your password goes to LaneWatch's sign-in only. This app never sees or keeps it.
-                </p>
-              </form>
-            )}
-            {busy && !emailForm && <p className="text-xs text-pool-500">Connecting…</p>}
+            <button onClick={connect} disabled={busy}
+              className="w-full py-2.5 text-sm font-semibold bg-accent-600 rounded-xl disabled:opacity-40">
+              {busy ? 'Opening LaneWatch…' : 'Connect with LaneWatch'}
+            </button>
+            <p className="text-[11px] text-pool-500">
+              You sign in on LaneWatch&apos;s own site with your coach account and approve there. This app never
+              sees your LaneWatch sign-in.
+            </p>
           </div>
         )}
 

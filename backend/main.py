@@ -323,6 +323,7 @@ app.include_router(ai_operations.router, prefix="/ai-operations", tags=["AI Oper
 app.include_router(session_debriefs.router, prefix="/session-debriefs", tags=["Session Debriefs"], dependencies=_auth)
 app.include_router(staff.router, prefix="/staff", tags=["Staff"], dependencies=_auth)
 app.include_router(lanewatch.router, prefix="/lanewatch", tags=["LaneWatch"], dependencies=_auth)
+app.include_router(lanewatch.public_router, prefix="/lanewatch-connect", tags=["LaneWatch"])
 app.include_router(swimmer_plans.router, prefix="/swimmer-plans", tags=["Swimmer plans"], dependencies=_auth)
 app.include_router(groups.router, prefix="/groups", tags=["Training groups"], dependencies=_auth)
 app.include_router(session_workshops.router, prefix="/session-workshops", tags=["Session workshops"], dependencies=_auth)

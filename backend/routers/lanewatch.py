@@ -1,11 +1,10 @@
 """Connecting LaneWatch, and pairing its swimmers with the squad here.
 
-The browser signs the coach in to LaneWatch and hands this server the
-resulting sign-in token once; the server swaps it for LaneWatch's read-only
+"Connect with LaneWatch": the coach approves on hub.lanewatch.app and comes
+back with a one-time code, which this server swaps for LaneWatch's read-only
 key and keeps only that (encrypted). See services/lanewatch.py.
 """
 
-import os
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -19,19 +18,16 @@ from backend.services.lanewatch import LaneWatchError
 
 router = APIRouter()
 
-# LaneWatch's public web sign-in settings. These identify the LaneWatch
-# project to Firebase and are published in every LaneWatch web page; they are
-# not secrets. Overridable so a staging LaneWatch can be used instead.
-FIREBASE_WEB_CONFIG = {
-    "apiKey": os.getenv("LANEWATCH_FIREBASE_API_KEY", "AIzaSyD15J2g_4FZpTsY8l2EpCTjTfHT78zjOJ0"),
-    "authDomain": os.getenv("LANEWATCH_FIREBASE_AUTH_DOMAIN", "swim-tracker-tool.firebaseapp.com"),
-    "projectId": os.getenv("LANEWATCH_FIREBASE_PROJECT_ID", "swim-tracker-tool"),
-    "appId": os.getenv("LANEWATCH_FIREBASE_APP_ID", "1:1003052817682:web:955daffdb90da8c6b4e7cb"),
-}
+
+class ConnectStartIn(BaseModel):
+    # Where LaneWatch sends the coach back: this app's /lanewatch/callback.
+    redirect_uri: str = Field(..., max_length=300)
 
 
-class ConnectIn(BaseModel):
-    id_token: str = Field(..., min_length=20, max_length=8000)
+class ConnectFinishIn(BaseModel):
+    state: str = Field(..., min_length=8, max_length=200)
+    code: Optional[str] = Field(default=None, max_length=200)
+    error: Optional[str] = Field(default=None, max_length=100)
 
 
 class LinkIn(BaseModel):
@@ -52,16 +48,38 @@ def _fail(exc: LaneWatchError):
 
 @router.get("/status")
 def get_status(db: Session = Depends(get_db)):
-    return {**lanewatch.status(db), "sign_in": FIREBASE_WEB_CONFIG}
+    return lanewatch.status(db)
 
 
-@router.post("/connect")
-def connect(body: ConnectIn, db: Session = Depends(get_db)):
+@router.post("/connect/start")
+def start_connect(body: ConnectStartIn, db: Session = Depends(get_db)):
+    """The address on hub.lanewatch.app to send the coach to."""
     try:
-        lanewatch.connect(db, body.id_token)
+        return {"url": lanewatch.start_connect(db, body.redirect_uri)}
     except LaneWatchError as exc:
         _fail(exc)
-    return lanewatch.status(db)
+
+
+# The page LaneWatch sends the coach back to may open outside this app's
+# signed-in view (a phone's home-screen app often comes back in a separate
+# browser view), so finishing is not behind this app's login. It is still
+# safe: it only completes an attempt this server started minutes ago, once,
+# and the code is useless without the PKCE verifier only this server holds.
+public_router = APIRouter()
+
+
+@public_router.post("/finish")
+def finish_connect(body: ConnectFinishIn, db: Session = Depends(get_db)):
+    if body.error:
+        message = ("Connecting was cancelled in LaneWatch." if body.error == "access_denied"
+                   else "LaneWatch didn't connect. Start connecting again.")
+        raise HTTPException(400, message)
+    try:
+        lanewatch.finish_connect(db, body.state, body.code or "")
+    except LaneWatchError as exc:
+        _fail(exc)
+    status = lanewatch.status(db)
+    return {"connected": status["connected"], "connected_as": status.get("connected_as")}
 
 
 @router.post("/disconnect")

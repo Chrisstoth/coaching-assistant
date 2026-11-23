@@ -6,7 +6,8 @@ answers like the LaneWatch API does.
 """
 import os
 import unittest
-from datetime import date
+from datetime import date, timedelta
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 
 os.environ.setdefault("APP_PASSWORD", "test-password")
@@ -29,13 +30,22 @@ class FakeLaneWatch:
     def __init__(self):
         self.calls = []
         self.revoked = False
+        self.token_bodies = []
+        self.code_used = False
+        self.challenge = None
 
     def __call__(self, method, path, token, body=None):
         self.calls.append((method, path, token))
-        if method == "POST" and path == "/connected-apps":
-            if token != "firebase-id-token":
-                raise LaneWatchError("Invalid Firebase token", status=401)
-            return {"id": "app-1", "key": KEY, "name": body["name"]}
+        if method == "POST" and path == "/connected-apps/token":
+            # Like LaneWatch: the code works once, only with the verifier whose
+            # challenge it was issued for.
+            self.token_bodies.append(body)
+            if token is not None:
+                raise AssertionError("Swapping a code needs no sign-in")
+            if body["code"] != "the-code" or self.code_used                     or lanewatch._pkce_challenge(body["code_verifier"]) != self.challenge:
+                raise LaneWatchError("invalid_grant", status=400)
+            self.code_used = True
+            return {"access_token": KEY, "token_type": "Bearer", "scope": "read"}
         if token != KEY or self.revoked:
             raise LaneWatchError("This connection is not valid or has been disconnected.", status=401)
         if method == "GET" and path == "/connected-apps/current":
@@ -136,8 +146,39 @@ class ConnectionTests(unittest.TestCase):
         lanewatch.clear_cache()
         reset_database()
 
+    RETURN = "https://deckxtra.netlify.app/lanewatch/callback"
+
+    def _start(self, db):
+        """The address the coach is sent to, read like LaneWatch's consent page would."""
+        url = lanewatch.start_connect(db, self.RETURN)
+        query = parse_qs(urlparse(url).query)
+        self.fake.challenge = query["code_challenge"][0]
+        return url, query
+
     def _connect(self, db):
-        return lanewatch.connect(db, "firebase-id-token")
+        _, query = self._start(db)
+        return lanewatch.finish_connect(db, query["state"][0], "the-code")
+
+    def test_connecting_sends_the_coach_to_lanewatch_to_approve(self):
+        with SessionLocal() as db:
+            url, query = self._start(db)
+            attempt = db.query(models.LaneWatchConnectAttempt).one()
+        self.assertTrue(url.startswith("https://hub.lanewatch.app/connect?"))
+        self.assertEqual(query["client_id"], ["coaching-assistant"])
+        self.assertEqual(query["redirect_uri"], [self.RETURN])
+        self.assertEqual(query["code_challenge_method"], ["S256"])
+        self.assertEqual(query["code_challenge"], [lanewatch._pkce_challenge(attempt.code_verifier)])
+        self.assertNotIn(attempt.code_verifier, url, "The verifier never leaves this server in the link.")
+        self.assertGreaterEqual(len(attempt.state), 30)
+
+    def test_only_this_apps_own_return_address_is_used(self):
+        with SessionLocal() as db:
+            for bad in ("https://evil.example/steal", "javascript:alert(1)//lanewatch/callback",
+                        "http://deckxtra.netlify.app/lanewatch/callback"):
+                with self.assertRaises(LaneWatchError, msg=bad):
+                    lanewatch.start_connect(db, bad)
+            self.assertIn("redirect_uri=http%3A%2F%2Flocalhost%3A5173",
+                          lanewatch.start_connect(db, "http://localhost:5173/lanewatch/callback"))
 
     def test_connecting_keeps_only_the_encrypted_key(self):
         with SessionLocal() as db:
@@ -145,8 +186,25 @@ class ConnectionTests(unittest.TestCase):
             self.assertNotEqual(conn.key_encrypted, KEY)
             self.assertEqual((conn.connected_as, conn.key_hint), ("Coach Chris", KEY[-4:]))
             self.assertTrue(lanewatch.status(db)["connected"])
-        self.assertNotIn("firebase-id-token", [c[2] for c in self.fake.calls[1:]],
-                         "The sign-in token is used once, to get the key, and never again.")
+        body = self.fake.token_bodies[0]
+        self.assertEqual((body["grant_type"], body["client_id"], body["redirect_uri"]),
+                         ("authorization_code", "coaching-assistant", self.RETURN))
+
+    def test_a_connection_attempt_works_once_and_not_for_long(self):
+        with SessionLocal() as db:
+            _, query = self._start(db)
+            state = query["state"][0]
+            lanewatch.finish_connect(db, state, "the-code")
+            with self.assertRaises(LaneWatchError):
+                lanewatch.finish_connect(db, state, "the-code")
+            with self.assertRaises(LaneWatchError):
+                lanewatch.finish_connect(db, "not-a-state-we-made", "the-code")
+            _, query = self._start(db)
+            attempt = db.query(models.LaneWatchConnectAttempt).filter_by(state=query["state"][0]).one()
+            attempt.created_at = attempt.created_at - timedelta(minutes=20)
+            db.commit()
+            with self.assertRaises(LaneWatchError):
+                lanewatch.finish_connect(db, query["state"][0], "the-code")
 
     def test_disconnecting_revokes_the_key_at_lanewatch(self):
         with SessionLocal() as db:

@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard'
 import Swimmers from './pages/Swimmers'
 import SwimmerDetail from './pages/SwimmerDetail'
 import NewSwimmer from './pages/NewSwimmer'
+import LaneWatchCallback from './pages/LaneWatchCallback'
 import Sessions from './pages/Sessions'
 import SessionHub from './pages/SessionHub'
 import Register from './pages/Register'
@@ -265,6 +266,7 @@ export default function App() {
     <div className={`flex flex-col min-h-screen mx-auto ${wide ? 'w-full' : 'max-w-lg'}`}>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/lanewatch/callback" element={<LaneWatchCallback />} />
         <Route path="/sessions/:id/print" element={<RequireAuth><SessionPrint /></RequireAuth>} />
         <Route path="/swimmer-plans/:planId/print" element={<RequireAuth><SwimmerPlanPrint /></RequireAuth>} />
         <Route path="/targets/:id/print" element={<RequireAuth><TargetSetPrint /></RequireAuth>} />

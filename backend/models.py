@@ -1493,6 +1493,25 @@ class LaneWatchConnection(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class LaneWatchConnectAttempt(Base):
+    """One "Connect with LaneWatch" in progress (OAuth state + PKCE verifier).
+
+    Kept here rather than in the browser: on a phone, a home-screen app that
+    sends the coach to LaneWatch can come back in a different browser view,
+    which can't see what the app's own view stored. The verifier never leaves
+    this server except in the one exchange with LaneWatch. An attempt works
+    once and only for a few minutes.
+    """
+    __tablename__ = "lanewatch_connect_attempts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    state = Column(String, nullable=False, unique=True, index=True)
+    code_verifier = Column(String, nullable=False)
+    redirect_uri = Column(String, nullable=False)
+    used_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class LaneWatchSwimmerLink(Base):
     """Which LaneWatch swimmer is which swimmer here. Confirmed by the coach.
 

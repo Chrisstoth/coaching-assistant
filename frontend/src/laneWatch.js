@@ -1,54 +1,28 @@
 // Connecting LaneWatch Hub, where the detailed race analysis lives.
 //
-// The coach signs in to LaneWatch in a popup, with whichever sign-in they use
-// there. The resulting token is handed to our server once, which swaps it for
-// a read-only LaneWatch key; the sign-in itself is thrown away straight after
-// and nothing of it is kept in this browser.
+// "Connect with LaneWatch": the coach is sent to hub.lanewatch.app/connect,
+// signs in THERE (this app never sees a LaneWatch sign-in) and approves, and
+// LaneWatch sends them back to /lanewatch/callback with a one-time code. Our
+// server started the attempt and holds its PKCE verifier, so it alone can swap
+// the code for a read-only key.
 //
-// The pairing rules below are kept free of React so they can be tested.
+// The rules below are kept free of React so they can be tested.
 
-// Firebase is only loaded when the coach actually connects.
-export async function signInToLaneWatch(config, method, { email, password } = {}) {
-  const [{ initializeApp, deleteApp }, auth] = await Promise.all([
-    import('firebase/app'),
-    import('firebase/auth'),
-  ])
-  const app = initializeApp(config, `lanewatch-connect-${Date.now()}`)
-  try {
-    const session = auth.getAuth(app)
-    await auth.setPersistence(session, auth.inMemoryPersistence)
-    let credential
-    if (method === 'google') {
-      credential = await auth.signInWithPopup(session, new auth.GoogleAuthProvider())
-    } else if (method === 'apple') {
-      credential = await auth.signInWithPopup(session, new auth.OAuthProvider('apple.com'))
-    } else {
-      credential = await auth.signInWithEmailAndPassword(session, email, password)
-    }
-    const token = await credential.user.getIdToken()
-    await auth.signOut(session)
-    return token
-  } finally {
-    await deleteApp(app)
+export const CALLBACK_PATH = '/lanewatch/callback'
+
+// Where LaneWatch sends the coach back to (registered with LaneWatch).
+export function callbackAddress(origin) {
+  return `${origin}${CALLBACK_PATH}`
+}
+
+// What LaneWatch put on the return address.
+export function readCallback(search) {
+  const params = new URLSearchParams(search || '')
+  return {
+    state: params.get('state') || '',
+    code: params.get('code') || null,
+    error: params.get('error') || null,
   }
-}
-
-const SIGN_IN_ERRORS = {
-  'auth/popup-closed-by-user': 'Sign-in was closed before it finished.',
-  'auth/cancelled-popup-request': 'Sign-in was closed before it finished.',
-  'auth/popup-blocked': 'The browser blocked the sign-in window. Allow pop-ups for this site and try again.',
-  'auth/unauthorized-domain':
-    "LaneWatch doesn't recognise this site yet. Add this site's address to the authorised domains in LaneWatch's Firebase settings.",
-  'auth/invalid-credential': 'That email and password did not match a LaneWatch account.',
-  'auth/wrong-password': 'That email and password did not match a LaneWatch account.',
-  'auth/user-not-found': 'That email and password did not match a LaneWatch account.',
-  'auth/too-many-requests': 'Too many attempts. Wait a few minutes and try again.',
-  'auth/network-request-failed': 'Could not reach LaneWatch. Check the connection and try again.',
-}
-
-export function signInErrorMessage(error) {
-  if (!error) return ''
-  return SIGN_IN_ERRORS[error.code] || error.message || 'Sign-in did not work.'
 }
 
 // Which suggested pairings start ticked: only those matched on name AND date

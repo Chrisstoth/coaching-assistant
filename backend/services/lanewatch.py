@@ -7,9 +7,10 @@ needs exactly that.
 
 How the link works, and why:
 
-  * The coach signs in to LaneWatch (in the browser, with whichever sign-in
-    they use there) and LaneWatch issues this app a read-only key. The coach's
-    LaneWatch login never passes through here beyond that one exchange.
+  * "Connect with LaneWatch" (OAuth 2.0 authorisation code + PKCE): the
+    coach is sent to hub.lanewatch.app/connect, signs in THERE and approves,
+    and comes back with a one-time code that this server swaps for a
+    read-only key. No LaneWatch sign-in ever passes through this app.
   * The key acts as the coach and LaneWatch enforces everything: only the
     coach's roster, only swims each swimmer has shared with them, only while
     the subscription that funds it is live. This app cannot widen that.
@@ -30,10 +31,12 @@ import base64
 import hashlib
 import os
 import re
+import secrets
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlencode
 
 import httpx
 from cryptography.fernet import Fernet, InvalidToken
@@ -44,6 +47,11 @@ from backend import models
 LANEWATCH_API_URL = os.getenv(
     "LANEWATCH_API_URL", "https://lanewatch-api-vbne6vd2pa-nw.a.run.app/api/v1").rstrip("/")
 APP_NAME = "Coaching Assistant"
+# Where the coach approves the connection, and who this app is to LaneWatch
+# (registered there in connected_app_clients with its return addresses).
+CONNECT_URL = os.getenv("LANEWATCH_CONNECT_URL", "https://hub.lanewatch.app/connect")
+CLIENT_ID = os.getenv("LANEWATCH_CLIENT_ID", "coaching-assistant")
+ATTEMPT_MINUTES = 15
 KEY_PREFIX = "lwk_"
 TIMEOUT_SECONDS = 15
 CACHE_SECONDS = 300
@@ -83,10 +91,10 @@ def decrypt_key(token: str) -> str:
 # Talking to LaneWatch
 # ---------------------------------------------------------------------------
 
-def _request(method: str, path: str, token: str, body: Optional[dict] = None):
+def _request(method: str, path: str, token: Optional[str], body: Optional[dict] = None):
     try:
         response = httpx.request(method, LANEWATCH_API_URL + path, json=body, timeout=TIMEOUT_SECONDS,
-                                 headers={"Authorization": f"Bearer {token}"})
+                                 headers={"Authorization": f"Bearer {token}"} if token else {})
     except httpx.HTTPError:
         raise LaneWatchError("LaneWatch could not be reached just now. Try again shortly.")
     if response.status_code >= 400:
@@ -145,14 +153,61 @@ def status(db: DBSession) -> dict:
     }
 
 
-def connect(db: DBSession, id_token: str) -> models.LaneWatchConnection:
-    """Swap a LaneWatch sign-in for a read-only key. The sign-in token is used
-    once, here, and not kept."""
-    id_token = (id_token or "").strip()
-    if not id_token or len(id_token) > 8000:
-        raise LaneWatchError("Sign in to LaneWatch first.")
-    created = _request("POST", "/connected-apps", id_token, {"name": APP_NAME})
-    key = str(created.get("key") or "")
+def _pkce_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("ascii")).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+
+
+def start_connect(db: DBSession, redirect_uri: str) -> str:
+    """Begin "Connect with LaneWatch": the address to send the coach to."""
+    if not re.fullmatch(r"(https://[^\s/]+|http://(localhost|127\.0\.0\.1)(:\d+)?)/lanewatch/callback",
+                        redirect_uri or ""):
+        raise LaneWatchError("This app's address can't be used to connect LaneWatch.")
+    stale = datetime.now(timezone.utc) - timedelta(minutes=ATTEMPT_MINUTES)
+    db.query(models.LaneWatchConnectAttempt).filter(
+        models.LaneWatchConnectAttempt.created_at < stale).delete(synchronize_session=False)
+    attempt = models.LaneWatchConnectAttempt(
+        state=secrets.token_urlsafe(24), code_verifier=secrets.token_urlsafe(48), redirect_uri=redirect_uri,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(attempt)
+    db.commit()
+    return CONNECT_URL + "?" + urlencode({
+        "client_id": CLIENT_ID,
+        "redirect_uri": redirect_uri,
+        "state": attempt.state,
+        "code_challenge": _pkce_challenge(attempt.code_verifier),
+        "code_challenge_method": "S256",
+    })
+
+
+def finish_connect(db: DBSession, state: str, code: str) -> models.LaneWatchConnection:
+    """LaneWatch sent the coach back with a one-time code: swap it, with the
+    verifier only this server holds, for a read-only key."""
+    attempt = db.query(models.LaneWatchConnectAttempt).filter(
+        models.LaneWatchConnectAttempt.state == (state or "")).first()
+    created = attempt.created_at if attempt else None
+    if created is not None and created.tzinfo is None:
+        created = created.replace(tzinfo=timezone.utc)
+    if (not attempt or attempt.used_at is not None
+            or created < datetime.now(timezone.utc) - timedelta(minutes=ATTEMPT_MINUTES)):
+        raise LaneWatchError("This connection link has expired or was already used. Start connecting again.")
+    attempt.used_at = datetime.now(timezone.utc)
+    db.commit()
+    code = (code or "").strip()
+    if not code or len(code) > 200:
+        raise LaneWatchError("LaneWatch didn't send a connection code. Start connecting again.")
+    issued = _request("POST", "/connected-apps/token", None, {
+        "grant_type": "authorization_code",
+        "code": code,
+        "client_id": CLIENT_ID,
+        "redirect_uri": attempt.redirect_uri,
+        "code_verifier": attempt.code_verifier,
+    })
+    return _save_key(db, str(issued.get("access_token") or ""))
+
+
+def _save_key(db: DBSession, key: str) -> models.LaneWatchConnection:
     if not key.startswith(KEY_PREFIX):
         raise LaneWatchError("LaneWatch did not return a connection key.")
     info = _request("GET", "/connected-apps/current", key)
