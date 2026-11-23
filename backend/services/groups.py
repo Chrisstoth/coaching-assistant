@@ -347,12 +347,18 @@ def roster_lines(db: DBSession, squad: Optional[str] = None, on: Optional[date] 
         members = ", ".join(f"{s['name']} (id {s['id']})" for s in g["swimmers"]) or "nobody"
         lines.append(f"  group_id {g['id']} {g['name']}"
                      + (f" - {g['description'][:160]}" if g["description"] else "") + f": {members}")
-    if data["ungrouped"]:
-        lines.append("  Not in a group: " + ", ".join(f"{s['name']} (id {s['id']})" for s in data["ungrouped"]))
+    # Uni / visiting swimmers are never in a group: on the register when they come, not planned for.
+    visiting = [s for s in data["ungrouped"] if s["status"] == "occasional"]
+    ungrouped = [s for s in data["ungrouped"] if s["status"] != "occasional"]
+    if ungrouped:
+        lines.append("  Not in a group: " + ", ".join(f"{s['name']} (id {s['id']})" for s in ungrouped))
+    if visiting:
+        lines.append("  Uni / visiting (attendance only - never suggest a group, pathway, target meet or load "
+                     "for them, and never flag them): " + ", ".join(s["name"] for s in visiting))
     moves = [f"{s['name']} to {s['next']['group_name']} from {s['next']['date_from']}"
              for g in data["groups"] for s in g["swimmers"] if s["next"]]
     moves += [f"{s['name']} to {s['next']['group_name']} from {s['next']['date_from']}"
-              for s in data["ungrouped"] if s["next"]]
+              for s in ungrouped if s["next"]]
     if moves:
         lines.append("  Moves already agreed: " + "; ".join(moves))
     return lines

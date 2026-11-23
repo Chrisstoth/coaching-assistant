@@ -120,6 +120,44 @@ class BuilderStaffTests(unittest.TestCase):
             self.assertIsNone(W.get_page(db, "physiologist", BS.PREFS_PAGE), "a safety flag is never switched off")
             self.assertEqual(BS.decide(db, out["Fiona"]["id"], "useful", useful=False)["useful"], False)
 
+    def test_a_session_for_one_swimmer_is_read_for_that_swimmer_only(self):
+        """The session still holds the plan's whole groups; the audience says who it's really for."""
+        with SessionLocal() as db:
+            amy, ben, uni = (models.Swimmer(name=n, squad="Silver 1", status=st, active=True)
+                             for n, st in (("Amy Hart", "active"), ("Ben Cole", "active"), ("Una Reid", "occasional")))
+            db.add_all([amy, ben, uni])
+            db.flush()
+            s = db.get(models.Session, self.sid)
+            b = dict(SESSION, groups=[{"id": "g1", "name": "Girls", "swimmer_ids": [amy.id, uni.id]},
+                                      {"id": "g2", "name": "Boys", "swimmer_ids": [ben.id]}])
+            ids, who, _ = BS.who_for(db, s, b)
+            self.assertEqual(ids, [amy.id, ben.id], "the groups' swimmers, without the uni / visiting one")
+            s.audience = {"kind": "swimmer", "label": "Ben Cole", "swimmer_ids": [ben.id]}
+            ids, who, _ = BS.who_for(db, s, b)
+            self.assertEqual(ids, [ben.id])
+            self.assertIn("Ben Cole only", who)
+            self.seen = []
+            BS.review(db, s, b, ask=self.fake)
+            self.assertIn("WHO IT IS FOR: Ben Cole only", self.seen[0])
+            self.assertTrue(all("Amy Hart" not in u for u in self.seen), "nobody else in the group is read")
+            s.audience = {"kind": "swimmer", "label": "Una Reid", "swimmer_ids": [uni.id]}
+            self.seen = []
+            BS.review(db, s, b, ask=self.fake)
+            self.assertEqual(self.seen, [], "a uni / visiting swimmer's own session isn't planned for")
+
+    def test_uni_swimmers_are_not_listed_as_needing_a_group(self):
+        from backend.services import groups as group_svc
+        with SessionLocal() as db:
+            db.add_all([models.Swimmer(name="Amy Hart", squad="Silver 1", status="active", active=True),
+                        models.Swimmer(name="Una Reid", squad="Silver 1", status="occasional", active=True)])
+            db.add(models.TrainingGroup(name="Girls", squad="Silver 1", active=True))
+            db.commit()
+            lines = group_svc.roster_lines(db, "Silver 1")
+            ungrouped = next(l for l in lines if "Not in a group" in l)
+            self.assertIn("Amy Hart", ungrouped)
+            self.assertNotIn("Una Reid", ungrouped, "a uni swimmer is never asked to join a group")
+            self.assertTrue(any(l.startswith("  Uni / visiting (attendance only") and "Una Reid" in l for l in lines))
+
     def test_jess_drafts_into_the_builder(self):
         def ask(system, user, operation, max_tokens=700):
             self.assertIn("THE SESSION'S GROUPS: Girls, Boys", system)

@@ -70,9 +70,47 @@ def _attendees(b: dict) -> list:
     return sorted(set(ids))
 
 
-def _session_text_for_staff(b: dict, lines: list) -> str:
+def who_for(db: DBSession, session: Optional[models.Session], b: dict) -> tuple:
+    """Who the staff read a session for: (swimmer ids, a line saying who it is for, specific).
+
+    Once the register is taken, it's who came. Before that, the session's audience
+    (one swimmer, one group) wins over its groups: a new session starts with the
+    plan's whole training groups, so a session for one swimmer still holds them.
+    Uni / visiting swimmers come off - they're on the register, not planned for.
+    ``specific`` is False when nothing says who it's for (the whole squad)."""
+    audience = (session.audience or {}) if session is not None else {}
+    entries = list(session.entries or []) if session is not None else []
+    if any(e.attended is not None for e in entries):
+        ids = [e.swimmer_id for e in entries if e.attended]
+    elif audience.get("swimmer_ids"):
+        ids = [int(i) for i in audience["swimmer_ids"] if str(i).isdigit()]
+    else:
+        ids = _attendees(b)
+    specific = bool(ids)
+    rows = db.query(models.Swimmer).filter(models.Swimmer.id.in_(ids)).order_by(models.Swimmer.name).all() if ids else []
+    rows = [s for s in rows if s.status != "occasional"]
+    names = ", ".join(s.name for s in rows[:30])
+    kind = audience.get("kind")
+    if kind == "swimmer" and rows:
+        line = f"WHO IT IS FOR: {names} only - a session of their own, not the squad's."
+    elif kind == "group" and audience.get("label"):
+        line = f"WHO IT IS FOR: the {audience['label']} group only" + (f" ({names})." if names else ".")
+    elif kind == "camp":
+        line = f"WHO IT IS FOR: {audience.get('label') or 'a camp'}" + (f" ({names})." if names else ".")
+    elif rows:
+        line = f"WHO IT IS FOR: {names}."
+    elif specific:
+        line = "WHO IT IS FOR: uni / visiting swimmers only - not planned for."
+    else:
+        line = ""
+    return [s.id for s in rows], line, specific
+
+
+def _session_text_for_staff(b: dict, lines: list, who: str = "") -> str:
     totals = N.totals_for(N.normalize_session(json.loads(json.dumps(b))))
     head = [f"SESSION: {b.get('date')} {b.get('slot') or ''} · " + " | ".join(f"{t['g'] or 'everyone'} {N.fmt_dist(t['dist'])} m, {N.fmt_time(t['time'])}" for t in totals)]
+    if who:
+        head.append(who)
     aims = [a for a in (b.get("aims") or []) if a]
     if aims:
         head.append("AIMS: " + "; ".join(aims))
@@ -90,6 +128,8 @@ Read the session with YOUR data. Pin at most {max_n} short comments to particula
 data gives a clear reason that could change the coach's mind. Staying quiet is normal and good.
 
 - Name the swimmer or figure behind every comment, in one or two sentences.
+- Only the swimmers the session is for (WHO IT IS FOR, and EXPECTED in your data) are in it. Never name or
+  flag anyone else - the rest of the squad is not swimming this session.
 - "flag": "safety" only for one of your safety flags; anything else is "preference".
 - Never repeat something the coach has told you not to flag (below), unless it is a safety flag.
 - Never raise again anything you have already said on THIS session (below) - not on the same line, not
@@ -181,7 +221,8 @@ def _repeats(c: dict, decided: list) -> bool:
     return False
 
 
-def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None, decided: Optional[list] = None) -> list:
+def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None, decided: Optional[list] = None,
+               attendees: Optional[list] = None, who: str = "") -> list:
     """One worker's comments on the session (own database connection: runs in parallel)."""
     from backend.services.staff_room import ROSTER, Subject, role_context
     ask = ask or _ask
@@ -193,11 +234,12 @@ def review_one(role: str, b: dict, lines: list, squad: Optional[str], ask=None, 
             day = date.fromisoformat(b.get("date") or "")
         except ValueError:
             day = None
-        data = role_context(role, db, Subject(session_date=day, squad=squad, attendee_ids=_attendees(b)))
+        ids = _attendees(b) if attendees is None else attendees
+        data = role_context(role, db, Subject(session_date=day, squad=squad, attendee_ids=ids))
         system = _REVIEW.format(name=r.name, title=r.title, remit=r.remit, watch_for=r.watch_for,
                                 safety="; ".join(w.safety) or "none", max_n=MAX_PER_WORKER, prefs=_not_to_flag(db, role),
                                 already=_already_said(decided or [], role, lines))
-        out = ask(system, f"{_session_text_for_staff(b, lines)}\n\nYOUR DATA:\n{data}", "builder_comments")
+        out = ask(system, f"{_session_text_for_staff(b, lines, who)}\n\nYOUR DATA:\n{data}", "builder_comments")
     except Exception:  # noqa: BLE001 - one worker failing must not stop the others
         log.exception("builder review failed for %s", role)
         return []
@@ -224,9 +266,13 @@ def review(db: DBSession, session: models.Session, b: dict, ask=None) -> list:
     lines = line_index(b)
     if not lines:
         return comments_out(db, session)
+    ids, who, specific = who_for(db, session, b)
+    if specific and not ids:
+        # Only uni / visiting swimmers: the staff don't plan for them.
+        return comments_out(db, session)
     decided = _decided(db, session.id)
     with ThreadPoolExecutor(max_workers=len(REVIEWERS)) as pool:
-        results = list(pool.map(lambda role: review_one(role, b, lines, session.squad, ask, decided), REVIEWERS))
+        results = list(pool.map(lambda role: review_one(role, b, lines, session.squad, ask, decided, ids, who), REVIEWERS))
     db.query(models.StaffNote).filter(models.StaffNote.session_id == session.id, models.StaffNote.trigger == "builder",
                                       models.StaffNote.status == "open").delete(synchronize_session=False)
     for c in [c for r in results for c in r if not _repeats(c, decided)]:
@@ -329,7 +375,10 @@ def draft(db: DBSession, session: models.Session, current: dict, brief: str, ask
     from backend.services import session_workshop
     ask = ask or _ask
     W.ensure_workbooks(db)
-    parts = [session_workshop.writing_context(db, session.date, session.squad, _attendees(current))]
+    ids, who, _ = who_for(db, session, current)
+    parts = [session_workshop.writing_context(db, session.date, session.squad, ids)]
+    if who:
+        parts.append(who)
     try:
         from backend.services import season_planner
         week_plan = season_planner.staff_lines(db, session.squad, session.date)

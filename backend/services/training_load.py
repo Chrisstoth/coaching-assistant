@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Optional
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
@@ -322,7 +323,9 @@ def describe(p: LoadProfile, notes: int = 6) -> str:
 def squad_summary(db: DBSession, squad: Optional[str] = None, today: Optional[date] = None,
                   limit: int = 40) -> str:
     """The whole squad at a glance: flagged swimmers first, the rest named."""
-    q = db.query(models.Swimmer).filter(models.Swimmer.active.is_(True))
+    # Uni / visiting swimmers are on the register when they come, not planned for.
+    q = db.query(models.Swimmer).filter(models.Swimmer.active.is_(True),
+                                        or_(models.Swimmer.status.is_(None), models.Swimmer.status != "occasional"))
     if squad:
         q = q.filter(models.Swimmer.squad == squad)
     swimmers = q.order_by(models.Swimmer.name).limit(limit).all()
