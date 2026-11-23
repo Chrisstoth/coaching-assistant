@@ -513,6 +513,10 @@ export const api = {
   importMeetTimetable: (meetId, data) => request('POST', `/meets/${meetId}/timetable/import`, data),
   getMeetResults: (meetId) => request('GET', `/meets/${meetId}/results`),
   saveMeetResults: (meetId, results) => request('POST', `/meets/${meetId}/results`, { results }),
+  getMeetRelays: (meetId) => request('GET', `/meets/${meetId}/relays`),
+  saveMeetRelay: (meetId, team) => request('POST', `/meets/${meetId}/relays`, team),
+  deleteMeetRelay: (meetId, relayGroup) => request('DELETE', `/meets/${meetId}/relays/${relayGroup}`),
+  getSwimmerRelays: (swimmerId) => request('GET', `/swimmers/${swimmerId}/relays`),
   getUntiedSwims: (meetId) => request('GET', `/meets/${meetId}/results/untied`),
   tieSwimsToMeet: (meetId, resultsNames) =>
     request('POST', `/meets/${meetId}/results/tie`, { results_names: resultsNames }),

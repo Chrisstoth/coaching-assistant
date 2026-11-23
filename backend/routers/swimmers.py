@@ -11,6 +11,7 @@ from backend.database import get_db
 from backend import models
 from backend.services import groups as group_svc
 from backend.services import claude_service
+from backend.services.relays import swimmer_relays
 from backend.services import interview_staff
 from backend.services.importer import match_or_create_swimmer
 from backend.services.profile_status import FOUNDATION_AREAS, FOUNDATION_KEY_ALIASES, build_profile_status
@@ -468,6 +469,7 @@ def _cascade_delete_swimmer(swimmer_id: int, db: DBSession):
     db.query(models.ProfileConversation).filter(models.ProfileConversation.swimmer_id == swimmer_id).delete()
     db.query(models.ProfileWizardDraft).filter(models.ProfileWizardDraft.swimmer_id == swimmer_id).delete()
     db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == swimmer_id).delete()
+    db.query(models.RelaySwim).filter(models.RelaySwim.swimmer_id == swimmer_id).delete()
 
 
 # ---------------------------------------------------------------------------
@@ -1693,6 +1695,12 @@ def _obs_out(o: models.SwimmerObservation) -> dict:
         "session_id": o.session_id,
         "created_at": o.created_at,
     }
+
+
+@router.get("/{swimmer_id}/relays")
+def get_swimmer_relays(swimmer_id: int, db: DBSession = Depends(get_db)):
+    """Relay legs: listed apart, never counted as individual swims."""
+    return swimmer_relays(db, swimmer_id)
 
 
 def _format_time(t: models.SwimTime) -> dict:

@@ -331,6 +331,8 @@ def _meet_has_results(db: DBSession, meet, last_day: date) -> bool:
     """
     if db.query(models.SwimTime).filter(models.SwimTime.meet_id == meet.id).count():
         return True
+    if db.query(models.RelaySwim).filter(models.RelaySwim.meet_id == meet.id).count():
+        return True  # a team gala can be relays only
     return bool(db.query(models.SwimTime).filter(
         models.SwimTime.date.between(meet.date, last_day),
         models.SwimTime.meet.ilike(f"%{(meet.name or '')[:20]}%"),

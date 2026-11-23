@@ -213,6 +213,180 @@ function QualificationPanel({ meetId }) {
   )
 }
 
+const RELAY_LEG_STROKES = { Medley: ['Back', 'Breast', 'Fly', 'Free'], Freestyle: ['Free', 'Free', 'Free', 'Free'] }
+const relayLegLabel = (relayEvent, leg) =>
+  (RELAY_LEG_STROKES[(relayEvent || '').includes('Medley') ? 'Medley' : 'Freestyle'] || [])[leg - 1] || ''
+const blankRelay = () => ({
+  relay_event: '4x50 Medley', team: '', team_time: '', relay_group: null,
+  legs: [1, 2, 3, 4].map(leg => ({ leg, swimmer_id: '', time: '', splits: '' })),
+})
+const secondsText = (seconds) => {
+  if (typeof seconds !== 'number') return ''
+  const minutes = Math.floor(seconds / 60)
+  const rest = (seconds - minutes * 60).toFixed(2)
+  return minutes ? `${minutes}:${rest.padStart(5, '0')}` : rest
+}
+
+// Relay teams at a gala. Kept apart from individual results on purpose: a
+// relay leg never counts towards PBs, qualifying times or targets.
+function MeetRelaysPanel({ meetId, meet }) {
+  const [data, setData] = useState(null)
+  const [swimmers, setSwimmers] = useState([])
+  const [form, setForm] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.getMeetRelays(meetId).then(setData).catch(() => {})
+  }, [meetId])
+
+  const startForm = async (team) => {
+    if (!swimmers.length) {
+      try {
+        const squad = await api.getSwimmers()
+        setSwimmers(Array.isArray(squad) ? squad : [])
+      } catch (_) { /* the form still opens */ }
+    }
+    setError('')
+    if (!team) return setForm(blankRelay())
+    setForm({
+      relay_event: team.relay_event, team: team.team || '',
+      team_time: team.team_time_seconds ? secondsText(team.team_time_seconds) : '', relay_group: team.relay_group,
+      legs: [1, 2, 3, 4].map(leg => {
+        const saved = team.legs.find(item => item.leg === leg)
+        return {
+          leg, swimmer_id: saved ? String(saved.swimmer_id) : '', time: saved ? secondsText(saved.time_seconds) : '',
+          splits: saved?.splits ? saved.splits.map(secondsText).join(', ') : '',
+        }
+      }),
+    })
+  }
+
+  const setLeg = (leg, field, value) => setForm(previous => ({
+    ...previous, legs: previous.legs.map(item => item.leg === leg ? { ...item, [field]: value } : item),
+  }))
+
+  const save = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const legs = form.legs
+        .filter(leg => leg.swimmer_id || leg.time)
+        .map(leg => ({ leg: leg.leg, swimmer_id: Number(leg.swimmer_id), time: leg.time, splits: leg.splits || null }))
+      setData(await api.saveMeetRelay(meetId, { ...form, legs }))
+      setForm(null)
+    } catch (e) {
+      setError(e.message)
+    }
+    setSaving(false)
+  }
+
+  const remove = async (team) => {
+    if (!window.confirm(`Delete the ${team.relay_event}${team.team ? ` ${team.team}` : ''} team?`)) return
+    try { setData(await api.deleteMeetRelay(meetId, team.relay_group)) } catch (e) { alert(e.message) }
+  }
+
+  const meetIsOver = meet.date && new Date((meet.date_to || meet.date) + 'T23:59:59') < new Date()
+  if (!data || (!meetIsOver && !data.teams.length && !data.lead_off_legs.length)) return null
+
+  return (
+    <section className="bg-pool-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-pool-200">Relays</h2>
+          <p className="text-[11px] text-pool-500 mt-0.5">
+            Kept apart from individual results: relay swims never count towards PBs, qualifying times or targets.
+          </p>
+        </div>
+        {!form && (
+          <button onClick={() => startForm(null)} className="text-xs text-accent-400 shrink-0">Add relay</button>
+        )}
+      </div>
+
+      {data.teams.map(team => (
+        <div key={team.relay_group} className="border border-pool-700/60 rounded-lg p-3 space-y-1">
+          <div className="flex items-center gap-2">
+            <p className="text-xs font-semibold text-pool-200 flex-1">
+              {team.relay_event}{team.team ? ` · ${team.team}` : ''}
+              {team.team_time_seconds ? <span className="text-pool-400 font-normal"> · {secondsText(team.team_time_seconds)}</span> : null}
+            </p>
+            <button onClick={() => startForm(team)} className="text-[11px] text-accent-400">Edit</button>
+            <button onClick={() => remove(team)} className="text-[11px] text-pool-500">Delete</button>
+          </div>
+          {team.legs.map(leg => (
+            <p key={leg.id} className="text-xs text-pool-300 flex gap-2">
+              <span className="w-14 text-pool-500 shrink-0">Leg {leg.leg} {relayLegLabel(team.relay_event, leg.leg)}</span>
+              <span className="flex-1 min-w-0 truncate">{leg.swimmer_name}</span>
+              <span className="tabular-nums">{secondsText(leg.time_seconds)}</span>
+              {leg.splits?.length ? <span className="text-pool-500 tabular-nums">({leg.splits.map(secondsText).join(', ')})</span> : null}
+            </p>
+          ))}
+        </div>
+      ))}
+
+      {data.lead_off_legs.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-[11px] uppercase tracking-wide text-pool-500">Relay swims from results files</p>
+          {data.lead_off_legs.map(leg => (
+            <p key={leg.id} className="text-xs text-pool-300 flex gap-2">
+              <span className="flex-1 min-w-0 truncate">{leg.swimmer_name} · {leg.event}</span>
+              <span className="tabular-nums">{secondsText(leg.time_seconds)}</span>
+            </p>
+          ))}
+        </div>
+      )}
+
+      {!form && !data.teams.length && !data.lead_off_legs.length && (
+        <p className="text-xs text-pool-500">No relays recorded for this gala.</p>
+      )}
+
+      {form && (
+        <div className="border border-pool-700/60 rounded-lg p-3 space-y-2">
+          <div className="flex gap-2">
+            <select value={form.relay_event} onChange={e => setForm({ ...form, relay_event: e.target.value })}
+              className="flex-1 bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm">
+              {data.relay_events.map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+            <input value={form.team} onChange={e => setForm({ ...form, team: e.target.value })} placeholder="Team (A, Mixed B)"
+              className="w-32 bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm" />
+          </div>
+          {form.legs.map(leg => (
+            <div key={leg.leg} className="space-y-1">
+              <div className="flex gap-2 items-center">
+                <span className="w-16 text-[11px] text-pool-400 shrink-0">
+                  Leg {leg.leg} {relayLegLabel(form.relay_event, leg.leg)}
+                </span>
+                <select value={leg.swimmer_id} onChange={e => setLeg(leg.leg, 'swimmer_id', e.target.value)}
+                  className="flex-1 min-w-0 bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm">
+                  <option value="">Swimmer…</option>
+                  {swimmers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <input value={leg.time} onChange={e => setLeg(leg.leg, 'time', e.target.value)} placeholder="Time"
+                  inputMode="decimal" className="w-20 bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm text-right tabular-nums" />
+              </div>
+              <input value={leg.splits} onChange={e => setLeg(leg.leg, 'splits', e.target.value)}
+                placeholder="Splits, optional (e.g. 14.20, 30.10)"
+                className="w-full bg-pool-700/60 border border-pool-600 rounded-lg px-2 py-1 text-xs tabular-nums" />
+            </div>
+          ))}
+          <input value={form.team_time} onChange={e => setForm({ ...form, team_time: e.target.value })}
+            placeholder="Team time, optional" inputMode="decimal"
+            className="w-full bg-pool-700 border border-pool-600 rounded-lg px-2 py-1.5 text-sm tabular-nums" />
+          <p className="text-[11px] text-pool-500">Legs 2 to 4 are recorded as flying starts.</p>
+          {error && <p className="text-xs text-red-300">{error}</p>}
+          <div className="flex gap-2">
+            <button onClick={save} disabled={saving}
+              className="flex-1 bg-accent-600 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold">
+              {saving ? 'Saving…' : 'Save relay'}
+            </button>
+            <button onClick={() => setForm(null)} className="px-3 text-xs text-pool-400">Cancel</button>
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
+
 function MeetResultsPanel({ meetId, meet }) {
   const [data, setData] = useState(null)
   const [times, setTimes] = useState({})
@@ -874,6 +1048,7 @@ export default function MeetDetail() {
       )}
 
       {!editingDetails && <MeetResultsPanel meetId={id} meet={meet} />}
+      {!editingDetails && <MeetRelaysPanel meetId={id} meet={meet} />}
 
       {meet.notes && !editingDetails && (
         <div className="bg-pool-800 rounded-xl p-4">

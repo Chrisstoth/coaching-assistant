@@ -379,6 +379,7 @@ export default function SwimmerDetail() {
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [times, setTimes] = useState([])
+  const [relays, setRelays] = useState([])
   const [analyses, setAnalyses] = useState([])
   const [observations, setObservations] = useState([])
   const [obsFilter, setObsFilter] = useState('all')
@@ -474,7 +475,10 @@ export default function SwimmerDetail() {
       api.getRacingNarrative(id).then(r => { setRacingNarrative(r.narrative || ''); setRacingNarrativeDraft(r.narrative || '') })
       api.getRaceObservations(id).then(setRaceObs)
     }
-    if (show('Times')) api.getSwimmerTimes(id).then(setTimes)
+    if (show('Times')) {
+      api.getSwimmerTimes(id).then(setTimes)
+      api.getSwimmerRelays(id).then(setRelays).catch(() => setRelays([]))
+    }
     if (show('TargetTimes')) api.getSwimmerTargetTimes(id).then(setTargetTimes).catch(() => setTargetTimes([]))
     if (show('Analysis')) api.getAnalyses(id).then(setAnalyses)
     if (PROFILE_DATA_TABS.includes(tab)) {
@@ -2324,6 +2328,35 @@ export default function SwimmerDetail() {
                   </div>
                 </div>
               ))
+            )}
+            {relays.length > 0 && (
+              <div className="pt-2 space-y-2">
+                <div>
+                  <p className="text-xs font-semibold text-pool-300">Relay swims</p>
+                  <p className="text-[11px] text-pool-500">
+                    Not individual swims: they never count towards PBs, qualifying times or targets.
+                  </p>
+                </div>
+                {relays.map(r => (
+                  <div key={r.id} className="bg-pool-800/60 border border-pool-700/60 rounded-xl p-3 flex justify-between items-center">
+                    <div>
+                      <p className="text-sm font-medium">
+                        {r.event}{r.course ? ` ${r.course}` : ''}
+                        <span className="text-pool-400 text-xs font-normal">
+                          {' '}· {r.relay_event ? `${r.relay_event} relay` : 'relay'}{r.leg ? `, leg ${r.leg}` : ''}
+                          {r.flying_start ? ' (flying start)' : ''}
+                        </span>
+                      </p>
+                      <p className="text-pool-400 text-xs">{r.date} · {r.meet || 'Gala'}</p>
+                    </div>
+                    <p className="font-mono font-bold text-pool-300">
+                      {r.time_seconds >= 60
+                        ? `${Math.floor(r.time_seconds / 60)}:${(r.time_seconds % 60).toFixed(2).padStart(5, '0')}`
+                        : r.time_seconds.toFixed(2)}
+                    </p>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}

@@ -9,6 +9,7 @@ from backend.services.importer import import_swimrankings_csv, import_combined_s
 from backend.services.qualification_service import recalculate_standard_set
 from backend.services.lanewatch import pair_races_quietly
 from backend.services.meet_links import link_swims_to_meets
+from backend.services.relays import move_relays_out
 
 router = APIRouter()
 
@@ -55,6 +56,8 @@ async def import_combined_workbook(
                 tracker_content=tracker_content,
                 filename=filename,
             )
+        # Relay swims never count as individual swims: move them to the relays.
+        result["relay_swims_moved"] = move_relays_out(db)
         result["qualification_sets_refreshed"] = _refresh_confirmed_qualification_sets(db)
         # Tie the new swims to the galas in the app they were swum at.
         result["swims_linked_to_galas"] = link_swims_to_meets(db)
@@ -79,6 +82,7 @@ async def import_csv(
         raise HTTPException(status_code=400, detail="File must be a .csv")
     content = await file.read()
     result = import_swimrankings_csv(content, event_name, db)
+    result["relay_swims_moved"] = move_relays_out(db)
     result["qualification_sets_refreshed"] = _refresh_confirmed_qualification_sets(db)
     result["swims_linked_to_galas"] = link_swims_to_meets(db)
     return result

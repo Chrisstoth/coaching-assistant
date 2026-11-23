@@ -2479,6 +2479,88 @@ class CoreFlowTests(unittest.TestCase):
         later = import_rows(f"2:07.40,{when(day + timedelta(days=1))},Uni Tietest,7500001,200 Freestyle,S,{bucs}\n")
         self.assertEqual(later["swims_linked_to_galas"], 1)
 
+    def test_relay_swims_are_kept_apart_and_never_count_as_individual_swims(self):
+        ids = []
+        for name, number in (("Relay One", "7600001"), ("Relay Two", "7600002"),
+                             ("Relay Three", "7600003"), ("Relay Four", "7600004")):
+            response = self.client.post("/swimmers", headers=self.headers, json={
+                "name": name, "gender": "F", "swimrankings_id": number,
+            })
+            self.assertEqual(response.status_code, 201, response.text)
+            ids.append(response.json()["id"])
+        day = date.today() - timedelta(days=5)
+        meet_id = self.client.post("/meets", headers=self.headers, json={
+            "name": "Team Meet", "date": day.isoformat(), "course": "SCM",
+        }).json()["id"]
+        countdowns = self.client.get("/dashboard/meet-countdowns", headers=self.headers).json()
+        self.assertIn(meet_id, [item["meet_id"] for item in countdowns["awaiting_results"]])
+
+        when = day.strftime("%d/%m/%Y")
+        imported = self.client.post(
+            "/times/import/combined", headers=self.headers, data={"mode": "club"},
+            files={"file": ("club.csv", (
+                "Time,Date,Name,ID,Stroke,Course,Meet,Round\n"
+                # Round R is a relay-approved lead-off: an official individual time.
+                f"31.50,{when},Relay One,7600001,50 Backstroke,S,Nationals,R\n"
+                # A swim whose event is a relay is not.
+                f"28.10,{when},Relay Two,7600002,4x50 Freestyle Relay,S,Team Meet,F\n"
+            ).encode(), "text/csv")},
+        )
+        self.assertEqual(imported.status_code, 200, imported.text)
+        self.assertEqual(imported.json()["relay_swims_moved"], 1)
+        one_times = self.client.get(f"/swimmers/{ids[0]}/times", headers=self.headers).json()
+        self.assertEqual([(t["event"], t["round"]) for t in one_times], [("50 Backstroke SCM", "R")])
+        self.assertEqual(self.client.get(f"/swimmers/{ids[1]}/times", headers=self.headers).json(), [])
+        self.assertEqual(len(self.client.get(f"/swimmers/{ids[1]}/relays", headers=self.headers).json()), 1)
+
+        team = {
+            "relay_event": "4x50 Medley", "team": "A", "team_time": "2:05.40",
+            "legs": [
+                {"leg": 1, "swimmer_id": ids[0], "time": "31.90", "splits": "15.40"},
+                {"leg": 2, "swimmer_id": ids[1], "time": "34.10"},
+                {"leg": 3, "swimmer_id": ids[2], "time": "30.20"},
+                {"leg": 4, "swimmer_id": ids[3], "time": "29.20"},
+            ],
+        }
+        saved = self.client.post(f"/meets/{meet_id}/relays", headers=self.headers, json=team)
+        self.assertEqual(saved.status_code, 200, saved.text)
+        teams = saved.json()["teams"]
+        self.assertEqual(len(teams), 1)
+        legs = teams[0]["legs"]
+        self.assertEqual([leg["event"] for leg in legs],
+                         ["50 Backstroke", "50 Breaststroke", "50 Butterfly", "50 Freestyle"])
+        self.assertEqual([leg["flying_start"] for leg in legs], [False, True, True, True])
+        self.assertEqual(legs[0]["splits"], [15.4])
+        self.assertEqual(teams[0]["team_time_seconds"], 125.4)
+
+        # Never an individual swim: not in the times, not a PB.
+        three_times = self.client.get(f"/swimmers/{ids[2]}/times", headers=self.headers).json()
+        self.assertEqual(three_times, [])
+        three_relays = self.client.get(f"/swimmers/{ids[2]}/relays", headers=self.headers).json()
+        self.assertEqual((three_relays[0]["relay_event"], three_relays[0]["leg"], three_relays[0]["flying_start"]),
+                         ("4x50 Medley", 3, True))
+        countdowns = self.client.get("/dashboard/meet-countdowns", headers=self.headers).json()
+        self.assertNotIn(meet_id, [item["meet_id"] for item in countdowns["awaiting_results"]],
+                         "A relays-only gala has its results.")
+
+        # Editing replaces the team; mistakes are refused.
+        group = teams[0]["relay_group"]
+        team["relay_group"] = group
+        team["legs"][3]["time"] = "29.05"
+        edited = self.client.post(f"/meets/{meet_id}/relays", headers=self.headers, json=team).json()
+        self.assertEqual(len(edited["teams"]), 1)
+        self.assertEqual(edited["teams"][0]["legs"][3]["time_seconds"], 29.05)
+        bad = dict(team, legs=[{"leg": 1, "swimmer_id": ids[0], "time": "abc"}])
+        self.assertEqual(self.client.post(f"/meets/{meet_id}/relays", headers=self.headers, json=bad).status_code, 400)
+        removed = self.client.delete(f"/meets/{meet_id}/relays/{group}", headers=self.headers)
+        self.assertEqual(removed.status_code, 200, removed.text)
+        self.assertEqual(removed.json()["teams"], [])
+
+        # A gala with swims tied to it can still be deleted; the swims stay.
+        self.client.post(f"/meets/{meet_id}/relays", headers=self.headers, json=dict(team, relay_group=None))
+        self.assertEqual(self.client.delete(f"/meets/{meet_id}", headers=self.headers).status_code, 204)
+        self.assertEqual(len(self.client.get(f"/swimmers/{ids[2]}/relays", headers=self.headers).json()), 1)
+
     def test_pasted_swimmingresults_page_adds_gala_results_once(self):
         def make(name, swimrankings_id=None):
             response = self.client.post("/swimmers", headers=self.headers, json={

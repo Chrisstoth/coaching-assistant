@@ -1502,6 +1502,42 @@ class LaneWatchConnection(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class RelaySwim(Base):
+    """One swimmer's leg of a relay.
+
+    Kept apart from SwimTime on purpose: a relay leg is never an individual
+    swim, so it must not count towards PBs, qualifying times, targets or
+    predictions, and everything that works those out reads SwimTime only.
+    Legs 2-4 are flying starts, so not even comparable with a flat-start swim.
+    """
+    __tablename__ = "relay_swims"
+
+    id = Column(Integer, primary_key=True, index=True)
+    swimmer_id = Column(Integer, ForeignKey("swimmers.id", ondelete="CASCADE"), nullable=False, index=True)
+    meet_id = Column(Integer, ForeignKey("meets.id", ondelete="SET NULL"), nullable=True, index=True)
+    # The four legs of one team share a relay_group; an imported lead-off leg
+    # on its own has none.
+    relay_group = Column(String, nullable=True, index=True)
+    relay_event = Column(String, nullable=True)       # "4x50 Medley"; unknown for an imported lead-off
+    team = Column(String, nullable=True)              # "A", "Mixed B"
+    team_time_seconds = Column(Float, nullable=True)
+    leg = Column(Integer, nullable=True)              # 1-4; 1 is the lead-off
+    event = Column(String, nullable=False)            # what this leg swam: "50 Backstroke"
+    course = Column(String(3), nullable=True)         # SCM / LCM
+    time_seconds = Column(Float, nullable=False)
+    splits = Column(JSON, nullable=True)
+    flying_start = Column(Boolean, default=False)
+    date = Column(Date, nullable=True)
+    meet = Column(String, nullable=True)
+    venue = Column(String, nullable=True)
+    source = Column(String, nullable=True)            # relay_entry / club_results / csv / ...
+    lanewatch_log_id = Column(String, nullable=True)
+    lanewatch_paired_by = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    swimmer = relationship("Swimmer")
+
+
 class LaneWatchConnectAttempt(Base):
     """One "Connect with LaneWatch" in progress (OAuth state + PKCE verifier).
 

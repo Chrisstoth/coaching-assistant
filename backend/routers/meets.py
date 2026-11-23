@@ -18,6 +18,7 @@ from backend.services.event_normalizer import (
 from backend.services.importer import SquadMatcher, parse_time_to_seconds
 from backend.services.lanewatch import pair_races_quietly
 from backend.services.meet_links import tie_named_swims, untied_swims_near
+from backend.services import relays as relay_svc
 from backend.services.results_page import ResultsPageError, course_from_title, parse_results_pages
 from backend.services.entries_page import (
     EntriesPageError,
@@ -338,6 +339,11 @@ def update_meet(meet_id: int, body: dict = Body(...), db: DBSession = Depends(ge
 @router.delete("/{meet_id}", status_code=204)
 def delete_meet(meet_id: int, db: DBSession = Depends(get_db)):
     meet = _get_or_404(meet_id, db)
+    # The swims stay in each swimmer's history; they're just no longer tied to it.
+    db.query(models.SwimTime).filter(models.SwimTime.meet_id == meet.id).update(
+        {"meet_id": None}, synchronize_session=False)
+    db.query(models.RelaySwim).filter(models.RelaySwim.meet_id == meet.id).update(
+        {"meet_id": None}, synchronize_session=False)
     db.delete(meet)
     db.commit()
 
@@ -979,6 +985,45 @@ def save_meet_results(meet_id: int, body: MeetResultsSubmit, db: DBSession = Dep
     return {"saved": saved, "cleared": cleared, "errors": errors, **get_meet_results(meet_id, db)}
 
 
+class RelayLegIn(BaseModel):
+    leg: int
+    swimmer_id: int
+    time: str = Field(..., max_length=20)
+    splits: Optional[str] = Field(default=None, max_length=200)   # "14.20, 30.10"
+
+
+class RelayTeamIn(BaseModel):
+    relay_event: str                  # "4x50 Medley"
+    team: Optional[str] = Field(default=None, max_length=40)
+    team_time: Optional[str] = Field(default=None, max_length=20)
+    relay_group: Optional[str] = Field(default=None, max_length=64)   # set to replace a saved team
+    legs: list[RelayLegIn] = Field(..., min_length=1, max_length=4)
+
+
+@router.get("/{meet_id}/relays")
+def get_relays(meet_id: int, db: DBSession = Depends(get_db)):
+    """This gala's relay teams and legs. Never counted as individual swims."""
+    return relay_svc.meet_relays(db, _get_or_404(meet_id, db))
+
+
+@router.post("/{meet_id}/relays")
+def save_relay(meet_id: int, body: RelayTeamIn, db: DBSession = Depends(get_db)):
+    meet = _get_or_404(meet_id, db)
+    try:
+        relay_svc.save_relay_team(db, meet, body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return relay_svc.meet_relays(db, meet)
+
+
+@router.delete("/{meet_id}/relays/{relay_group}")
+def delete_relay(meet_id: int, relay_group: str, db: DBSession = Depends(get_db)):
+    meet = _get_or_404(meet_id, db)
+    if not relay_svc.delete_relay_team(db, meet, relay_group):
+        raise HTTPException(status_code=404, detail="Relay team not found")
+    return relay_svc.meet_relays(db, meet)
+
+
 class TieSwimsIn(BaseModel):
     # What the results file called the gala; "" for swims it gave no gala name.
     results_names: list[str] = Field(..., min_length=1, max_length=20)
@@ -1119,6 +1164,7 @@ def import_pasted_results(meet_id: int, body: ResultsPasteIn, background: Backgr
         added += 1
 
     db.commit()
+    relay_svc.move_relays_out(db)   # a relay lead-off on the page is not an individual swim
     # The gala's swims may be races already analysed in LaneWatch.
     background.add_task(pair_races_quietly, sorted(swimmer_ids))
     return {
