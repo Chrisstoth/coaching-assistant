@@ -223,6 +223,8 @@ function MeetResultsPanel({ meetId, meet }) {
   const [pasteCourse, setPasteCourse] = useState('')
   const [readingPaste, setReadingPaste] = useState(false)
   const [pasteSummary, setPasteSummary] = useState(null)
+  const [untied, setUntied] = useState(null)
+  const [finding, setFinding] = useState(false)
 
   const rowKey = (row) => `${row.swimmer_id}::${row.canonical_event}::${row.round || ''}`
 
@@ -257,6 +259,30 @@ function MeetResultsPanel({ meetId, meet }) {
       alert('Could not read the results: ' + e.message)
     }
     setReadingPaste(false)
+  }
+
+  // Swims already imported from around this gala's dates that aren't tied to
+  // any gala, grouped by what the results file called the gala.
+  const findUntied = async () => {
+    setFinding(true)
+    try {
+      setUntied((await api.getUntiedSwims(meetId)).groups)
+    } catch (e) {
+      alert('Could not look for swims: ' + e.message)
+    }
+    setFinding(false)
+  }
+
+  const tieGroup = async (group) => {
+    setFinding(true)
+    try {
+      const result = await api.tieSwimsToMeet(meetId, [group.results_name || ''])
+      showResults(result)
+      setUntied(previous => previous.filter(item => item !== group))
+    } catch (e) {
+      alert('Could not add those swims: ' + e.message)
+    }
+    setFinding(false)
   }
 
   const save = async () => {
@@ -297,6 +323,45 @@ function MeetResultsPanel({ meetId, meet }) {
           {open ? 'Close' : data.recorded_count > 0 ? 'Edit results' : 'Add results'}
         </button>
       </div>
+
+      {open && meet.date && (
+        <div className="rounded-lg border border-pool-700/60 p-3 space-y-2">
+          <p className="text-xs font-semibold text-pool-300">Already imported?</p>
+          <p className="text-[11px] text-pool-500 leading-relaxed">
+            If this gala&apos;s results came in with a results file, find them here and add them to this gala.
+            The gala remembers the name the file uses, so later imports join it by themselves.
+          </p>
+          {untied === null ? (
+            <button onClick={findUntied} disabled={finding}
+              className="w-full bg-pool-700 border border-pool-600 disabled:opacity-40 rounded-lg py-2 text-sm font-semibold">
+              {finding ? 'Looking…' : 'Find its swims already in the app'}
+            </button>
+          ) : untied.length === 0 ? (
+            <p className="text-[11px] text-pool-400">
+              No swims from around these dates are waiting for a gala. Check the gala&apos;s dates, or paste its results below.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {untied.map(group => (
+                <div key={group.results_name || '(no gala name)'} className="rounded-lg bg-pool-700/50 p-2.5 space-y-1.5">
+                  <p className="text-xs text-pool-100">{group.results_name || 'No gala name in the file'}</p>
+                  <p className="text-[11px] text-pool-400">
+                    {group.swims} swim{group.swims === 1 ? '' : 's'} · {group.first_date}
+                    {group.last_date !== group.first_date ? ` to ${group.last_date}` : ''}
+                    {group.courses.length ? ` · ${group.courses.join(', ')}` : ''}
+                    {!group.course_matches && <span className="text-amber-300"> · not this gala&apos;s course</span>}
+                  </p>
+                  <p className="text-[11px] text-pool-500">{group.swimmers.join(', ')}</p>
+                  <button onClick={() => tieGroup(group)} disabled={finding}
+                    className="w-full bg-accent-600 disabled:opacity-40 rounded-lg py-1.5 text-xs font-semibold">
+                    Add these {group.swims} to this gala
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {open && (
         <div className="rounded-lg border border-pool-700/60 p-3 space-y-2">

@@ -11,7 +11,7 @@ in the file doesn't matter.
 Only swims not yet tied to a gala are touched; a link made any other way is
 never moved.
 """
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy.orm import Session as DBSession
@@ -37,6 +37,19 @@ def link_swims_to_meets(db: DBSession, swimmer_ids: Optional[set] = None, today:
     linked = 0
     for meet in meets:
         last_day = meet.date_to or meet.date
+        # A name results files use for this gala, learnt from the coach.
+        if meet.results_names:
+            first, last = _window(meet)
+            query = db.query(models.SwimTime).filter(
+                models.SwimTime.meet_id.is_(None),
+                models.SwimTime.meet.in_(list(meet.results_names)),
+                models.SwimTime.date.between(first, last),
+            )
+            if swimmer_ids is not None:
+                query = query.filter(models.SwimTime.swimmer_id.in_(list(swimmer_ids)))
+            for swim in query.all():
+                swim.meet_id = meet.id
+                linked += 1
         # Who swam at this gala, and which events, as far as the app knows.
         events: dict[int, set] = {}
         for entry in db.query(models.MeetEntry).filter(models.MeetEntry.meet_id == meet.id).all():
@@ -66,6 +79,81 @@ def link_swims_to_meets(db: DBSession, swimmer_ids: Optional[set] = None, today:
     if linked:
         db.commit()
     return linked
+
+
+# ---------------------------------------------------------------------------
+# The coach adds swims to a gala by hand
+# ---------------------------------------------------------------------------
+#
+# For a gala the rules above can't place - nobody entered in the app, dates
+# a little out - the Results card lists the untied swims from around the
+# gala's dates, grouped by what the results file called the gala, and the
+# coach picks the right group.
+
+SLACK_DAYS = 3
+
+
+def _window(meet: models.Meet) -> tuple[date, date]:
+    return meet.date - timedelta(days=SLACK_DAYS), (meet.date_to or meet.date) + timedelta(days=SLACK_DAYS)
+
+
+def untied_swims_near(db: DBSession, meet: models.Meet) -> list[dict]:
+    """Swims tied to no gala from around this gala's dates, grouped by the
+    gala name the results file used."""
+    if not meet.date:
+        return []
+    first, last = _window(meet)
+    swims = db.query(models.SwimTime).filter(
+        models.SwimTime.meet_id.is_(None),
+        models.SwimTime.date.between(first, last),
+    ).all()
+    names = {swimmer.id: swimmer.name for swimmer in db.query(models.Swimmer).filter(
+        models.Swimmer.id.in_({swim.swimmer_id for swim in swims})).all()} if swims else {}
+    groups: dict[str, dict] = {}
+    for swim in swims:
+        key = swim.meet or ""
+        group = groups.setdefault(key, {
+            "results_name": swim.meet, "swims": 0, "swimmers": set(), "courses": set(), "dates": set(),
+        })
+        group["swims"] += 1
+        group["swimmers"].add(names.get(swim.swimmer_id, "?"))
+        if _course_of(swim):
+            group["courses"].add(_course_of(swim))
+        group["dates"].add(swim.date)
+    out = [{
+        "results_name": group["results_name"],
+        "swims": group["swims"],
+        "swimmers": sorted(group["swimmers"]),
+        "courses": sorted(group["courses"]),
+        "first_date": min(group["dates"]).isoformat(),
+        "last_date": max(group["dates"]).isoformat(),
+        "course_matches": not meet.course or not group["courses"] or group["courses"] == {meet.course},
+    } for group in groups.values()]
+    out.sort(key=lambda group: (not group["course_matches"], -group["swims"]))
+    return out
+
+
+def tie_named_swims(db: DBSession, meet: models.Meet, results_names: list) -> int:
+    """Tie the untied swims the results file filed under these names (around
+    this gala's dates) to this gala, and remember the names for next time."""
+    if not meet.date:
+        raise ValueError("Set the gala's date first.")
+    wanted = [name for name in results_names if name]
+    want_unnamed = any(not name for name in results_names)
+    first, last = _window(meet)
+    swims = db.query(models.SwimTime).filter(
+        models.SwimTime.meet_id.is_(None),
+        models.SwimTime.date.between(first, last),
+    ).all()
+    tied = 0
+    for swim in swims:
+        if (swim.meet in wanted) or (want_unnamed and not swim.meet):
+            swim.meet_id = meet.id
+            tied += 1
+    if wanted:
+        meet.results_names = sorted(set(meet.results_names or []) | set(wanted))
+    db.commit()
+    return tied
 
 
 def link_swims_to_meets_on_startup() -> None:

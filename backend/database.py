@@ -118,6 +118,7 @@ def _apply_migrations():
             add_col("meets", "date_to", "DATE")
             add_col("meets", "course", "VARCHAR")
             add_col("meets", "level", "VARCHAR")
+            add_col("meets", "results_names", "JSON")
             add_col("meets", "warm_up_time", "VARCHAR")
             add_col("meets", "created_at", "DATETIME")
             add_col("meets", "results_prompt_dismissed_at", "DATETIME")

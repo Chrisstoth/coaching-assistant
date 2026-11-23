@@ -2431,6 +2431,54 @@ class CoreFlowTests(unittest.TestCase):
         self.assertNotIn(meet_id, [item["meet_id"] for item in countdowns["awaiting_results"]],
                          "The gala stops asking for results it already has.")
 
+    def test_the_coach_adds_imported_swims_to_a_gala_nobody_was_entered_for(self):
+        swimmer = self.client.post("/swimmers", headers=self.headers, json={
+            "name": "Uni Tietest", "gender": "M", "swimrankings_id": "7500001",
+        })
+        self.assertEqual(swimmer.status_code, 201, swimmer.text)
+        day = date.today() - timedelta(days=10)
+        meet_id = self.client.post("/meets", headers=self.headers, json={
+            "name": "BUCS", "date": day.isoformat(), "course": "SCM",
+        }).json()["id"]
+        when = lambda d: d.strftime("%d/%m/%Y")  # noqa: E731
+
+        def import_rows(*rows):
+            response = self.client.post(
+                "/times/import/combined", headers=self.headers, data={"mode": "club"},
+                files={"file": ("club.csv", ("Time,Date,Name,ID,Stroke,Course,Meet\n" + "".join(rows)).encode(),
+                                "text/csv")},
+            )
+            self.assertEqual(response.status_code, 200, response.text)
+            return response.json()
+
+        bucs = "BUCS Short Course Championships 2026-27"
+        first = import_rows(
+            f"23.41,{when(day)},Uni Tietest,7500001,50 Freestyle,S,{bucs}\n",
+            # A day after the date the gala has in the app.
+            f"51.08,{when(day + timedelta(days=1))},Uni Tietest,7500001,100 Freestyle,S,{bucs}\n",
+            f"52.00,{when(day + timedelta(days=2))},Uni Tietest,7500001,100 Freestyle,S,County Open\n",
+        )
+        self.assertEqual(first["swims_linked_to_galas"], 0, "Nobody was entered, so the app can't tell.")
+
+        groups = self.client.get(f"/meets/{meet_id}/results/untied", headers=self.headers).json()["groups"]
+        by_name = {group["results_name"]: group for group in groups}
+        self.assertEqual(by_name[bucs]["swims"], 2)
+        self.assertEqual(by_name[bucs]["swimmers"], ["Uni Tietest"])
+        self.assertTrue(by_name[bucs]["course_matches"])
+        self.assertIn("County Open", by_name)
+
+        tied = self.client.post(f"/meets/{meet_id}/results/tie", headers=self.headers,
+                                json={"results_names": [bucs]})
+        self.assertEqual(tied.status_code, 200, tied.text)
+        self.assertEqual(tied.json()["tied"], 2)
+        self.assertEqual(tied.json()["recorded_count"], 2)
+        remaining = self.client.get(f"/meets/{meet_id}/results/untied", headers=self.headers).json()["groups"]
+        self.assertEqual([group["results_name"] for group in remaining], ["County Open"])
+
+        # The gala remembers the file's name for it: a later import joins it by itself.
+        later = import_rows(f"2:07.40,{when(day + timedelta(days=1))},Uni Tietest,7500001,200 Freestyle,S,{bucs}\n")
+        self.assertEqual(later["swims_linked_to_galas"], 1)
+
     def test_pasted_swimmingresults_page_adds_gala_results_once(self):
         def make(name, swimrankings_id=None):
             response = self.client.post("/swimmers", headers=self.headers, json={

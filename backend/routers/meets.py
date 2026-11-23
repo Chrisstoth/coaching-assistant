@@ -17,6 +17,7 @@ from backend.services.event_normalizer import (
 )
 from backend.services.importer import SquadMatcher, parse_time_to_seconds
 from backend.services.lanewatch import pair_races_quietly
+from backend.services.meet_links import tie_named_swims, untied_swims_near
 from backend.services.results_page import ResultsPageError, course_from_title, parse_results_pages
 from backend.services.entries_page import (
     EntriesPageError,
@@ -976,6 +977,32 @@ def save_meet_results(meet_id: int, body: MeetResultsSubmit, db: DBSession = Dep
 
     db.commit()
     return {"saved": saved, "cleared": cleared, "errors": errors, **get_meet_results(meet_id, db)}
+
+
+class TieSwimsIn(BaseModel):
+    # What the results file called the gala; "" for swims it gave no gala name.
+    results_names: list[str] = Field(..., min_length=1, max_length=20)
+
+
+@router.get("/{meet_id}/results/untied")
+def untied_swims(meet_id: int, db: DBSession = Depends(get_db)):
+    """Swims already in the app from around this gala's dates that aren't tied
+    to any gala, grouped by what the results file called the gala."""
+    meet = _get_or_404(meet_id, db)
+    if not meet.date:
+        raise HTTPException(status_code=400, detail="Set the gala's date first.")
+    return {"groups": untied_swims_near(db, meet)}
+
+
+@router.post("/{meet_id}/results/tie")
+def tie_swims(meet_id: int, body: TieSwimsIn, db: DBSession = Depends(get_db)):
+    """Add the chosen groups of swims to this gala, and remember the names."""
+    meet = _get_or_404(meet_id, db)
+    try:
+        tied = tie_named_swims(db, meet, body.results_names)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"tied": tied, **get_meet_results(meet_id, db)}
 
 
 class PastedPage(BaseModel):

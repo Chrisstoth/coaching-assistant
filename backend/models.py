@@ -347,6 +347,10 @@ class Meet(Base):
     warm_up_time = Column(String, nullable=True)     # "07:30"
     notes = Column(Text, nullable=True)
     results_prompt_dismissed_at = Column(DateTime(timezone=True), nullable=True)
+    # What results files call this gala (e.g. "BUCS Short Course Championships
+    # 2026-27"), learnt when the coach adds those swims to it, so later
+    # imports under the same name join it by themselves.
+    results_names = Column(JSON, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

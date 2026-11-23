@@ -513,6 +513,9 @@ export const api = {
   importMeetTimetable: (meetId, data) => request('POST', `/meets/${meetId}/timetable/import`, data),
   getMeetResults: (meetId) => request('GET', `/meets/${meetId}/results`),
   saveMeetResults: (meetId, results) => request('POST', `/meets/${meetId}/results`, { results }),
+  getUntiedSwims: (meetId) => request('GET', `/meets/${meetId}/results/untied`),
+  tieSwimsToMeet: (meetId, resultsNames) =>
+    request('POST', `/meets/${meetId}/results/tie`, { results_names: resultsNames }),
   importPastedResults: (meetId, pages, course) =>
     request('POST', `/meets/${meetId}/results/paste`, { pages, course: course || null }),
   dismissMeetResultsPrompt: (meetId) => request('POST', `/meets/${meetId}/dismiss-results-prompt`),
