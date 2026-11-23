@@ -160,6 +160,11 @@ class SwimTime(Base):
     age_at_swim = Column(Float, nullable=True)
     source = Column(String, default="csv")              # csv / manual / meet_results
     meet_id = Column(Integer, ForeignKey("meets.id"), nullable=True, index=True)
+    # The LaneWatch race this swim is (its analysis is read live from there).
+    # lanewatch_paired_by: 'auto', 'coach', or 'unpaired' - the coach said this
+    # race is NOT this swim, so it is never suggested for it again.
+    lanewatch_log_id = Column(String, nullable=True, index=True)
+    lanewatch_paired_by = Column(String, nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

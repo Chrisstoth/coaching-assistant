@@ -124,6 +124,8 @@ def _apply_migrations():
 
         if "swim_times" in insp.get_table_names():
             add_col("swim_times", "meet_id", "INTEGER")
+            add_col("swim_times", "lanewatch_log_id", "VARCHAR")
+            add_col("swim_times", "lanewatch_paired_by", "VARCHAR")
 
         if "session_debriefs" in insp.get_table_names():
             add_col("session_debriefs", "proposals", "JSON")

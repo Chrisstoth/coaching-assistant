@@ -46,3 +46,12 @@ const settings = await read('../src/pages/Settings.jsx')
 assert.match(settings, /<LaneWatchPanel \/>/)
 
 console.log('LaneWatch checks passed')
+
+// --- races are matched to the official swims ------------------------------------
+const panelNow = await read('../src/components/LaneWatchPanel.jsx')
+assert.match(panelNow, /api\.pairLaneWatchRaces\(\)/)
+assert.match(panelNow, /api\.chooseLaneWatchRace\(swimTimeId, choice\.race\.lanewatch_log_id\)/,
+  'When two swims are too close to call, the coach chooses.')
+assert.match(await read('../src/pages/SwimmerDetail.jsx'), /t\.lanewatch_log_id &&/, 'A matched swim is marked.')
+assert.match(await read('../src/pages/MeetDetail.jsx'), /row\.lanewatch_log_id &&/)
+console.log('LaneWatch race matching checks passed')

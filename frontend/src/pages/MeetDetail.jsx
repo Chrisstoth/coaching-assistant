@@ -4,6 +4,7 @@ import { api } from '../api'
 import { SWIM_EVENTS } from '../swimEvents'
 import { slimPastedHtml } from '../pastedPage'
 import AskTheStaff from '../components/AskTheStaff'
+import { LaneWatchMark } from '../components/LaneWatchBrand'
 
 const ROUND_LABELS = { H: 'heat', F: 'final', S: 'semi', A: 'A final', B: 'B final' }
 const LEVEL_LABELS = { club: 'Club', regional: 'Regional', national: 'National', international: 'International' }
@@ -408,7 +409,10 @@ function MeetResultsPanel({ meetId, meet }) {
               <span className="text-xs text-pool-300 min-w-0 truncate">
                 {row.swimmer_name} · {row.event}{row.round ? ` · ${ROUND_LABELS[row.round] || row.round}` : ''}
               </span>
-              <span className="text-sm text-pool-100 tabular-nums shrink-0 ml-2">{row.recorded_time}</span>
+              <span className="text-sm text-pool-100 tabular-nums shrink-0 ml-2 flex items-center gap-1.5">
+                {row.lanewatch_log_id && <LaneWatchMark className="h-3.5" label="Analysed in LaneWatch" />}
+                {row.recorded_time}
+              </span>
             </div>
           ))}
         </div>

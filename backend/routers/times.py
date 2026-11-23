@@ -1,12 +1,13 @@
 import json
 from typing import Optional
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, UploadFile, File, Form, HTTPException, Query
 from sqlalchemy.orm import Session as DBSession
 
 from backend.database import get_db
 from backend import models
 from backend.services.importer import import_swimrankings_csv, import_combined_swims_xlsx, import_club_results
 from backend.services.qualification_service import recalculate_standard_set
+from backend.services.lanewatch import pair_races_quietly
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ def _refresh_confirmed_qualification_sets(db: DBSession) -> int:
 
 @router.post("/import/combined")
 async def import_combined_workbook(
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     tracker_file: Optional[UploadFile] = File(None),
     squad: str = Form("Silver 1"),
@@ -53,6 +55,8 @@ async def import_combined_workbook(
                 filename=filename,
             )
         result["qualification_sets_refreshed"] = _refresh_confirmed_qualification_sets(db)
+        # New swims may be races already analysed in LaneWatch.
+        background.add_task(pair_races_quietly)
         return result
     except ValueError as exc:
         db.rollback()

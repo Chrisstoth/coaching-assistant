@@ -1711,4 +1711,5 @@ def _format_time(t: models.SwimTime) -> dict:
         "round": t.round,
         "splits": t.splits,
         "source": t.source,
+        "lanewatch_log_id": t.lanewatch_log_id if t.lanewatch_paired_by in ("auto", "coach") else None,
     }

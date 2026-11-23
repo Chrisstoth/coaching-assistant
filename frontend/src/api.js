@@ -769,6 +769,10 @@ export const api = {
   getLaneWatchLinks: () => request('GET', '/lanewatch/links'),
   saveLaneWatchLinks: (links) => request('POST', '/lanewatch/links', { links }),
   unlinkLaneWatch: (swimmerId) => request('DELETE', `/lanewatch/links/${swimmerId}`),
+  pairLaneWatchRaces: () => request('POST', '/lanewatch/races/pair', {}),
+  chooseLaneWatchRace: (swimTimeId, lanewatchLogId) =>
+    request('POST', '/lanewatch/races/choose', { swim_time_id: swimTimeId, lanewatch_log_id: lanewatchLogId }),
+  unpairLaneWatchRace: (swimTimeId) => request('POST', '/lanewatch/races/unpair', { swim_time_id: swimTimeId }),
   analyseBlock: (id) => request('POST', `/season/blocks/${id}/ai-analysis`),
   getMicrocycles: (params = {}) => {
     const qs = new URLSearchParams(params).toString()

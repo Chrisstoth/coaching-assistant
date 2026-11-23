@@ -398,6 +398,246 @@ def unlink(db: DBSession, swimmer_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Pairing LaneWatch races with the swims in the times history
+# ---------------------------------------------------------------------------
+#
+# Most races analysed in LaneWatch are also official results here. Pairing
+# them lets the official time and splits sit next to LaneWatch's analysis.
+# Only the LaneWatch race's id is kept on the swim; the race is still read
+# live, so a swimmer who stops sharing stops being readable.
+#
+# A race is the same swim when it is the same swimmer (through the confirmed
+# swimmer pairing), event and course, within a day (a pasted gala gives every
+# swim the gala's first day), and close in time. Coaches may keep the official
+# time in LaneWatch or their own from the video, so a time up to a second out
+# still pairs; the closest wins, the round settles a heat against a final, and
+# when two swims are too close to call the coach chooses.
+
+PAIR_SECONDS = 1.0       # how far a LaneWatch time may be from the official one
+CLEAR_MARGIN = 0.3       # how much closer the best swim must be than the next
+PAIRED = ("auto", "coach")
+
+
+def _lw_course(value) -> Optional[str]:
+    text = str(value or "").strip().upper()
+    if text.endswith("Y"):
+        return "SCY"     # yards: never the same swim as a metric result
+    if text.startswith("L") or text == "50M":
+        return "LCM"
+    if text.startswith("S") or text == "25M":
+        return "SCM"
+    return None
+
+
+def _round_code(value) -> Optional[str]:
+    text = str(value or "").strip().upper()
+    if not text:
+        return None
+    if text[0] in ("H", "P"):              # heat, prelim
+        return "H"
+    if text[0] == "F" or text in ("A", "B", "C"):
+        return "F"
+    if text.startswith("SEMI") or text == "S":
+        return "S"
+    if text[0] == "R":
+        return "R"
+    return None
+
+
+def _log_date(value):
+    try:
+        return datetime.strptime(str(value or "")[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def _swim_course(swim: dict) -> Optional[str]:
+    course = (swim.get("course") or "").upper()
+    if course in ("SCM", "LCM"):
+        return course
+    event = (swim.get("event") or "").upper()
+    return "LCM" if "LCM" in event else "SCM" if "SCM" in event else None
+
+
+def match_races(logs: list, swims: list) -> dict:
+    """
+    Pair one swimmer's LaneWatch races with their swims here. Pure: no I/O.
+
+    logs: LaneWatch races ({id, event, course, date, round, time}).
+    swims: {id, event, course, date, round, time_seconds, lanewatch_log_id,
+            lanewatch_paired_by}.
+    Returns {"pairs": [(swim_id, log_id)], "choices": [{"log", "options"}],
+             "unmatched": [log]} - unmatched races have no swim here (yet).
+    """
+    from backend.services.event_normalizer import canonicalize_event
+
+    taken_logs = {s["lanewatch_log_id"] for s in swims if s.get("lanewatch_paired_by") in PAIRED}
+    taken_swims = {s["id"] for s in swims if s.get("lanewatch_paired_by") in PAIRED}
+    rejected = {(s["id"], s["lanewatch_log_id"]) for s in swims if s.get("lanewatch_paired_by") == "unpaired"}
+    for swim in swims:
+        swim["_event"] = canonicalize_event(swim.get("event") or "")
+        swim["_course"] = _swim_course(swim)
+        swim["_round"] = _round_code(swim.get("round"))
+
+    proposals = []
+    unmatched = []
+    for log in logs:
+        log_id = str(log.get("id") or "")
+        if not log_id or log_id in taken_logs:
+            continue
+        course, day, seconds = _lw_course(log.get("course")), _log_date(log.get("date")), log.get("time")
+        round_code = _round_code(log.get("round"))
+        if round_code == "R" or course == "SCY" or not day or not isinstance(seconds, (int, float)) or seconds <= 0:
+            continue
+        event = canonicalize_event(log.get("event") or "")
+        candidates = []
+        for swim in swims:
+            if swim["id"] in taken_swims or (swim["id"], log_id) in rejected:
+                continue
+            if swim["_event"] != event or not swim.get("date") or not swim.get("time_seconds"):
+                continue
+            if course and swim["_course"] and course != swim["_course"]:
+                continue
+            if abs((swim["date"] - day).days) > 1:
+                continue
+            gap = abs(float(swim["time_seconds"]) - float(seconds))
+            if gap <= PAIR_SECONDS:
+                candidates.append((round(gap, 2), swim))
+        if round_code and any(s["_round"] == round_code for _, s in candidates):
+            candidates = [(g, s) for g, s in candidates if s["_round"] in (round_code, None)]
+        candidates.sort(key=lambda pair: pair[0])
+        if candidates:
+            proposals.append((log, candidates))
+        else:
+            unmatched.append(log)
+
+    # Closest pairs first, so one swim never goes to two races.
+    proposals.sort(key=lambda proposal: proposal[1][0][0])
+    pairs, choices, claimed = [], [], set()
+    for log, candidates in proposals:
+        candidates = [(g, s) for g, s in candidates if s["id"] not in claimed]
+        if not candidates:
+            unmatched.append(log)
+            continue
+        best_gap, best = candidates[0]
+        runner_up = candidates[1][0] if len(candidates) > 1 else None
+        if runner_up is None or best_gap == 0 < runner_up or runner_up - best_gap >= CLEAR_MARGIN:
+            pairs.append((best["id"], str(log["id"])))
+            claimed.add(best["id"])
+        else:
+            choices.append({"log": log, "options": [s["id"] for _, s in candidates]})
+    return {"pairs": pairs, "choices": choices, "unmatched": unmatched}
+
+
+def _swim_summary(swim: models.SwimTime) -> dict:
+    return {
+        "swim_time_id": swim.id, "event": swim.event, "date": swim.date.isoformat() if swim.date else None,
+        "time_seconds": swim.time_seconds, "round": swim.round, "meet": swim.meet,
+    }
+
+
+def _race_summary(log: dict) -> dict:
+    return {
+        "lanewatch_log_id": str(log.get("id")), "event": log.get("event"), "course": log.get("course"),
+        "date": str(log.get("date") or "")[:10] or None, "time_seconds": log.get("time"),
+        "round": log.get("round"), "meet": log.get("meet"),
+    }
+
+
+def pair_races(db: DBSession, swimmer_ids: Optional[list] = None) -> dict:
+    """Pair every paired swimmer's LaneWatch races with their swims here."""
+    if not get_connection(db):
+        return {"connected": False, "paired": 0, "already_paired": 0, "choices": [], "unmatched": 0,
+                "unmatched_races": [], "unreadable": []}
+    links = db.query(models.LaneWatchSwimmerLink)
+    if swimmer_ids is not None:
+        links = links.filter(models.LaneWatchSwimmerLink.swimmer_id.in_(list(swimmer_ids)))
+    paired = already = 0
+    choices, unmatched_races, unreadable = [], [], []
+    for link in links.all():
+        name = link.swimmer.name if link.swimmer else link.lanewatch_name
+        try:
+            result = swim_logs(db, link.lanewatch_swimmer_id)
+        except LaneWatchError as exc:
+            if exc.status == 401:
+                raise
+            unreadable.append({"swimmer": name, "reason": str(exc)})
+            continue
+        if result["note"]:
+            unreadable.append({"swimmer": name, "reason": result["note"]})
+            continue
+        rows = db.query(models.SwimTime).filter(models.SwimTime.swimmer_id == link.swimmer_id).all()
+        by_id = {row.id: row for row in rows}
+        swims = [{
+            "id": row.id, "event": row.event, "course": row.course, "date": row.date, "round": row.round,
+            "time_seconds": row.time_seconds, "lanewatch_log_id": row.lanewatch_log_id,
+            "lanewatch_paired_by": row.lanewatch_paired_by,
+        } for row in rows]
+        already += sum(1 for s in swims if s["lanewatch_paired_by"] in PAIRED)
+        found = match_races(result["logs"], swims)
+        for swim_id, log_id in found["pairs"]:
+            by_id[swim_id].lanewatch_log_id = log_id
+            by_id[swim_id].lanewatch_paired_by = "auto"
+            paired += 1
+        for choice in found["choices"]:
+            choices.append({
+                "swimmer_id": link.swimmer_id, "swimmer": name, "race": _race_summary(choice["log"]),
+                "options": [_swim_summary(by_id[swim_id]) for swim_id in choice["options"]],
+            })
+        unmatched_races += [{"swimmer": name, **_race_summary(log)} for log in found["unmatched"]]
+    db.commit()
+    unmatched_races.sort(key=lambda race: race["date"] or "", reverse=True)
+    return {
+        "connected": True, "paired": paired, "already_paired": already, "choices": choices,
+        "unmatched": len(unmatched_races), "unmatched_races": unmatched_races[:30], "unreadable": unreadable,
+    }
+
+
+def choose_race(db: DBSession, swim_time_id: int, lanewatch_log_id: str) -> None:
+    """The coach says which swim a LaneWatch race is."""
+    swim = db.query(models.SwimTime).filter(models.SwimTime.id == swim_time_id).first()
+    if not swim:
+        raise LaneWatchError("That swim isn't in the app.", status=404)
+    link = db.query(models.LaneWatchSwimmerLink).filter(
+        models.LaneWatchSwimmerLink.swimmer_id == swim.swimmer_id).first()
+    if not link:
+        raise LaneWatchError("This swimmer isn't paired with a LaneWatch swimmer yet.", status=400)
+    logs = swim_logs(db, link.lanewatch_swimmer_id)["logs"]
+    if not any(str(log.get("id")) == str(lanewatch_log_id) for log in logs):
+        raise LaneWatchError("That LaneWatch race isn't one of this swimmer's shared races.", status=400)
+    # A race is one swim: take it off any other swim it was on.
+    for other in db.query(models.SwimTime).filter(
+            models.SwimTime.swimmer_id == swim.swimmer_id,
+            models.SwimTime.lanewatch_log_id == str(lanewatch_log_id),
+            models.SwimTime.lanewatch_paired_by.in_(PAIRED),
+            models.SwimTime.id != swim.id).all():
+        other.lanewatch_log_id, other.lanewatch_paired_by = None, None
+    swim.lanewatch_log_id, swim.lanewatch_paired_by = str(lanewatch_log_id), "coach"
+    db.commit()
+
+
+def unpair_race(db: DBSession, swim_time_id: int) -> None:
+    """The coach says this swim is not that race; it is never suggested again."""
+    swim = db.query(models.SwimTime).filter(models.SwimTime.id == swim_time_id).first()
+    if not swim:
+        raise LaneWatchError("That swim isn't in the app.", status=404)
+    if swim.lanewatch_paired_by in PAIRED:
+        swim.lanewatch_paired_by = "unpaired"
+        db.commit()
+
+
+def pair_races_quietly(swimmer_ids: Optional[list] = None) -> None:
+    """After an import: pair what can be paired, never failing the import."""
+    from backend.database import SessionLocal
+    try:
+        with SessionLocal() as db:
+            if get_connection(db) and db.query(models.LaneWatchSwimmerLink).count():
+                pair_races(db, swimmer_ids)
+    except Exception:  # noqa: BLE001 - background work; the coach can run it from Settings
+        pass
+
+
+# ---------------------------------------------------------------------------
 # What the analyst reads
 # ---------------------------------------------------------------------------
 
@@ -530,6 +770,18 @@ def race_line(log: dict) -> str:
     return " | ".join(parts)
 
 
+def official_line(swim) -> str:
+    """The official result a LaneWatch race is paired with, for the analyst."""
+    if swim is None:
+        return ""
+    where = ", ".join(x for x in (swim.meet, swim.round) if x)
+    text = f" | OFFICIAL RESULT {swim.time_seconds:.2f}s" + (f" ({where})" if where else "")
+    splits = [s for s in (swim.splits or []) if isinstance(s, (int, float))]
+    if len(splits) >= 2:
+        text += ", official splits " + ", ".join(f"{s:.2f}" for s in splits)
+    return text
+
+
 def _mean(values: list) -> Optional[float]:
     values = [v for v in values if isinstance(v, (int, float))]
     return sum(values) / len(values) if values else None
@@ -583,8 +835,16 @@ def analyst_lines(db: DBSession, swimmer, limit: int = 8) -> str:
     if not analysed:
         return (f"LANEWATCH RACE ANALYSIS for {swimmer.name}: {len(logs)} swims shared, "
                 "none with race analysis captured.")
+    # The official result each race is paired with, side by side.
+    official = {
+        row.lanewatch_log_id: row
+        for row in db.query(models.SwimTime).filter(
+            models.SwimTime.swimmer_id == swimmer.id,
+            models.SwimTime.lanewatch_paired_by.in_(PAIRED),
+        ).all()
+    }
     lines = [f"LANEWATCH RACE ANALYSIS for {swimmer.name} ({len(analysed)} analysed races, newest first):"]
-    lines += [f"  {race_line(l)}" for l in analysed[:limit]]
+    lines += [f"  {race_line(l)}{official_line(official.get(str(l.get('id'))))}" for l in analysed[:limit]]
     findings = race_findings(analysed)
     lines.append("  PATTERNS: " + ("; ".join(findings) if findings else "none clear yet"))
     return "\n".join(lines)

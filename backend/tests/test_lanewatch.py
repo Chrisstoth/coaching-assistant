@@ -255,6 +255,126 @@ class ConnectionTests(unittest.TestCase):
                 lanewatch.roster(db)
             self.assertIn("Connect again", lanewatch.status(db)["last_error"])
 
+    def _ruby_swims(self, db, *rows):
+        swims = []
+        for event, course, day, seconds, round_name in rows:
+            swim = models.SwimTime(swimmer_id=self.ruby_id, event=event, course=course, date=day,
+                                   time_seconds=seconds, round=round_name, meet="County Champs",
+                                   splits=[27.95, 30.25] if seconds == 58.2 else None, source="club_results")
+            db.add(swim)
+            swims.append(swim)
+        db.commit()
+        return [swim.id for swim in swims]
+
+    def test_lanewatch_races_are_paired_with_the_official_swims(self):
+        with SessionLocal() as db:
+            self._connect(db)
+            lanewatch.save_links(db, [{"swimmer_id": self.ruby_id, "lanewatch_swimmer_id": RUBY_LW}])
+            final, may_swim, heat = self._ruby_swims(
+                db,
+                ("100 Freestyle SCM", "SCM", date(2026, 6, 1), 58.2, "F"),
+                # Pasted gala: the gala's first day, and LaneWatch kept a video time.
+                ("100m Free", "SCM", date(2026, 4, 30), 59.35, "H"),
+                ("100 Freestyle SCM", "SCM", date(2026, 6, 1), 58.6, "H"),
+            )
+            first = lanewatch.pair_races(db)
+            self.assertEqual((first["paired"], first["already_paired"], first["choices"]), (2, 0, []))
+            self.assertEqual([race["event"] for race in first["unmatched_races"]], ["50 Free"],
+                             "A race with no official swim yet is listed, not forced onto one.")
+            self.assertEqual(db.get(models.SwimTime, final).lanewatch_log_id, "r1", "The round picks the final.")
+            self.assertEqual(db.get(models.SwimTime, may_swim).lanewatch_log_id, "r2")
+            self.assertIsNone(db.get(models.SwimTime, heat).lanewatch_log_id)
+
+            again = lanewatch.pair_races(db)
+            self.assertEqual((again["paired"], again["already_paired"]), (0, 2))
+
+            text = lanewatch.analyst_lines(db, db.get(models.Swimmer, self.ruby_id))
+            self.assertIn("OFFICIAL RESULT 58.20s (County Champs, F), official splits 27.95, 30.25", text)
+
+            # The coach says the May race isn't that swim: it is never paired with it again.
+            lanewatch.unpair_race(db, may_swim)
+            self.assertEqual(lanewatch.pair_races(db)["paired"], 0)
+            self.assertEqual(db.get(models.SwimTime, may_swim).lanewatch_paired_by, "unpaired")
+
+            # ...and can put a race on a swim themselves, which takes it off any other.
+            lanewatch.choose_race(db, heat, "r1")
+            self.assertEqual(db.get(models.SwimTime, heat).lanewatch_log_id, "r1")
+            self.assertIsNone(db.get(models.SwimTime, final).lanewatch_paired_by)
+            with self.assertRaises(LaneWatchError):
+                lanewatch.choose_race(db, heat, "not-one-of-rubys-races")
+
+    def test_nothing_is_paired_when_lanewatch_is_not_connected(self):
+        with SessionLocal() as db:
+            self.assertFalse(lanewatch.pair_races(db)["connected"])
+        lanewatch.pair_races_quietly()  # after an import: never fails
+
+
+def _swim(swim_id, event, day, seconds, course="SCM", round_name=None, **extra):
+    return {"id": swim_id, "event": event, "course": course, "date": day, "round": round_name,
+            "time_seconds": seconds, "lanewatch_log_id": extra.get("log"), "lanewatch_paired_by": extra.get("by")}
+
+
+def _race(race_id, event, day, seconds, course="SCM", round_name=None):
+    return {"id": race_id, "event": event, "course": course, "date": f"{day}T10:00:00Z", "time": seconds,
+            "round": round_name}
+
+
+class RaceMatchingTests(unittest.TestCase):
+    DAY = date(2026, 6, 1)
+
+    def test_the_same_swim_however_it_is_written(self):
+        out = lanewatch.match_races([_race("a", "100 Free", "2026-06-01", 58.2, course="S")],
+                                    [_swim(1, "100m Freestyle SCM", self.DAY, 58.2, course=None)])
+        self.assertEqual(out["pairs"], [(1, "a")])
+
+    def test_a_video_time_close_to_the_official_one_still_pairs(self):
+        out = lanewatch.match_races([_race("a", "100 Freestyle", "2026-06-01", 58.75)],
+                                    [_swim(1, "100 Freestyle", self.DAY, 58.2)])
+        self.assertEqual(out["pairs"], [(1, "a")])
+
+    def test_different_swims_are_not_paired(self):
+        races = [
+            _race("far", "100 Freestyle", "2026-06-01", 59.5),                 # over a second out
+            _race("lc", "100 Freestyle", "2026-06-01", 58.2, course="LCM"),     # other course
+            _race("late", "100 Freestyle", "2026-06-03", 58.2),                # two days later
+            _race("relay", "100 Freestyle", "2026-06-01", 58.2, round_name="R"),
+            _race("yards", "100 Freestyle", "2026-06-01", 58.2, course="SCY"),
+            _race("back", "100 Backstroke", "2026-06-01", 58.2),
+        ]
+        out = lanewatch.match_races(races, [_swim(1, "100 Freestyle", self.DAY, 58.2)])
+        self.assertEqual(out["pairs"], [])
+        self.assertEqual({r["id"] for r in out["unmatched"]}, {"far", "lc", "late", "back"},
+                         "Relays and yards races are not results here, so they aren't listed as missing.")
+
+    def test_two_swims_too_close_to_call_go_to_the_coach(self):
+        out = lanewatch.match_races([_race("a", "100 Freestyle", "2026-06-01", 58.4)],
+                                    [_swim(1, "100 Freestyle", self.DAY, 58.2), _swim(2, "100 Freestyle", self.DAY, 58.5)])
+        self.assertEqual(out["pairs"], [])
+        self.assertEqual(out["choices"][0]["options"], [2, 1])
+
+    def test_an_exact_time_or_a_clearly_closer_one_decides(self):
+        swims = [_swim(1, "100 Freestyle", self.DAY, 58.2), _swim(2, "100 Freestyle", self.DAY, 58.3)]
+        self.assertEqual(lanewatch.match_races([_race("a", "100 Freestyle", "2026-06-01", 58.2)], swims)["pairs"],
+                         [(1, "a")])
+        swims = [_swim(1, "100 Freestyle", self.DAY, 58.2), _swim(2, "100 Freestyle", self.DAY, 59.0)]
+        self.assertEqual(lanewatch.match_races([_race("a", "100 Freestyle", "2026-06-01", 58.35)], swims)["pairs"],
+                         [(1, "a")])
+
+    def test_one_swim_is_one_race(self):
+        out = lanewatch.match_races(
+            [_race("a", "100 Freestyle", "2026-06-01", 58.6), _race("b", "100 Freestyle", "2026-06-01", 58.25)],
+            [_swim(1, "100 Freestyle", self.DAY, 58.2)])
+        self.assertEqual(out["pairs"], [(1, "b")])
+        self.assertEqual([r["id"] for r in out["unmatched"]], ["a"])
+
+    def test_pairs_already_made_or_turned_down_are_left_alone(self):
+        swims = [_swim(1, "100 Freestyle", self.DAY, 58.2, log="a", by="coach"),
+                 _swim(2, "100 Freestyle", self.DAY, 58.2, log="b", by="unpaired")]
+        out = lanewatch.match_races([_race("a", "100 Freestyle", "2026-06-01", 58.2),
+                                     _race("b", "100 Freestyle", "2026-06-01", 58.2)], swims)
+        self.assertEqual(out["pairs"], [])
+        self.assertEqual([r["id"] for r in out["unmatched"]], ["b"])
+
 
 if __name__ == "__main__":
     unittest.main()

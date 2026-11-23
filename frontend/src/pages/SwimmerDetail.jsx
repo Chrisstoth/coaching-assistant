@@ -7,6 +7,7 @@ import ObservationsTab from '../components/ObservationsTab'
 import AskTheStaff from '../components/AskTheStaff'
 import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
 import HelpLink from '../components/HelpLink'
+import { LaneWatchMark } from '../components/LaneWatchBrand'
 import TargetTable from '../components/TargetTable'
 import { groupLine, todayIso } from '../squadGroups'
 import { useSessionPresentation } from '../components/SessionPresentationProvider'
@@ -2309,7 +2310,12 @@ export default function SwimmerDetail() {
               times.map((t) => (
                 <div key={t.id} className="bg-pool-800 rounded-xl p-3 flex justify-between items-center">
                   <div>
-                    <p className="text-sm font-medium">{t.event}</p>
+                    <p className="text-sm font-medium flex items-center gap-1.5">
+                      {t.event}
+                      {t.lanewatch_log_id && (
+                        <span title="Race analysis in LaneWatch"><LaneWatchMark className="h-3.5" label="Analysed in LaneWatch" /></span>
+                      )}
+                    </p>
                     <p className="text-pool-400 text-xs">{t.date} · {t.meet || 'Training'} · {t.round}</p>
                   </div>
                   <div className="text-right">

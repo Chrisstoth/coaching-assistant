@@ -4,7 +4,7 @@ import difflib
 import io
 import re
 from datetime import datetime, date as date_type, timedelta, timezone
-from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Body, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session as DBSession
 from openpyxl import load_workbook
@@ -16,6 +16,7 @@ from backend.services.event_normalizer import (
     canonicalize_event, event_parts, sync_meet_session_events, upsert_meet_entry,
 )
 from backend.services.importer import SquadMatcher, parse_time_to_seconds
+from backend.services.lanewatch import pair_races_quietly
 from backend.services.results_page import ResultsPageError, course_from_title, parse_results_pages
 from backend.services.entries_page import (
     EntriesPageError,
@@ -871,6 +872,7 @@ def get_meet_results(meet_id: int, db: DBSession = Depends(get_db)):
             "round": result.round if result else None,
             "recorded_time": _time_display(result.time_seconds) if result else None,
             "recorded_time_id": result.id if result else None,
+            "lanewatch_log_id": _lanewatch_race(result),
             "unexpected": False,
         })
 
@@ -891,6 +893,7 @@ def get_meet_results(meet_id: int, db: DBSession = Depends(get_db)):
             "round": result.round,
             "recorded_time": _time_display(result.time_seconds),
             "recorded_time_id": result.id,
+            "lanewatch_log_id": _lanewatch_race(result),
             "unexpected": True,
         })
 
@@ -986,7 +989,8 @@ class ResultsPasteIn(BaseModel):
 
 
 @router.post("/{meet_id}/results/paste")
-def import_pasted_results(meet_id: int, body: ResultsPasteIn, db: DBSession = Depends(get_db)):
+def import_pasted_results(meet_id: int, body: ResultsPasteIn, background: BackgroundTasks,
+                          db: DBSession = Depends(get_db)):
     """
     Add this gala's results from pasted swimmingresults.org "results by club"
     pages. Only swimmers already in the app are kept, and swims the app already
@@ -1088,6 +1092,8 @@ def import_pasted_results(meet_id: int, body: ResultsPasteIn, db: DBSession = De
         added += 1
 
     db.commit()
+    # The gala's swims may be races already analysed in LaneWatch.
+    background.add_task(pair_races_quietly, sorted(swimmer_ids))
     return {
         "meet_title": titles[0] if titles else None,
         "course": course,
@@ -1114,6 +1120,13 @@ def dismiss_results_prompt(meet_id: int, db: DBSession = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _lanewatch_race(result) -> Optional[str]:
+    """The LaneWatch race a recorded result is paired with, if any."""
+    if result is not None and result.lanewatch_paired_by in ("auto", "coach"):
+        return result.lanewatch_log_id
+    return None
+
 
 def _get_or_404(meet_id: int, db: DBSession) -> models.Meet:
     meet = db.query(models.Meet).filter(models.Meet.id == meet_id).first()

@@ -30,6 +30,15 @@ class ConnectFinishIn(BaseModel):
     error: Optional[str] = Field(default=None, max_length=100)
 
 
+class ChooseRaceIn(BaseModel):
+    swim_time_id: int
+    lanewatch_log_id: str = Field(..., min_length=1, max_length=64)
+
+
+class SwimIn(BaseModel):
+    swim_time_id: int
+
+
 class LinkIn(BaseModel):
     swimmer_id: int
     lanewatch_swimmer_id: str = Field(..., max_length=64)
@@ -109,6 +118,33 @@ def unlink(swimmer_id: int, db: Session = Depends(get_db)):
     if not lanewatch.unlink(db, swimmer_id):
         raise HTTPException(404, "That swimmer is not linked to LaneWatch.")
     return {"unlinked": True}
+
+
+@router.post("/races/pair")
+def pair_races(db: Session = Depends(get_db)):
+    """Pair each paired swimmer's LaneWatch races with their swims here."""
+    try:
+        return lanewatch.pair_races(db)
+    except LaneWatchError as exc:
+        _fail(exc)
+
+
+@router.post("/races/choose")
+def choose_race(body: ChooseRaceIn, db: Session = Depends(get_db)):
+    try:
+        lanewatch.choose_race(db, body.swim_time_id, body.lanewatch_log_id)
+    except LaneWatchError as exc:
+        _fail(exc)
+    return {"paired": True}
+
+
+@router.post("/races/unpair")
+def unpair_race(body: SwimIn, db: Session = Depends(get_db)):
+    try:
+        lanewatch.unpair_race(db, body.swim_time_id)
+    except LaneWatchError as exc:
+        _fail(exc)
+    return {"unpaired": True}
 
 
 @router.get("/swimmers/{swimmer_id}/races")

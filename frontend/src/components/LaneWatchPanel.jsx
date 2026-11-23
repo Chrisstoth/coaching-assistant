@@ -134,6 +134,113 @@ function Pairing({ onSaved }) {
   )
 }
 
+const timeText = (seconds) => {
+  if (typeof seconds !== 'number') return '—'
+  const minutes = Math.floor(seconds / 60)
+  const rest = (seconds - minutes * 60).toFixed(2)
+  return minutes ? `${minutes}:${rest.padStart(5, '0')}` : rest
+}
+
+// Pair LaneWatch races with the official swims in each swimmer's times, so the
+// analyst reads the official time and splits next to LaneWatch's analysis.
+// It also runs by itself after each results import.
+function RaceMatching() {
+  const [result, setResult] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const run = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      setResult(await api.pairLaneWatchRaces())
+    } catch (e) {
+      setError(e.message)
+    }
+    setBusy(false)
+  }
+
+  const choose = async (choice, swimTimeId) => {
+    setError('')
+    try {
+      await api.chooseLaneWatchRace(swimTimeId, choice.race.lanewatch_log_id)
+      setResult(previous => ({
+        ...previous,
+        paired: previous.paired + 1,
+        choices: previous.choices.filter(item => item !== choice),
+      }))
+    } catch (e) {
+      setError(e.message)
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-t border-pool-700 pt-3">
+      <p className="text-[11px] uppercase tracking-wide text-pool-500">Races</p>
+      <p className="text-xs text-pool-400 leading-relaxed">
+        Matches each LaneWatch race to the official swim in the results here, so the official time and splits sit
+        next to the race analysis. This also happens by itself after each results import.
+      </p>
+      <button onClick={run} disabled={busy}
+        className="w-full py-2 text-sm font-semibold bg-pool-700 border border-pool-600 rounded-xl disabled:opacity-40">
+        {busy ? 'Matching races…' : 'Match LaneWatch races to results'}
+      </button>
+
+      {result && (
+        <div className="space-y-2">
+          <p className="text-xs text-pool-300">
+            {result.paired} race{result.paired === 1 ? '' : 's'} matched
+            {result.already_paired > 0 && ` · ${result.already_paired} already matched`}
+            {result.choices.length > 0 && ` · ${result.choices.length} for you to choose`}
+          </p>
+
+          {result.choices.map((choice, index) => (
+            <div key={`${choice.race.lanewatch_log_id}-${index}`} className="rounded-lg border border-pool-700 p-2.5 space-y-1.5">
+              <p className="text-xs text-pool-200">
+                {choice.swimmer}: LaneWatch {choice.race.event} on {choice.race.date}, {timeText(choice.race.time_seconds)}
+                {choice.race.round ? ` (${choice.race.round})` : ''}. Which swim is it?
+              </p>
+              {choice.options.map(option => (
+                <button key={option.swim_time_id} onClick={() => choose(choice, option.swim_time_id)}
+                  className="w-full text-left text-xs px-2.5 py-1.5 rounded-lg bg-pool-700 border border-pool-600">
+                  {timeText(option.time_seconds)} · {option.date}{option.round ? ` · ${option.round}` : ''}
+                  {option.meet ? ` · ${option.meet}` : ''}
+                </button>
+              ))}
+            </div>
+          ))}
+
+          {result.unmatched > 0 && (
+            <details className="text-xs text-pool-400">
+              <summary className="cursor-pointer">
+                {result.unmatched} LaneWatch race{result.unmatched === 1 ? ' has' : 's have'} no result here yet
+              </summary>
+              <p className="text-[11px] text-pool-500 mt-1">
+                Time trials and training swims stay like this. For a gala, add its results and they match up.
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {result.unmatched_races.map(race => (
+                  <li key={race.lanewatch_log_id}>
+                    {race.swimmer} · {race.event} · {race.date} · {timeText(race.time_seconds)}
+                    {race.meet ? ` · ${race.meet}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
+          {result.unreadable.length > 0 && (
+            <p className="text-[11px] text-pool-500">
+              Couldn&apos;t read: {result.unreadable.map(item => `${item.swimmer} (${item.reason})`).join('; ')}
+            </p>
+          )}
+        </div>
+      )}
+      {error && <p className="text-xs text-red-300">{error}</p>}
+    </div>
+  )
+}
+
 export default function LaneWatchPanel() {
   const [status, setStatus] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -195,6 +302,7 @@ export default function LaneWatchPanel() {
             </div>
             {status.last_error && <p className="text-xs text-amber-300">{status.last_error}</p>}
             <Pairing onSaved={load} />
+            {status.linked > 0 && <RaceMatching />}
           </>
         )}
 
