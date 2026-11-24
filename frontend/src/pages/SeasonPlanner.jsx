@@ -51,11 +51,15 @@ export default function SeasonPlanner() {
       store, squad, mark,
       scales: { usual: scales.effort_scale || 'effort20', standard: scales.standard || [], custom: scales.custom || [] },
       navigate: to => nav.current(to),
-      // the Meets tab's meets and the sessions already written, shared with the rest of the app
+      // a session written for a week opens as its PDF, in a window of its own
+      openPdf: id => window.open(`/sessions/${id}/print`, '_blank'),
+      // the Meets tab's meets, and what actually happened (registers, cancelled and extra sessions,
+      // usual sessions, time away, Right now notes), shared with the rest of the app
       api: {
         createMeet: data => api.createMeet(data),
         updateMeet: (id, data) => api.updateMeet(id, data),
         sessionsBetween: (from, to) => api.getSessions({ date_from: from, date_to: to, limit: 2000 }),
+        actuals: (from, to) => api.getPlannerActuals(squad, from, to),
       },
     })
     return () => planner.destroy()

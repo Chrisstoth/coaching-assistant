@@ -87,15 +87,18 @@ time, where the coach plans the next few and looks back at the last.
 * The season chart has **one bar per micro** (as wide as its days), and the load
   is set per micro.
 * What a micro holds comes from the timetable: the sessions that fall on its dates.
-* **Planned sessions are kept by date and pool slot**, not by week number and
-  session, so micro edges can move without losing what was planned. Today's
-  per-week changes are carried across to this.
+* **Planned sessions are found by their date and pool slot.** The plan still
+  keeps everything per column (loads, blocks, session changes, group moves, a
+  short-term group's weeks); when micro edges move, each is carried to the
+  column its date now falls in (setMicros), so nothing planned is lost. A
+  session that comes round twice in one micro is told apart ("monam~2").
 * A **standard micro** (today's "standard week") is an ordered list of sessions
   (1st session aerobic, 2nd threshold, and so on), laid over the sessions a
   micro holds, in order. A 7-day standard week behaves exactly as now. Sessions
   past the end of the list start blank.
-* Micros belong to a group's line; a sub group follows its parent's micros unless
-  it is given its own. (Assumed; confirm when micros are built.)
+* Built: micros are the same for every group in the plan (one set of columns,
+  settings.micros). Different micros for different groups can come later if
+  a coach needs them.
 
 ### 4.2 The week view
 
@@ -132,8 +135,8 @@ time, where the coach plans the next few and looks back at the last.
   else (the default). For example, Wednesday AM is recovery for those who did
   Monday PM and Tuesday PM, and speed and pace for everyone else.
 * **A version is part of the plan.** A swimmer on it is following their group.
-* "Did" and "missed" can name any earlier session, including one in the micro
-  before. (Assumed; confirm when built.)
+* "Did" and "missed" look at the last time each named session ran, up to 14
+  days back, so Monday can depend on Saturday in the micro before.
 * **Who gets which version** comes from each swimmer's usual sessions (4.4) ahead
   of time, and from the register and time away once they are known,
   automatically: marked absent Tuesday, on the other version Wednesday.
@@ -185,7 +188,7 @@ Builder's staff write to the plan.
 Done: one set of scales, the timetable lined up with the Schedule page, meets
 lined up with the Meets tab, and the first Weeks tab with its links to sessions.
 
-The redesign (section 4), in steps:
+The redesign (section 4), built on 2026-11-24 in these steps:
 
 1. Usual sessions, one list: the swimmer's page edits the Schedule page's list;
    the history check.

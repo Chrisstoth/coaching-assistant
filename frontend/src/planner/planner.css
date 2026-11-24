@@ -397,3 +397,57 @@
 .sp .mN{color:var(--muted)}
 .sp .slink{display:inline-block;margin-top:5px;border:1px solid var(--line);background:var(--surface-2);color:var(--accent-soft);border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600;cursor:pointer;min-height:0}
 .sp .slink.done{color:var(--good);border-color:var(--good)}
+/* ---- the Weeks tab: one week (or micro) at a time (docs/design/season-planner-weeks.md 4.2-4.6) ---- */
+.sp .wv-head{margin-top:12px}
+.sp .wv-top{display:flex;align-items:center;gap:10px}
+.sp .wv-top .btn{min-width:44px;min-height:40px;font-size:16px}
+.sp .wv-title{flex:1;min-width:0;text-align:center}
+.sp .wv-title h2{margin:2px 0 0;font-size:18px}
+.sp .wv-head>.chips{margin-top:8px;flex-wrap:wrap}
+.sp .wv-farnote{background:var(--warn-bg);border-radius:6px;padding:6px 8px;margin:8px 0 0}
+.sp .wv-g,.sp .wv-diff{margin-top:12px;border-left:4px solid var(--b)}
+.sp .wv-gh{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.sp .wv-gh h3{margin:0;font-size:16px}
+.sp .wv-load{text-align:right;white-space:nowrap}
+.sp .wv-load b{display:block;font-size:20px;font-family:var(--f-data)}
+.sp .mA,.sp .mN{display:inline-block;margin-right:8px}
+.sp .wv-sess{display:grid;gap:8px;margin-top:10px}
+.sp .wv-s{border:1px solid var(--line);border-radius:8px;padding:8px;background:var(--surface-2);display:grid;gap:6px;min-width:0}
+.sp .wv-s.std .fsel,.sp .wv-s.std textarea{opacity:.65}
+.sp .wv-s.own{border-color:var(--b,var(--accent));box-shadow:inset 3px 0 0 var(--b,var(--accent))}
+.sp .wv-s.cx{opacity:.7}
+.sp .wv-s.cx .wv-sh b{text-decoration:line-through}
+.sp .wv-sh{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.sp .wv-sh .grow,.sp .wv-acts .grow{flex:1}
+.sp .wv-sh .slink{margin-top:0}
+.sp .wv-s .sf{display:grid;grid-template-columns:34px minmax(0,1fr) 30px minmax(0,1fr) 28px minmax(0,1fr);gap:4px 6px;align-items:center;font-size:11.5px;color:var(--muted)}
+.sp .wv-cancel{color:var(--bad);font-size:12.5px;font-weight:600}
+.sp .wv-chips{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sp .wv-acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.sp .wv-ver{border-left:3px solid var(--accent-soft);margin-left:6px;padding:4px 0 4px 8px;display:grid;gap:5px}
+.sp .wv-ver .row{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.sp .chipbtn{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:2px 9px;font-size:12px;cursor:pointer;min-height:0}
+.sp .chipbtn.on{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.sp .wv-ghost{margin-top:10px;border-top:1px dashed var(--line);padding-top:6px}
+.sp .wv-ghost summary{cursor:pointer;font-weight:600;font-size:13px;color:var(--muted)}
+.sp .wv-ghost .row{display:flex;align-items:center;gap:8px;margin:6px 0}
+.sp .wv-g-row{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--line);opacity:.85}
+.sp .wv-sep{display:flex;align-items:center;gap:10px;margin:22px 0 4px;font-weight:700;font-size:14px;color:var(--ink)}
+.sp .wv-sep::before,.sp .wv-sep::after{content:'';flex:1;height:2px;background:var(--line-2)}
+.sp .wv-diff .dname{white-space:nowrap}
+.sp .wv-diff .row,.sp .wv-add .row,.sp .wv-micro .row,.sp .wv-extra .row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:6px}
+.sp .wv-diff .wv-s{margin-top:8px}
+.sp .wv-rn{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;background:var(--warn-bg);border-radius:8px;padding:8px;margin-top:8px;font-size:13px}
+.sp .wv-add,.sp .wv-micro,.sp .wv-extra{margin-top:12px;display:grid;gap:4px}
+.sp .ov-grid td{vertical-align:top;min-width:96px}
+.sp .ov-row{cursor:pointer}
+.sp .ov-row:hover td{background:var(--surface-2)}
+.sp .ov-row.now td{background:var(--accent-soft);background:color-mix(in srgb,var(--accent) 12%,transparent)}
+.sp .ov-row.far{opacity:.55}
+.sp .ov-c{white-space:nowrap}
+.sp .fstrip{display:flex;gap:2px;margin-top:3px}
+.sp .fstrip i{display:block;width:12px;height:10px;border-radius:2px;border:1px solid var(--line)}
+.sp .dbadge{font-size:10.5px;color:var(--warn);font-weight:700}
+.sp details.std-run{margin:12px 0;border:1px solid var(--line);border-radius:8px;padding:8px}
+.sp details.std-run summary{cursor:pointer}
+@media (max-width:640px){.sp .wv-s .sf{grid-template-columns:34px minmax(0,1fr)}.sp .wv-title h2{font-size:16px}.sp .wv-load b{font-size:17px}}

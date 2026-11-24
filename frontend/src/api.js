@@ -330,6 +330,8 @@ export const api = {
   // The coach's Season Planner (its documents and versions)
   getPlannerSquads: () => request('GET', '/season-planner/squads'),
   getPlannerDocs: (squad) => request('GET', `/season-planner/${encodeURIComponent(squad)}/docs`),
+  // What happened (registers, cancelled and extra sessions), usual sessions, time away and Right now notes, for the Weeks tab
+  getPlannerActuals: (squad, from, to) => request('GET', `/season-planner/${encodeURIComponent(squad)}/actuals?date_from=${from}&date_to=${to}`),
   putPlannerDoc: (squad, key, data) => request('PUT', `/season-planner/${encodeURIComponent(squad)}/docs/${key}`, { data }),
   getPlannerVersions: (squad, limit = 40) => request('GET', `/season-planner/${encodeURIComponent(squad)}/versions?limit=${limit}`),
   getPlannerVersion: (squad, id) => request('GET', `/season-planner/${encodeURIComponent(squad)}/versions/${id}`),
