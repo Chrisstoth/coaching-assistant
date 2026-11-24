@@ -121,18 +121,20 @@ def save_session(session_id: int, body: SaveSession, db: DBSession = Depends(get
     if s.status == "cancelled":
         raise HTTPException(status_code=409, detail="A cancelled session can't be edited.")
     if body.audience is not None:
-        s.audience = body.audience
+        B.set_audience(db, s, body.audience)
     result = B.apply_builder(db, s, body.session)
     return {"id": s.id, **result}
 
 
 @router.put("/sessions/{session_id}/audience")
 def set_audience(session_id: int, body: Audience, db: DBSession = Depends(get_db)):
-    """Who the session was for: the whole squad, a group, a camp or picked swimmers."""
+    """Who the session was for: the whole squad, a group, a camp or picked swimmers.
+    Picked swimmers make it an extra session: they're marked in on the register, and
+    nobody else's attendance counts it."""
     if body.kind not in ("squad", "group", "camp", "swimmer"):
         raise HTTPException(status_code=422, detail="Choose squad, group, camp or swimmer")
     s = _get(db, session_id)
-    s.audience = None if body.kind == "squad" and not body.label else body.model_dump()
+    B.set_audience(db, s, None if body.kind == "squad" and not body.label else body.model_dump())
     db.commit()
     return {"audience": s.audience}
 

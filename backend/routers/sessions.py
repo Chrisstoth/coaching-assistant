@@ -812,6 +812,12 @@ def get_register(session_id: int, db: DBSession = Depends(get_db)):
         for g in session.groups or []:
             for sid in g.target_swimmer_ids or []:
                 expected.setdefault(sid, g.group_number)
+    # An extra session for picked swimmers expects only them, whatever its groups
+    # and timetable slot say: everyone else is free not to come.
+    if session.extra_session:
+        picked = {int(i) for i in ((session.audience or {}).get("swimmer_ids") or []) if str(i).isdigit()}
+        expected = {sid: g for sid, g in expected.items() if sid in picked}
+        usual_swimmer_ids = picked
     result = []
     for s in swimmers:
         e = existing_entries.get(s.id)
@@ -1631,6 +1637,9 @@ def _session_detail(s: models.Session, db: DBSession) -> dict:
         "coach_notes": s.coach_notes,
         "as_swum": s.as_swum,
         "builder": bool(s.builder),
+        # An extra session for picked swimmers: only they are expected at it.
+        "extra_session": bool(s.extra_session),
+        "audience_label": (s.audience or {}).get("label") if s.extra_session else None,
         "register_revision": s.register_revision,
         "register_saved_at": s.register_saved_at,
         "planned_content": s.planned_content,

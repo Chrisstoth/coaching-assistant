@@ -3450,6 +3450,7 @@ def build_attendance_stats(swimmer_id: int, db: DBSession) -> dict:
             db.query(models.Session)
             .filter(
                 models.Session.status != 'cancelled',
+                models.Session.extra_session.isnot(True),
                 models.Session.squad == slot.squad if slot.squad else True,
             )
             .all()

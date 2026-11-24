@@ -94,6 +94,7 @@ function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
           <p className="text-pool-300">
             {chosen.length ? <><b className="text-pool-100">{chosen.length} picked:</b> {chosen.map(s => s.name).join(', ')}</> : 'Tap each swimmer the session is for.'}
           </p>
+          <p className="text-pool-500">An extra session: they&apos;re marked in on the register, and missing it never counts against anyone&apos;s attendance.</p>
           {swimmers.length > 12 && (
             <input className={field} value={find} onChange={e => setFind(e.target.value)} placeholder="Find a swimmer…" />
           )}

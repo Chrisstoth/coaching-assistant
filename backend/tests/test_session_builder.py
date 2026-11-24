@@ -300,6 +300,45 @@ class SessionBuilderTests(unittest.TestCase):
             self.assertEqual(http.put(f"/session-builder/sessions/{sid}/audience", headers=h, json={"kind": "squad"}).json()["audience"], None)
             self.assertEqual(http.put(f"/session-builder/sessions/{sid}/audience", headers=h, json={"kind": "team"}).status_code, 422)
 
+    def test_an_extra_session_for_picked_swimmers_marks_them_in_and_costs_nobody_attendance(self):
+        """The pool shut and a few still wanted a session: they did it, and nobody else missed anything."""
+        from backend.services.claude_service import build_attendance_stats
+        leo, ruby, ava = self.swimmers["Leo"], self.swimmers["Ruby"], self.swimmers["Ava"]
+        http, h = self.client()
+        with http:
+            sid = http.post("/session-builder/sessions", headers=h, json={"date": MONDAY.isoformat()}).json()["id"]
+            r = http.put(f"/session-builder/sessions/{sid}/audience", headers=h, json={
+                "kind": "swimmer", "label": "Leo and Ruby", "swimmer_ids": [leo, ruby]})
+            self.assertEqual(r.status_code, 200, r.text)
+            self.assertTrue(http.get(f"/sessions/{sid}", headers=h).json()["extra_session"])
+
+            reg = {r["swimmer_id"]: r for r in http.get(f"/sessions/{sid}/register", headers=h).json()}
+            self.assertTrue(reg[leo]["attended"] and reg[ruby]["attended"], "the swimmers it was for are already marked in")
+            self.assertIsNone(reg[ava]["attended"])
+            self.assertFalse(reg[ava]["usual_for_slot"] or reg[ava]["group_planned"], "Ava isn't expected, though she's in Girls")
+
+            # The coach saves the register with Ava out: it still costs her nothing.
+            out = http.put(f"/sessions/{sid}/register", headers=h, json={"run_ai": False, "entries": [
+                {"swimmer_id": leo, "attended": True}, {"swimmer_id": ruby, "attended": True},
+                {"swimmer_id": ava, "attended": False}]})
+            self.assertEqual(out.status_code, 200, out.text)
+            with SessionLocal() as db:
+                self.assertEqual(build_attendance_stats(ava, db)["overall_total"], 0, "missing an extra session isn't an absence")
+                self.assertEqual(build_attendance_stats(leo, db)["overall_attended"], 1, "doing it still counts")
+
+            # Taking Ruby off the picks takes her off the register; the session stays extra.
+            http.put(f"/session-builder/sessions/{sid}/audience", headers=h, json={
+                "kind": "swimmer", "label": "Leo", "swimmer_ids": [leo]})
+            reg = {r["swimmer_id"]: r for r in http.get(f"/sessions/{sid}/register", headers=h).json()}
+            self.assertIsNone(reg[ruby]["attended"])
+            self.assertTrue(reg[leo]["attended"])
+
+            # Back to a whole-squad session: absences count again.
+            http.put(f"/session-builder/sessions/{sid}/audience", headers=h, json={"kind": "squad"})
+            self.assertFalse(http.get(f"/sessions/{sid}", headers=h).json()["extra_session"])
+            with SessionLocal() as db:
+                self.assertEqual(build_attendance_stats(ava, db)["overall_total"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

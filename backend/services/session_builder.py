@@ -419,13 +419,65 @@ def _staff_notes(db: DBSession) -> list:
         return []
 
 
+def _picked(audience: Optional[dict]) -> list:
+    """The swimmers a "select swimmers" session is for (none for any other kind)."""
+    a = audience or {}
+    if a.get("kind") != "swimmer":
+        return []
+    return [int(i) for i in (a.get("swimmer_ids") or []) if str(i).isdigit()]
+
+
+def _untouched(entry: models.SessionEntry) -> bool:
+    """A register row only marked in, with nothing the coach added (a note, a response...)."""
+    return bool(entry.attended) and not any((
+        (entry.coach_observation or "").strip(), entry.response, entry.sub_group_done,
+        entry.sets_completed, entry.ai_characterisation,
+    ))
+
+
+def set_audience(db: DBSession, session: models.Session, audience: Optional[dict]) -> None:
+    """Save who a session is for.
+
+    Swimmers picked for it (the pool shut and a few still trained, often at another
+    pool on their own) make it an extra session: they're marked in on its register
+    straight away, and nobody's attendance suffers for missing it. A swimmer taken
+    off the picks comes off the register too, unless the coach added something there."""
+    before = set(_picked(session.audience))
+    session.audience = audience
+    picked = _picked(audience)
+    session.extra_session = bool(picked)
+    known = {i for (i,) in db.query(models.Swimmer.id).filter(models.Swimmer.id.in_(picked)).all()} if picked else set()
+    entries = {e.swimmer_id: e for e in db.query(models.SessionEntry).filter(
+        models.SessionEntry.session_id == session.id).all()} if session.id else {}
+    if picked:
+        groups = list(session.groups or [])
+        planned = {}
+        for g in groups:
+            for sid in g.target_swimmer_ids or []:
+                planned.setdefault(sid, g.group_number)
+        only = groups[0].group_number if len(groups) == 1 else None
+        for sid in picked:
+            if sid not in known:
+                continue
+            e = entries.get(sid)
+            if e is None:
+                db.add(models.SessionEntry(session_id=session.id, swimmer_id=sid, attended=True,
+                                           group_planned=planned.get(sid), group_done=planned.get(sid) or only))
+            elif e.attended is None:
+                e.attended = True
+    for sid in before - set(picked):
+        e = entries.get(sid)
+        if e is not None and _untouched(e):
+            db.delete(e)
+
+
 def copy_to_next_week(db: DBSession, session: models.Session) -> models.Session:
     """The same session a week later: new ids, the plan's groups for that date."""
     b = builder_for(db, session)
     nxt = session.date + timedelta(days=7)
     new = models.Session(date=nxt, start_time=session.start_time, end_time=session.end_time, squad=session.squad,
                          pool_slot_id=session.pool_slot_id, course=session.course, status="active", source="builder",
-                         audience=copy.deepcopy(session.audience))
+                         audience=copy.deepcopy(session.audience), extra_session=bool(session.extra_session))
     db.add(new)
     db.flush()
     from backend.services.cycle_codes import link_session
@@ -441,4 +493,7 @@ def copy_to_next_week(db: DBSession, session: models.Session) -> models.Session:
         if g.get("training_group_id") in plan:
             g["swimmer_ids"] = plan[g["training_group_id"]]
     apply_builder(db, new, b)
+    if session.audience:
+        set_audience(db, new, copy.deepcopy(session.audience))
+        db.commit()
     return new

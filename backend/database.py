@@ -80,6 +80,7 @@ def _apply_migrations():
             add_col("sessions", "plan_ready_at", "DATETIME")
             add_col("sessions", "taken_by_other", "BOOLEAN DEFAULT 0")
             add_col("sessions", "taken_by", "VARCHAR")
+            add_col("sessions", "extra_session", "BOOLEAN DEFAULT 0")
             add_col("sessions", "debrief_skipped_at", "TIMESTAMP WITH TIME ZONE")
             add_col("session_notes", "kind", "VARCHAR")
             add_col("session_notes", "tagged_by", "VARCHAR")

@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import date
 from typing import Iterable
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session as DBSession
 
 from backend import models
@@ -31,12 +31,16 @@ def counts_on_register():
     Filter for register rows that count towards attendance.
 
     When someone else took a session the coach can't vouch for its register, so
-    a swimmer marked absent there (or never marked) isn't held against them.
+    a swimmer marked absent there (or never marked) isn't held against them. The
+    same goes for an extra session for picked swimmers: nobody was expected at it.
     Being marked in still counts: they swam it. Use with a query joined to Session.
     """
     return or_(
         models.SessionEntry.attended.is_(True),
-        models.Session.taken_by_other.isnot(True),
+        and_(
+            models.Session.taken_by_other.isnot(True),
+            models.Session.extra_session.isnot(True),
+        ),
     )
 
 

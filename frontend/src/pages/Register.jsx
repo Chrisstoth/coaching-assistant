@@ -654,10 +654,17 @@ export default function Register() {
         </p>
       )}
 
+      {session?.extra_session && !talking && (
+        <p className="mx-3 mt-3 rounded-lg bg-accent-900/30 border border-accent-700/40 px-3 py-2 text-xs text-pool-200">
+          <b className="text-pool-100">Extra session{session.audience_label ? ` · ${session.audience_label}` : ''}.</b>{' '}
+          The swimmers it was for are already marked in. Missing it doesn't count against anyone&apos;s attendance.
+        </p>
+      )}
+
       {/* Entries: who's expected first, then the rest of the squad */}
       <div className="flex-1">
         {(entries.some(e => e.expected) && entries.some(e => !e.expected)
-          ? [['Expected', entries.filter(e => e.expected)], ['Not expected today', entries.filter(e => !e.expected)]]
+          ? [['Expected', entries.filter(e => e.expected)], [session?.extra_session ? 'Not part of this session' : 'Not expected today', entries.filter(e => !e.expected)]]
           : [['', entries]]
         ).map(([title, list]) => (
           <div key={title || 'all'}>

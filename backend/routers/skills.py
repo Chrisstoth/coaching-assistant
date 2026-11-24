@@ -866,16 +866,21 @@ def _build_adaptation_context(swimmer: models.Swimmer, db: DBSession) -> str:
         models.Session.date >= eight_weeks_ago,
     ).all()
     weekly_sessions: dict = defaultdict(int)
+    extra_attended: dict = defaultdict(int)
     for e in entries:
         sess = db.query(models.Session).filter(models.Session.id == e.session_id).first()
         if sess:
             weekly_sessions[iso_week(sess.date)] += 1
+            if sess.extra_session:
+                extra_attended[iso_week(sess.date)] += 1
 
-    # Total sessions available per week
-    total_sessions_per_week: dict = defaultdict(int)
+    # Total sessions available per week. An extra session for picked swimmers is only
+    # one of theirs if they swam it: nobody else was expected at it.
+    total_sessions_per_week: dict = defaultdict(int, extra_attended)
     all_sessions = db.query(models.Session).filter(
         models.Session.date >= eight_weeks_ago,
         models.Session.status != 'cancelled',
+        models.Session.extra_session.isnot(True),
     ).all()
     for s in all_sessions:
         total_sessions_per_week[iso_week(s.date)] += 1
