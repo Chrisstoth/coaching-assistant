@@ -723,6 +723,33 @@ def _no_handoff(c, proposer, db):
     return None
 
 
+# A swimmer's usual sessions (the Schedule page's list), when the register says otherwise
+def _v_usual_session(p, db):
+    from backend.services.usual_sessions import find_slot
+    swimmer = _swimmer(db, p.get("swimmer_id"))
+    slot = find_slot(db, p.get("slot_id"))
+    if not slot:
+        raise ActionError("That session isn't on the timetable any more")
+    return {"swimmer_id": swimmer.id, "slot_id": slot.id, "attend": bool(p.get("attend")),
+            "reason": _text(p.get("reason"), "Reason", required=False) or ""}
+
+
+def _d_usual_session(c, db):
+    from backend.services.usual_sessions import slot_name
+    where = slot_name(db.get(models.PoolSlot, c["slot_id"]))
+    verb = "Add" if c["attend"] else "Take"
+    return [f"{verb} {where} {'to' if c['attend'] else 'off'} {_name(db, c['swimmer_id'])}'s usual sessions", c["reason"],
+            "The register and the season plan follow the new list."]
+
+
+def _a_usual_session(c, db):
+    from backend.services.usual_sessions import set_usual, slot_name
+    set_usual(db, c["swimmer_id"], c["slot_id"], c["attend"])
+    db.commit()
+    where = slot_name(db.get(models.PoolSlot, c["slot_id"]))
+    return f"{where} is {'now' if c['attend'] else 'no longer'} one of {_name(db, c['swimmer_id'])}'s usual sessions."
+
+
 # ---------------------------------------------------------------------------
 # The registry
 # ---------------------------------------------------------------------------
@@ -772,6 +799,9 @@ ACTIONS = {spec.type: spec for spec in [
     ActionSpec("move_group", ("manager",), "Move them",
                '{"type": "move_group", "swimmer_id": 12, "group_id": 3, "date_from": "YYYY-MM-DD", "reason": "..."}',
                _v_move_group, _d_move_group, _a_move_group, _h_move_group),
+    ActionSpec("set_usual_session", ("manager",), "Change their usual sessions",
+               '{"type": "set_usual_session", "swimmer_id": 12, "slot_id": 4, "attend": true, "reason": "..."}',
+               _v_usual_session, _d_usual_session, _a_usual_session, _no_handoff),
     ActionSpec("add_coaching_note", ("manager",), "Add this note",
                '{"type": "add_coaching_note", "title": "...", "body": "...", "swimmer_ids": [12], '
                '"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}',

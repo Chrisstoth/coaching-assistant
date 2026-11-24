@@ -1047,6 +1047,14 @@ def submit_register(
     db.refresh(session)
     if operation:
         db.refresh(operation)
+    # The swimmer manager checks the register against everyone's usual sessions.
+    try:
+        from backend.services import usual_sessions
+        usual_sessions.check(db, session)
+    except Exception:  # noqa: BLE001 - the register is saved whatever the check finds
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).exception("Could not check usual sessions")
     return _register_receipt(session, db, operation=operation)
 
 

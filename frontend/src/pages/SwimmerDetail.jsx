@@ -506,17 +506,19 @@ export default function SwimmerDetail() {
     }
   }, [tab, id])
 
-  const toggleSlot = (slotId) => {
-    setAttendingIds((prev) => {
-      const next = new Set(prev)
-      next.has(slotId) ? next.delete(slotId) : next.add(slotId)
-      return next
-    })
-  }
-
-  const saveSlots = async () => {
+  // Usual sessions: the Schedule page's list of who comes to each slot. A tap saves it, so the
+  // register and the season plan (which version of a session they're on) follow straight away.
+  const toggleSlot = async (slotId) => {
+    const next = new Set(attendingIds)
+    next.has(slotId) ? next.delete(slotId) : next.add(slotId)
+    setAttendingIds(next)
     setSavingSlots(true)
-    await api.setSwimmerSlots(id, [...attendingIds])
+    try {
+      await api.setSwimmerSlots(id, [...next])
+    } catch (e) {
+      alert('Could not save their usual sessions: ' + e.message)
+      setAttendingIds(attendingIds)
+    }
     setSavingSlots(false)
   }
 
@@ -1982,23 +1984,22 @@ export default function SwimmerDetail() {
 
         {show('Attendance') && (
           <div className="space-y-5">
-            {/* Session slots */}
+            {/* Usual sessions: the same list as the Schedule page's "who comes to this slot" */}
             <section className="space-y-3">
-              <div className="flex justify-between items-center">
-                <h3 className="font-semibold text-sm">Regular Sessions</h3>
-                <button
-                  onClick={saveSlots}
-                  disabled={savingSlots}
-                  className="text-xs bg-accent-600 disabled:opacity-40 rounded px-3 py-1.5 font-semibold"
-                >
-                  {savingSlots ? 'Saving...' : 'Save'}
-                </button>
+              <div className="flex justify-between items-center gap-2">
+                <h3 className="font-semibold text-sm">Usual sessions</h3>
+                {savingSlots && <span className="text-xs text-pool-500">Saving…</span>}
               </div>
+              <p className="text-pool-400 text-xs leading-relaxed">
+                Tap the sessions {swimmer.name.split(' ')[0]} normally comes to. It's the same list as on the Schedule page:
+                the register expects them there, and the season plan uses it to work out which version of a session they're on.
+                If the register keeps saying otherwise, the swimmer manager will ask you about it.
+              </p>
               {allSlots.length === 0 ? (
                 <p className="text-pool-400 text-sm">No pool slots defined yet — add them in the Schedule tab first.</p>
               ) : (
                 <div className="space-y-2">
-                  {allSlots.map((slot) => (
+                  {allSlots.filter((slot) => !slot.squad || !swimmer.squad || slot.squad === swimmer.squad || attendingIds.has(slot.id)).map((slot) => (
                     <button
                       key={slot.id}
                       onClick={() => toggleSlot(slot.id)}

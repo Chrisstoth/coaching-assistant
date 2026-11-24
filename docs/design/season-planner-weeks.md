@@ -4,8 +4,9 @@ Agreed with the coach on 2026-11-24. The season planner (frontend/src/planner) w
 built as a stand-alone artifact and brought into the app unchanged, so it kept its
 own copies of three things the app already has: the intensity scales, the
 pool timetable and the meet calendar. This design makes the app's copy the only
-copy, and turns the planner's "Session templates" into a week-by-week micro
-planner.
+copy, and turns the planner's "Session templates" into a micro planner: one
+week (or micro of any length) at a time, for every group and every swimmer
+who differs.
 
 The rule throughout: **one list of each thing in the app.** The planner keeps only
 what is about planning (A/B/C targets, metres per hour, a session's role, the
@@ -69,43 +70,131 @@ week's focus), and shows the shared fields of everything else.
 * Planner-only: the short name, A/B/C per group, the licence level (L1–L3), which
   qualifying times it uses, and its note.
 
-## 4. The Weeks tab (the micro planner, with the meso blocks in it)
+## 4. Micros and the Weeks tab
 
-Replaces the Sessions tab and its "Session templates" card.
+Revised with the coach later on 2026-11-24. The first Weeks tab (a row for every
+week, grouped under each block, for one group or swimmer at a time) was hard to
+use. The timing of macros, mesos and micros is set on the Season tab by the bars,
+so the Weeks tab doesn't repeat it: it is a look at one week (one micro) at a
+time, where the coach plans the next few and looks back at the last.
 
-* **Pick a plan line** at the top: a group or a swimmer.
-* **One row per week**, grouped under a heading for each block of that line.
-* **Block heading = the meso plan.** Its code (1.2), name, dates, aim, and its
-  **standard week**: a focus (main, 2nd, optional 3rd) and notes for every
-  session. Every week in the block starts from it. A standard week can be shared
-  by several blocks; the heading says so and offers "Copy for this block only".
-  The load mix (aerobic / anaerobic / speed ×) sits with it.
-* **Week row = the micro plan.** For each week:
-  * this line's code (1.3.1), Monday's date and the load;
-  * every group's code that week (e.g. "Nationals 1.3.1 · Silver 1.2.8");
-  * the next A meet and the next meet of any priority for this line, with days
-    or weeks to go;
-  * each session's focus and notes. A session changed for this week has a
-    coloured edge and a Reset. Opening the row edits the week.
-  * each session links to the real session for that date and slot: "Open" when
-    it has been written, "Write" when it hasn't (the Session Builder opens it or
-    starts it).
-* **A swimmer who differs from their group has their own week**: picking them as
-  the line and changing a session makes a change for them only, filed under the
-  group they're in that week (as now).
-* Earlier weeks fold away; the list opens on this week.
-* At the bottom: the timetable (section 2) and the standard weeks no block uses.
+### 4.1 Micros of any length
+
+* A **micro is a run of dates**. By default it is a week, Monday to Sunday, and a
+  coach who plans in weeks never sees anything else. A coach who plans in micros
+  starts a new micro on any day: lengths are free (8, 6, 4 days; alternating
+  weeks), and nothing assumes they repeat.
+* The season chart has **one bar per micro** (as wide as its days), and the load
+  is set per micro.
+* What a micro holds comes from the timetable: the sessions that fall on its dates.
+* **Planned sessions are kept by date and pool slot**, not by week number and
+  session, so micro edges can move without losing what was planned. Today's
+  per-week changes are carried across to this.
+* A **standard micro** (today's "standard week") is an ordered list of sessions
+  (1st session aerobic, 2nd threshold, and so on), laid over the sessions a
+  micro holds, in order. A 7-day standard week behaves exactly as now. Sessions
+  past the end of the list start blank.
+* Micros belong to a group's line; a sub group follows its parent's micros unless
+  it is given its own. (Assumed; confirm when micros are built.)
+
+### 4.2 The week view
+
+* **This micro at the top**, with ◀ ▶ to step back and forward one micro at a time.
+* **One card per group**: its code, its load (read only: the bars set it) and
+  each session with its day and slot, its focus (main, 2nd, optional 3rd) and
+  notes, its versions (4.3), and **Open ›** (the session's PDF) once written or
+  **Write** (the Session Builder) before. A session not yet planned for this
+  micro shows the standard micro, faded; changing it makes it this micro's own.
+* **Far ahead is faded.** The arrows go as far ahead as the season, but more
+  than 3–4 micros ahead is faded: tap a day to fill it in. Nothing needs
+  planning that far ahead.
+* **Last micro**, folded under each group card, with its own ◀ ▶ (it starts on
+  the micro before the one at the top): the sessions actually written and swum
+  (metres, as-swum notes, Open › to the PDF), with what was planned on a small
+  line under each to compare.
+* **Swimmers who differ**, below the groups and clearly apart from them. A
+  swimmer differs only where their season chart bar differs from their group's
+  (a deliberate change by the coach). Following a version of a session (4.3) or
+  coming to fewer sessions (4.4) is not differing. Swimmers with the same
+  difference share one card; editing it changes all of them, and "Split off"
+  makes one different. **+ Swimmer differs** picks the swimmers, what is
+  different (misses sessions, lighter load, changed sessions) and for how long
+  (this micro, or the next N). An injury or illness in the debrief's Right now
+  notes comes up here as a prompt ("Jo: shoulder, no fly until 8 Dec. Plan
+  around it?"), never applied by itself.
+* The weekly timetable and the standard weeks no block uses move to the
+  Calendar tab.
+
+### 4.3 Versions of a session
+
+* A session can have **versions, each saying who it is for**: swimmers who did
+  certain sessions, swimmers who missed any of them, named swimmers, or everyone
+  else (the default). For example, Wednesday AM is recovery for those who did
+  Monday PM and Tuesday PM, and speed and pace for everyone else.
+* **A version is part of the plan.** A swimmer on it is following their group.
+* "Did" and "missed" can name any earlier session, including one in the micro
+  before. (Assumed; confirm when built.)
+* **Who gets which version** comes from each swimmer's usual sessions (4.4) ahead
+  of time, and from the register and time away once they are known,
+  automatically: marked absent Tuesday, on the other version Wednesday.
+* The Session Builder opens the session **already split into its versions**,
+  with the right swimmers in each.
+* Each swimmer's plan sheet shows the version they are on. Their load stays on
+  the group's line; the mix of work in it is what changes.
+
+### 4.4 Usual sessions: one list
+
+* Each swimmer's usual sessions are the Schedule page's list of who comes to each
+  slot (SwimmerSlot), the list the register already uses for "expected". It is
+  edited there, slot by slot, and on the swimmer's own page ("Usual sessions",
+  a tick for each slot): one list, either place.
+* A swimmer who comes to fewer sessions has the group's plan for the sessions
+  they come to; that is not differing.
+* **History check.** The swimmer manager compares the register with each
+  swimmer's usual sessions. When a swimmer has missed a usual session the last 4
+  times it ran (not counting time away, injury or a cancelled session), or come
+  to one that isn't on their list the last 4 times, a staff note asks the
+  coach, for example "Sam hasn't been to Monday PM in 5 weeks. Take it off Sam's
+  usual sessions?", with Take it off / Keep it. The list never changes by itself.
+
+### 4.5 Links to what actually happened
+
+* A **cancelled session** is struck through in its micro with the reason, its
+  share comes off the micro's load for everyone in it (as time away does), and it
+  shows on the swimmers' plan sheets. Its focus is not moved anywhere by itself.
+* An **extra session** for picked swimmers shows in its micro with those
+  swimmers, and counts towards their load.
+* The swimmer's plan sheet shows **the next 4 micros**: their versions, their
+  differences, time away and cancelled sessions.
+
+### 4.6 The overview
+
+* A grid with micros down the side and every group across the top (sub groups
+  and short-term groups included, so none can go missing from view). Each cell
+  shows the load, a strip of focus colours for its sessions, and a badge when
+  swimmers differ ("2 differ"). Tapping a cell opens that micro in the week view.
 
 ## 5. What the staff see
 
 The staff's week lines (season_planner.staff_lines) include the planned focus of
-the session being written, for each group, so the Session Builder's staff write
-to the plan.
+the session being written, for each group and each version, so the Session
+Builder's staff write to the plan.
 
 ## Order of work
 
-1. Intensity: one set of scales, the zone-bar editor, plan values converted.
-2. Timetable lined up with the Schedule page.
-3. The Weeks tab.
-4. Links from each week to the real sessions, and the plan's focus for the staff.
-5. Meets lined up with the Meets tab.
+Done: one set of scales, the timetable lined up with the Schedule page, meets
+lined up with the Meets tab, and the first Weeks tab with its links to sessions.
+
+The redesign (section 4), in steps:
+
+1. Usual sessions, one list: the swimmer's page edits the Schedule page's list;
+   the history check.
+2. Planned sessions kept by date and slot (carrying today's per-week changes over).
+3. The week view, in weeks: this week, ◀ ▶, faded far ahead, last week folded
+   under each group, Open › to the PDF, cancelled and extra sessions. The
+   timetable moves to the Calendar tab.
+4. Versions of a session, with the Session Builder opening already split and the
+   plan sheet's next 4 weeks.
+5. Swimmers who differ, with the Right now prompts.
+6. The overview grid.
+7. Micros of any length, with one bar per micro.
