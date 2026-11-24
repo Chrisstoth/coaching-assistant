@@ -131,6 +131,19 @@ def plan_week(squad: str, db: DBSession = Depends(get_db)):
             "away": sum(1 for s in w["swimmers"].values() if s.get("camp") or s.get("away"))}
 
 
+@router.get("/{squad}/actuals")
+def plan_actuals(squad: str, date_from: str, date_to: str, db: DBSession = Depends(get_db)):
+    """What happened (and is known ahead) for the planner's week view: registers, cancelled and extra
+    sessions, usual sessions, time away and Right now notes (docs/design/season-planner-weeks.md 4.3-4.5)."""
+    from datetime import date
+    from backend.services import season_planner
+    try:
+        a, z = date.fromisoformat(date_from[:10]), date.fromisoformat(date_to[:10])
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Dates are YYYY-MM-DD")
+    return season_planner.actuals(db, squad, a, z) or {"sessions": [], "usual": {}, "excused": {}, "right_now": []}
+
+
 @router.get("/{squad}/groups")
 def plan_groups(squad: str, db: DBSession = Depends(get_db)):
     from backend.services import season_planner

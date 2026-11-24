@@ -122,9 +122,33 @@ const fdy=t=>{const d=new Date(t);return d.getUTCDate()+' '+MON[d.getUTCMonth()]
 const fdow=t=>{const d=new Date(t);return DOW[d.getUTCDay()]+' '+d.getUTCDate()+' '+MON[d.getUTCMonth()];};
 const range=(a,b)=>{const A=new Date(a),B=new Date(b);return A.getUTCMonth()===B.getUTCMonth()&&A.getUTCFullYear()===B.getUTCFullYear()?(a===b?fd(a):A.getUTCDate()+'–'+fd(b)):fd(a)+' – '+fd(b);};
 const today=()=>{const n=new Date();return Date.UTC(n.getFullYear(),n.getMonth(),n.getDate());};
-const D0=()=>iso(S.plan.settings.start), NW=()=>S.plan.settings.weeks;
-const wkS=i=>D0()+i*WK, wkE=i=>D0()+i*WK+6*DAY;
-const weekOf=t=>Math.floor((t-D0())/WK);
+/* The plan's columns: a week each, or micros of any length (docs/design/season-planner-weeks.md, 4.1).
+   plan.settings.micros = the ISO dates a new micro starts on (the season's start always does); none = weeks.
+   The season runs settings.weeks weeks either way. Everything kept per column (loads, blocks, session changes,
+   group moves) is kept by column number; changing the micros carries it all over by date (setMicros). */
+const D0=()=>iso(S.plan.settings.start), END=()=>D0()+(+S.plan.settings.weeks||0)*WK;
+const isMicro=()=>!!(S.plan&&S.plan.settings&&S.plan.settings.micros&&S.plan.settings.micros.length);
+let GR=[],grSig=null;
+function grid(){const st=S.plan.settings,m=st.micros||null,sig=st.start+'|'+st.weeks+'|'+(m?m.join(','):'');if(sig===grSig)return GR;grSig=sig;const a=D0(),z=END();
+  if(m&&m.length)GR=[a].concat([...new Set(m.map(iso))].filter(t=>t>a&&t<z).sort((x,y)=>x-y));else{GR=[];for(let t=a;t<z;t+=WK)GR.push(t);}return GR;}
+const NW=()=>grid().length;
+const wkS=i=>{const g=grid();return i>=0&&i<g.length?g[i]:i<0?D0()+i*WK:END()+(i-g.length)*WK;};
+const wkE=i=>wkS(i+1)-DAY;
+const weekOf=t=>{if(!isMicro())return Math.floor((t-D0())/WK);const g=grid();if(t<g[0])return Math.floor((t-D0())/WK);if(t>=END())return g.length+Math.floor((t-END())/WK);
+  let lo=0,hi=g.length-1;while(lo<hi){const m=(lo+hi+1)>>1;if(g[m]<=t)lo=m;else hi=m-1;}return lo;};
+const mLen=i=>Math.round((wkS(i+1)-wkS(i))/DAY);
+const colWord=(n)=>isMicro()?(n===1?'micro':'micros'):(n===1?'week':'weeks');
+/* the timetable's sessions in column i, in date order: {key,x,d,k,tpl}. A session that comes round twice in one
+   micro is "<id>~2". A micro's standard sessions are the standard week's, in order: its k-th session takes the k-th
+   (a week takes each session's own). */
+const tSorted=()=>[...S.plan.sessions].sort((a,b)=>(+a.day||0)-(+b.day||0)||String(a.time||'').localeCompare(String(b.time||'')));
+const oMemo=new Map();
+function occs(i){if(oMemo.has(i))return oMemo.get(i);const ts=tSorted(),out=[],seen={};
+  for(let d=wkS(i),e=wkE(i);d<=e;d+=DAY){const dow=(new Date(d).getUTCDay()+6)%7;ts.forEach(x=>{if((+x.day||0)!==dow)return;seen[x.id]=(seen[x.id]||0)+1;out.push({key:seen[x.id]>1?x.id+'~'+seen[x.id]:x.id,x,d});});}
+  const mic=isMicro();out.forEach((o,k)=>{o.k=k;o.tpl=mic?(ts[k]||null):o.x;});oMemo.set(i,out);return out;}
+const occOf=(i,key)=>occs(i).find(o=>o.key===key)||null;
+const hoursIn=i=>occs(i).reduce((s,o)=>s+(+o.x.hours||0),0);
+const volOf=i=>occs(i).reduce((s,o)=>s+(+o.x.hours||0)*(+o.x.mph||0),0);
 const r2=x=>Math.round(x*100)/100;
 const pct=x=>Math.round((x||0)*100)+'%';
 const L={HEAD:48,CAL:76,MAC:17,MES:34,GAP:14,LOAD:108,CODE:18,PAD:9};
@@ -161,8 +185,8 @@ function groupRuns(sw){const r=[];for(let i=0;i<NW();i++){const g=groupAt(sw,i);
 /* individual absences: plan.personal[id].away = [{id,type,from,to,note,mods}] — missed sessions take their share of the week off; an injury trains at mods */
 function awayFor(sid){return ((S.plan.personal||{})[sid]||{}).away||[];}
 const INJ={load:.5,aer:.6,ana:.2,spd:0};
-function awayIn(sw,i){const list=awayFor(sw.id);if(!list.length)return null;const tot=S.plan.sessions.reduce((s,x)=>s+(+x.hours||0),0)||1;const F={load:1,aer:1,ana:1,spd:1},items=[];
-  list.forEach(a=>{if(!a.from)return;const A=iso(a.from),Z=iso(a.to||a.from);if(Z<wkS(i)||A>wkE(i))return;let miss=0;S.plan.sessions.forEach(x=>{const d=wkS(i)+x.day*DAY;if(d>=A&&d<=Z)miss+=(+x.hours||0);});const frac=miss/tot;if(frac<=0)return;
+function awayIn(sw,i){const list=awayFor(sw.id);if(!list.length)return null;const os=occs(i);const tot=os.reduce((s,o)=>s+(+o.x.hours||0),0)||1;const F={load:1,aer:1,ana:1,spd:1},items=[];
+  list.forEach(a=>{if(!a.from)return;const A=iso(a.from),Z=iso(a.to||a.from);if(Z<wkS(i)||A>wkE(i))return;let miss=0;os.forEach(o=>{if(o.d>=A&&o.d<=Z)miss+=(+o.x.hours||0);});const frac=miss/tot;if(frac<=0)return;
     const m=a.type==='Injury'?Object.assign({},INJ,a.mods||{}):{load:0,aer:0,ana:0,spd:0};['load','aer','ana','spd'].forEach(k=>{F[k]*=1-frac*(1-m[k]);});items.push({type:a.type,frac,note:a.note||''});});
   return items.length?{F,items}:null;}
 const allSw=()=>S.roster?S.roster.swimmers:[];
@@ -220,7 +244,13 @@ function rw(bid,i){let b=BR(bid);while(b){
       b=BR(gi);continue;}
     const w=b.weeks&&b.weeks[i];if(w)return w;
     b=b.parent?BR(b.parent):null;}return null;}
-const memo=new Map(),sMemo=new Map();const inval=()=>{memo.clear();sMemo.clear();};
+const memo=new Map(),sMemo=new Map();const inval=()=>{memo.clear();sMemo.clear();oMemo.clear();grSig=null;};
+/* What actually happened, from the app (opts.api.actuals): a cancelled session takes its share off the column for
+   everyone in it, as time away does; an extra session adds its share for the swimmers it was for. */
+function cutIn(b,i){const A=S.actual;if(!A||!b)return null;const os=occs(i);const tot=os.reduce((s,o)=>s+(+o.x.hours||0),0)||1;let off=0,add=0;const items=[];
+  os.forEach(o=>{if(!o.x.slot)return;const why=A.cancelled.get(toISO(o.d)+'|'+o.x.slot);if(why==null)return;off+=(+o.x.hours||0);items.push({type:'Cancelled',label:o.x.label,d:o.d,why});});
+  if(b.kind==='swimmer')(A.extra||[]).forEach(x=>{const d=iso(x.date);if(d<wkS(i)||d>wkE(i)||!(x.picked||[]).includes(b.sw.id))return;add+=+x.hours||0;items.push({type:'Extra',label:x.title||'Extra session',d,id:x.id});});
+  return items.length?{F:Math.max(0,1-off/tot+add/tot),items}:null;}
 function TL(bid){
   if(memo.has(bid))return memo.get(bid);
   const n=NW(),b=BR(bid),arr=[];let pp=null,pm=null,meso=0,micro=0;
@@ -232,8 +262,9 @@ function TL(bid){
     const pg=b.kind==='swimmer'?groupAt(b.sw,i):b.parent;const pw=pg?rw(pg,i):null;
     const diff=!!(b.parent&&pw&&!sameW(w,pw));const c=effC(w),pc=pw?effC(pw):null;let load=w.load||0;
     const c0=Object.assign({},c);const away=b.kind==='swimmer'?awayIn(b.sw,i):null;if(away){load=r2(load*away.F.load);CK.forEach(k=>{c[k]=r2(c[k]*away.F[k]);});}
+    const cut=cutIn(b,i);if(cut){load=r2(load*cut.F);CK.forEach(k=>{c[k]=r2(c[k]*cut.F);});}
     const cd={};CK.forEach(k=>{cd[k]=!!(pc&&Math.abs(c[k]-pc[k])>1e-6);});
-    arr.push({i,p:w.p,load,plan:w.load||0,c0,ph,macro:m,meso,micro,code:m==='–'?'Off':m+'.'+meso+'.'+micro,diff,pload:pw?pw.load:null,raw:w,c,pc,cd,camp:w.camp||null,g:pg,away});
+    arr.push({i,p:w.p,load,plan:w.load||0,c0,ph,macro:m,meso,micro,code:m==='–'?'Off':m+'.'+meso+'.'+micro,diff,pload:pw?pw.load:null,raw:w,c,pc,cd,camp:w.camp||null,g:pg,away,cut});
   }
   memo.set(bid,arr);return arr;
 }
@@ -319,19 +350,25 @@ function parseFocus(t){t=String(t||'');if(/^\s*off\b/i.test(t))return {};const h
   hits.sort((x,y)=>x.i-y.i);const rs=[];hits.forEach(h=>{if(!rs.includes(h.r))rs.push(h.r);});
   const o={};['a','b','c'].forEach((k,j)=>{if(rs[j]!=null)o[k]=rs[j];});return o;}
 function upgradeTemplates(){S.plan.templates.forEach(t=>{if(t.f)return;t.f={};S.plan.sessions.forEach(x=>{const o=parseFocus((t.s||{})[x.id]);if(Object.keys(o).length)t.f[x.id]=o;});});}
-const normT=o=>({a:o&&o.a!=null&&o.a!==''?+o.a:null,b:o&&o.b!=null&&o.b!==''?+o.b:null,c:o&&o.c!=null&&o.c!==''?+o.c:null,n:(o&&o.n)||''});
-const sKey=t=>t.camp?'camp:'+t.camp:[t.a,t.b,t.c,String(t.n||'').trim()].join('|');
-function tplTarget(p,sid){const ph=S.plan.phases[p];const t=ph&&tplOf(ph.template);return normT(Object.assign({},t&&t.f&&t.f[sid],{n:t&&t.s&&t.s[sid]||''}));}
+/* versions of a session (4.3): t.v = [{k:'did'|'missed'|'names', s:[session ids] or ids:[swimmer ids], a,b,c,n}]: the first
+   version a swimmer fits is theirs; everyone else has the session itself. */
+const fNum=v=>v!=null&&v!==''?+v:null;
+const normV=v=>({k:['did','missed','names'].includes(v&&v.k)?v.k:'missed',s:(v&&v.s||[]).map(String),ids:(v&&v.ids||[]).map(String),a:fNum(v&&v.a),b:fNum(v&&v.b),c:fNum(v&&v.c),n:(v&&v.n)||''});
+const normT=o=>{const t={a:fNum(o&&o.a),b:fNum(o&&o.b),c:fNum(o&&o.c),n:(o&&o.n)||''};if(o&&Array.isArray(o.v)&&o.v.length)t.v=o.v.map(normV);return t;};
+const sKey=t=>t.camp?'camp:'+t.camp:[t.a,t.b,t.c,String(t.n||'').trim()].join('|')+(t.v&&t.v.length?'|'+JSON.stringify(t.v):'');
+function tplTarget(p,sid){const ph=S.plan.phases[p];const t=ph&&tplOf(ph.template);const f=t&&t.f&&t.f[sid];return normT(Object.assign({},f,{n:t&&t.s&&t.s[sid]||''},f&&f.v?{v:clone(f.v)}:{}));}
+/* the standard target for a session in column i (its key there) */
+function tplAt(p,i,key){const o=occOf(i,key);return o&&o.tpl?tplTarget(p,o.tpl.id):normT({});}
 function sessOwn(bid,i,sid){const b=BR(bid);if(!b)return null;if(b.kind==='swimmer'){const g=groupAt(b.sw,i);return ((((persOf(b.sw.id).ownSess||{})[g]||{})[i])||{})[sid]||null;}return (((b.sess||{})[i])||{})[sid]||null;}
 function sessBase(bid,i,sid){const b=BR(bid);const w=TL(bid)[i];
   if(b.kind==='swimmer'){if(w.camp){const ev=S.plan.events.find(e=>e.id===w.camp)||{};return {camp:w.camp,a:null,b:null,c:null,n:'Camp: '+(ev.name||'')};}
-    const g=groupAt(b.sw,i);return TL(g)[i].p===w.p?sessT(g,i,sid):tplTarget(w.p,sid);}
-  return b.parent&&TL(b.parent)[i].p===w.p?sessT(b.parent,i,sid):tplTarget(w.p,sid);}
+    const g=groupAt(b.sw,i);return TL(g)[i].p===w.p?sessT(g,i,sid):tplAt(w.p,i,sid);}
+  return b.parent&&TL(b.parent)[i].p===w.p?sessT(b.parent,i,sid):tplAt(w.p,i,sid);}
 function sessT(bid,i,sid){const k=bid+'|'+i+'|'+sid;if(sMemo.has(k))return sMemo.get(k);const o=sessOwn(bid,i,sid);const r=o?Object.assign(normT(o),{own:true}):sessBase(bid,i,sid);sMemo.set(k,r);return r;}
 function sessStore(bid,i,make){const b=BR(bid);if(b.kind==='swimmer'){const g=groupAt(b.sw,i);if(make){S.plan.personal=S.plan.personal||{};const P=S.plan.personal[b.sw.id]=S.plan.personal[b.sw.id]||{};P.ownSess=P.ownSess||{};return P.ownSess[g]=P.ownSess[g]||{};}return (persOf(b.sw.id).ownSess||{})[g]||null;}
   if(make)b.sess=b.sess||{};return b.sess||null;}
 function setSess(bid,i,sid,patch){const cur=sessT(bid,i,sid);const nv=normT(Object.assign({},cur.camp?{n:''}:cur,patch));sMemo.clear();const base=sessBase(bid,i,sid);
-  if(!base.camp&&sKey(nv)===sKey(base)){clearSess(bid,i,sid);return;}const st=sessStore(bid,i,true);(st[i]=st[i]||{})[sid]={a:nv.a,b:nv.b,c:nv.c,n:nv.n};sMemo.clear();}
+  if(!base.camp&&sKey(nv)===sKey(base)){clearSess(bid,i,sid);return;}const st=sessStore(bid,i,true);const keep={a:nv.a,b:nv.b,c:nv.c,n:nv.n};if(nv.v&&nv.v.length)keep.v=nv.v;(st[i]=st[i]||{})[sid]=keep;sMemo.clear();}
 function clearSess(bid,i,sid){const st=sessStore(bid,i,false);if(st&&st[i]){delete st[i][sid];if(!Object.keys(st[i]).length)delete st[i];}sMemo.clear();}
 function membersAt(bid,i){return allSw().filter(s=>planned(s)&&groupAt(s,i)===bid);}
 /* the different versions of one session in week i, across groups (with swimmers in them that week) and individuals who differ */
@@ -350,7 +387,7 @@ function unplanned(){return S.roster?S.roster.swimmers.filter(s=>!planned(s)):[]
 function usedBy(pid){return lanes().filter(b=>TL(b.id).some(w=>w.p===pid)).map(b=>b.name);}
 function prune(){
   S.plan.branches.forEach(b=>{if(!b.parent||!b.weeks)return;Object.keys(b.weeks).forEach(k=>{if(sameW(b.weeks[k],rw(b.parent,+k)))delete b.weeks[k];});});
-  inval();S.plan.branches.forEach(b=>{if(!b.sess)return;Object.keys(b.sess).forEach(i=>{if(+i>=NW()){delete b.sess[i];return;}Object.keys(b.sess[i]).forEach(sid=>{if(!S.plan.sessions.some(x=>x.id===sid)||sKey(normT(b.sess[i][sid]))===sKey(sessBase(b.id,+i,sid)))delete b.sess[i][sid];});if(!Object.keys(b.sess[i]).length)delete b.sess[i];});if(!Object.keys(b.sess).length)delete b.sess;});
+  inval();S.plan.branches.forEach(b=>{if(!b.sess)return;Object.keys(b.sess).forEach(i=>{if(+i>=NW()){delete b.sess[i];return;}Object.keys(b.sess[i]).forEach(sid=>{if(!occOf(+i,sid)||sKey(normT(b.sess[i][sid]))===sKey(sessBase(b.id,+i,sid)))delete b.sess[i][sid];});if(!Object.keys(b.sess[i]).length)delete b.sess[i];});if(!Object.keys(b.sess).length)delete b.sess;});
   const P=S.plan.personal||{};
   upgradePersonal();
   if(S.roster)Object.keys(P).forEach(sid=>{const sw=S.roster.swimmers.find(s=>s.id===sid);if(!sw){delete P[sid];return;}const X=P[sid];const isG=g=>S.plan.branches.some(b=>b.id===g);

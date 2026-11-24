@@ -209,8 +209,33 @@ def plan_groups(db: DBSession, on: date, squad: Optional[str]) -> list:
     return out
 
 
+def split_by_versions(db: DBSession, session: models.Session, groups: list) -> list:
+    """A session the season plan gives versions to (recovery for those who did Monday and Tuesday, speed for
+    everyone else) starts with each group already split into them, the right swimmers in each."""
+    try:
+        from backend.services import season_planner
+        found = season_planner.session_versions(db, session.squad, session.date, session.pool_slot_id)
+    except Exception:  # noqa: BLE001 - the plan's groups as they are
+        return groups
+    for sv in found:
+        k = next((j for j, g in enumerate(groups) if g["name"] == sv["group"]), None)
+        if k is None:
+            continue
+        base = groups[k]
+        on_version = {i for v in sv["versions"][1:] for i in v["swimmer_ids"]}
+        split = []
+        for n, v in enumerate(sv["versions"]):
+            ids = [i for i in base["swimmer_ids"] if i not in on_version] if n == 0 else                 [i for i in v["swimmer_ids"] if i in base["swimmer_ids"]]
+            if n and not ids:
+                continue                      # nobody on that version this time
+            split.append({**base, "id": base["id"] + (f"v{n}" if n else ""), "swimmer_ids": ids,
+                          "name": base["name"] + (f" · {v['label']}" if v["label"] else "")})
+        groups[k:k + 1] = split
+    return groups
+
+
 def blank_builder(db: DBSession, session: models.Session) -> dict:
-    groups = plan_groups(db, session.date, session.squad)
+    groups = split_by_versions(db, session, plan_groups(db, session.date, session.squad))
     return {
         "title": "",
         "date": session.date.isoformat(),

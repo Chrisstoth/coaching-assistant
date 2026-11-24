@@ -68,6 +68,35 @@ class PlannerTwinTests(unittest.TestCase):
                          "back to the group he came from, not the one it follows")
         self.assertEqual((P.span("late"), P.runs_in("late", 6), P.runs_in("late", 9), P.ended("late", 10)), ((7, 9), False, True, True))
 
+    def test_micros_of_any_length_match_the_planner(self):
+        plan = json.loads(json.dumps(PLAN))
+        plan["settings"]["micros"] = ["2026-09-01", "2026-09-09", "2026-09-15", "2026-09-19", "2026-10-05"]
+        P = SP.Plan(plan, ROSTER)
+        cases = json.loads((DIR / "cases-micros.json").read_text(encoding="utf8"))
+        for bid, cols in cases.items():
+            mine = P.timeline(bid)
+            self.assertEqual(len(mine), len(cols))
+            for m, ref in zip(mine, cols):
+                with self.subTest(bid=bid, col=ref["i"]):
+                    self.assertEqual((m["p"], m["code"], m["camp"], bool(m["away"])), (ref["p"], ref["code"], ref["camp"], ref["away"]))
+                    self.assertTrue(math.isclose(m["load"], ref["load"], abs_tol=1e-9), (m["load"], ref["load"]))
+        self.assertEqual([P.timeline("core")[i]["days"] for i in range(5)], [8, 8, 6, 4, 16], "micros of uneven lengths")
+        self.assertEqual([o["key"] for o in P.occurrences(0)], ["monam", "tuepm", "monam~2"], "Monday comes round twice in 8 days")
+        self.assertEqual(P.week_of(date(2026, 9, 17)), 3)
+        self.assertEqual(P.occurrence_on(date(2026, 8, 31), None)["key"], "monam~2", "found by its date and slot")
+
+    def test_a_cancelled_session_comes_off_the_load_and_an_extra_one_adds_to_it(self):
+        plan = json.loads(json.dumps(PLAN))
+        plan["sessions"][0]["slot"], plan["sessions"][1]["slot"] = 5, 6
+        plain = SP.Plan(plan, ROSTER).timeline("core")[2]["load"]
+        P = SP.Plan(plan, ROSTER, actual={"cancelled": {("2026-09-07", 5): "Pool closed"},
+                                          "extra": [{"date": "2026-09-10", "hours": 1.0, "picked": ["s2"]}]})
+        w = P.timeline("core")[2]
+        self.assertTrue(math.isclose(w["load"], SP.r2(plain * (1 - 1.5 / 2.5))), "Monday's 1.5 of 2.5 hours went")
+        self.assertEqual(w["cut"]["items"][0]["why"], "Pool closed")
+        bo = P.timeline("sw:s2")[2]
+        self.assertGreater(bo["load"], w["load"], "the extra session counts for the swimmer it was for")
+
     def test_intensity_carries_over_by_colour(self):
         self.assertEqual((SP.planner_level(16), SP.to_common(16)), ("Red", 17))     # the planner's Red is the common Red
         self.assertEqual((SP.planner_level(21), SP.to_common(21)), ("Gold", 21))

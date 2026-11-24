@@ -20,6 +20,7 @@ Red), never by number (decision of 5 Nov 2026).
 
 from __future__ import annotations
 
+import bisect
 import copy
 import math
 from datetime import date, timedelta
@@ -79,9 +80,16 @@ def common_level(v) -> Optional[str]:
 
 
 def _norm_t(o: dict) -> dict:
+    """A session's focus (main / 2nd / 3rd), notes, and its versions (the planner's normT)."""
     def v(x):
         return None if x is None or x == "" else float(x)
-    return {"a": v(o.get("a")), "b": v(o.get("b")), "c": v(o.get("c")), "n": o.get("n") or ""}
+    t = {"a": v(o.get("a")), "b": v(o.get("b")), "c": v(o.get("c")), "n": o.get("n") or ""}
+    if isinstance(o.get("v"), list) and o["v"]:
+        t["v"] = [{"k": x.get("k") if x.get("k") in ("did", "missed", "names") else "missed",
+                   "s": [str(y) for y in x.get("s") or []], "ids": [str(y) for y in x.get("ids") or []],
+                   "a": v(x.get("a")), "b": v(x.get("b")), "c": v(x.get("c")), "n": x.get("n") or ""}
+                  for x in o["v"] if isinstance(x, dict)]
+    return t
 
 
 def _iso(s) -> date:
@@ -89,21 +97,71 @@ def _iso(s) -> date:
 
 
 class Plan:
-    def __init__(self, plan: dict, roster: Optional[dict] = None):
+    """The plan for reading. actual is what happened, from the app: {"cancelled": {(iso date, slot id): reason},
+    "extra": [{"date", "hours", "picked": [planner swimmer ids]}]} - the planner's cutIn()."""
+
+    def __init__(self, plan: dict, roster: Optional[dict] = None, actual: Optional[dict] = None):
         self.p = plan
         self.roster = roster or {"swimmers": []}
         self.start = _iso(plan["settings"]["start"])
-        self.weeks = int(plan["settings"]["weeks"])
+        self.end = self.start + timedelta(weeks=int(plan["settings"]["weeks"]))   # the day after the season
+        micros = plan["settings"].get("micros") or []
+        if micros:
+            starts = sorted({_iso(m) for m in micros if self.start < _iso(m) < self.end})
+            self.starts = [self.start] + starts
+        else:
+            self.starts = [self.start + timedelta(weeks=i) for i in range(int(plan["settings"]["weeks"]))]
+        self.micro = bool(micros)
+        self.weeks = len(self.starts)          # columns: weeks, or micros of any length
         self.branches = {b["id"]: b for b in plan.get("branches") or []}
         self.swimmers = {str(s["id"]): s for s in self.roster.get("swimmers") or []}
+        self.actual = actual or {}
         self._tl = {}
+        self._occ = {}
 
-    # ---- weeks
+    # ---- columns: weeks, or micros of any length (the planner's grid())
     def week_of(self, d: date) -> int:
-        return (d - self.start).days // 7
+        if not self.micro or d < self.start:
+            return (d - self.start).days // 7
+        if d >= self.end:
+            return self.weeks + (d - self.end).days // 7
+        return bisect.bisect_right(self.starts, d) - 1
 
     def wk_start(self, i: int) -> date:
-        return self.start + timedelta(weeks=i)
+        if 0 <= i < self.weeks:
+            return self.starts[i]
+        return self.start + timedelta(weeks=i) if i < 0 else self.end + timedelta(weeks=i - self.weeks)
+
+    def wk_end(self, i: int) -> date:
+        return self.wk_start(i + 1) - timedelta(days=1)
+
+    def occurrences(self, i: int) -> list:
+        """The timetable's sessions in column i, in date order (the planner's occs()): key, session, date, and the
+        standard-week session it takes its focus from."""
+        if i in self._occ:
+            return self._occ[i]
+        ts = sorted(self.p.get("sessions") or [], key=lambda x: (int(x.get("day") or 0), str(x.get("time") or "")))
+        out, seen = [], {}
+        d, e = self.wk_start(i), self.wk_end(i)
+        while d <= e:
+            for x in ts:
+                if int(x.get("day") or 0) != d.weekday():
+                    continue
+                seen[x["id"]] = seen.get(x["id"], 0) + 1
+                out.append({"key": x["id"] if seen[x["id"]] == 1 else f"{x['id']}~{seen[x['id']]}", "x": x, "d": d})
+            d += timedelta(days=1)
+        for k, o in enumerate(out):
+            o["k"] = k
+            o["tpl"] = (ts[k] if k < len(ts) else None) if self.micro else o["x"]
+        self._occ[i] = out
+        return out
+
+    def occurrence_on(self, d: date, slot_id) -> Optional[dict]:
+        """The plan's session on a date in a timetable slot."""
+        i = self.week_of(d)
+        if not 0 <= i < self.weeks:
+            return None
+        return next((o for o in self.occurrences(i) if o["d"] == d and o["x"].get("slot") == slot_id), None)
 
     # ---- groups through the season
     def span(self, bid: Optional[str]) -> Optional[tuple]:
@@ -146,7 +204,7 @@ class Plan:
         return ((self._pers(sw["id"]).get("own") or {}).get(g) or {}).get(str(i))
 
     def camp_for(self, sid: str, i: int):
-        a, e = self.wk_start(i), self.wk_start(i) + timedelta(days=6)
+        a, e = self.wk_start(i), self.wk_end(i)
         for ev in self.p.get("events") or []:
             c = ev.get("camp")
             if ev.get("type") == "Camp" and c and str(sid) in [str(x) for x in c.get("attendees") or []] \
@@ -199,18 +257,18 @@ class Plan:
         items = self._pers(sw["id"]).get("away") or []
         if not items:
             return None
-        sessions = self.p.get("sessions") or []
-        tot = sum(float(x.get("hours") or 0) for x in sessions) or 1
+        occ = self.occurrences(i)
+        tot = sum(float(o["x"].get("hours") or 0) for o in occ) or 1
         F = {"load": 1, "aer": 1, "ana": 1, "spd": 1}
         found = []
-        ws, we = self.wk_start(i), self.wk_start(i) + timedelta(days=6)
+        ws, we = self.wk_start(i), self.wk_end(i)
         for a in items:
             if not a.get("from"):
                 continue
             A, Z = _iso(a["from"]), _iso(a.get("to") or a["from"])
             if Z < ws or A > we:
                 continue
-            miss = sum(float(x.get("hours") or 0) for x in sessions if A <= ws + timedelta(days=int(x.get("day") or 0)) <= Z)
+            miss = sum(float(o["x"].get("hours") or 0) for o in occ if A <= o["d"] <= Z)
             frac = miss / tot
             if frac <= 0:
                 continue
@@ -219,6 +277,28 @@ class Plan:
                 F[k] *= 1 - frac * (1 - m[k])
             found.append({"type": a.get("type"), "frac": frac, "note": a.get("note") or ""})
         return {"F": F, "items": found} if found else None
+
+    def cut_in(self, sw: Optional[dict], i: int):
+        """What happened that changes the column's load (the planner's cutIn): cancelled sessions, extra sessions."""
+        cancelled, extra = self.actual.get("cancelled") or {}, self.actual.get("extra") or []
+        if not cancelled and not extra:
+            return None
+        occ = self.occurrences(i)
+        tot = sum(float(o["x"].get("hours") or 0) for o in occ) or 1
+        off = add = 0.0
+        items = []
+        for o in occ:
+            key = (o["d"].isoformat(), o["x"].get("slot"))
+            if o["x"].get("slot") and key in cancelled:
+                off += float(o["x"].get("hours") or 0)
+                items.append({"type": "Cancelled", "label": o["x"].get("label"), "date": key[0], "why": cancelled[key]})
+        if sw:
+            for x in extra:
+                d = _iso(x["date"])
+                if self.wk_start(i) <= d <= self.wk_end(i) and str(sw["id"]) in [str(p) for p in x.get("picked") or []]:
+                    add += float(x.get("hours") or 0)
+                    items.append({"type": "Extra", "date": x["date"]})
+        return {"F": max(0.0, 1 - off / tot + add / tot), "items": items} if items else None
 
     def timeline(self, bid: str) -> list:
         """Every week for a branch or swimmer, as the planner's TL() shows it."""
@@ -242,11 +322,16 @@ class Plan:
             if away:
                 load = r2(load * away["F"]["load"])
                 c = {k: r2(c[k] * away["F"][k]) for k in COMPS}
+            cut = self.cut_in(sw, i)
+            if cut:
+                load = r2(load * cut["F"])
+                c = {k: r2(c[k] * cut["F"]) for k in COMPS}
             out.append({"i": i, "week_start": self.wk_start(i).isoformat(), "p": w.get("p"), "phase": ph.get("name"),
                         "objective": ph.get("objective"), "template": ph.get("template"), "course": ph.get("course"),
                         "macro": m, "code": "Off" if m == "–" else f"{m}.{meso}.{micro}", "load": load, "plan_load": w.get("load") or 0,
                         "comps": c, "camp": w.get("camp"), "group": self.group_at(sw, i) if sw else bid,
-                        "away": away})
+                        "away": away, "cut": cut, "week_end": self.wk_end(i).isoformat(),
+                        "days": (self.wk_end(i) - self.wk_start(i)).days + 1})
         self._tl[bid] = out
         return out
 
@@ -258,6 +343,10 @@ class Plan:
         f = dict((t.get("f") or {}).get(sid) or {})
         return _norm_t({**f, "n": (t.get("s") or {}).get(sid, "")})
 
+    def _tpl_at(self, p, i: int, key: str) -> dict:
+        o = next((o for o in self.occurrences(i) if o["key"] == key), None)
+        return self._tpl_target(p, o["tpl"]["id"]) if o and o["tpl"] else _norm_t({})
+
     def session_target(self, bid: str, i: int, sid: str) -> dict:
         if bid.startswith("sw:"):
             sw = self.swimmers.get(bid[3:])
@@ -268,7 +357,7 @@ class Plan:
             w = self.timeline(bid)[i]
             if w["camp"]:
                 return {"camp": w["camp"], "a": None, "b": None, "c": None, "n": "Camp"}
-            return self.session_target(g, i, sid) if self.timeline(g)[i]["p"] == w["p"] else self._tpl_target(w["p"], sid)
+            return self.session_target(g, i, sid) if self.timeline(g)[i]["p"] == w["p"] else self._tpl_at(w["p"], i, sid)
         b = self.branches.get(bid) or {}
         own = (((b.get("sess") or {}).get(str(i))) or {}).get(sid)
         if own:
@@ -277,7 +366,7 @@ class Plan:
         par = b.get("parent")
         if par and par in self.branches and self.timeline(par)[i]["p"] == w["p"]:
             return self.session_target(par, i, sid)
-        return self._tpl_target(w["p"], sid)
+        return self._tpl_at(w["p"], i, sid)
 
     def targets(self, template: Optional[str]) -> list:
         """The template's session targets, each focus on the common scale too."""
@@ -336,6 +425,10 @@ def week(db: DBSession, squad: str, on: date) -> Optional[dict]:
     i = plan.week_of(on)
     if not 0 <= i < plan.weeks:
         return None
+    try:                                      # cancelled and extra sessions change the loads (4.5)
+        plan = Plan(plan.p, plan.roster, plan_actual(actuals(db, squad, plan.wk_start(i), plan.wk_end(i))))
+    except Exception:  # noqa: BLE001 - the plan as planned will do
+        pass
     groups = []
     for bid, b in plan.branches.items():
         if not plan.runs_in(bid, i):          # a short-term group outside its weeks
@@ -348,7 +441,8 @@ def week(db: DBSession, squad: str, on: date) -> Optional[dict]:
         w = plan.timeline(f"sw:{sid}")[i]
         swimmers[str(ids.get(sid, f"planner:{sid}"))] = {"name": sw.get("name"), "group": w["group"], "code": w["code"], "load": w["load"],
                                                          "comps": w["comps"], "camp": w["camp"], "away": w["away"]}
-    return {"squad": squad, "week": i, "week_start": plan.wk_start(i).isoformat(), "groups": groups, "swimmers": swimmers}
+    return {"squad": squad, "week": i, "week_start": plan.wk_start(i).isoformat(), "week_end": plan.wk_end(i).isoformat(),
+            "micro": plan.micro, "groups": groups, "swimmers": swimmers}
 
 
 def week_code(db: DBSession, squad: Optional[str], on: date) -> Optional[str]:
@@ -386,10 +480,16 @@ def session_lines(db: DBSession, squad: str, on: date, slot_id: int) -> list:
     if not plan or not slot_id:
         return []
     i = plan.week_of(on)
-    s = next((x for x in plan.p.get("sessions") or [] if x.get("slot") == slot_id), None)
-    if not s or not 0 <= i < plan.weeks:
+    occ = plan.occurrence_on(on, slot_id)
+    if not occ:
         return []
+    s, key = occ["x"], occ["key"]
     label = _labeller(db, plan)
+    names = {pid: (sw.get("name") or "").split(" ")[0] for pid, sw in plan.swimmers.items()}
+    try:
+        att = Attendance(plan, actuals(db, squad, on - timedelta(days=21), on))
+    except Exception:  # noqa: BLE001 - versions are then shown without who is on them
+        att = None
 
     def say(t):
         if t.get("camp"):
@@ -400,11 +500,20 @@ def session_lines(db: DBSession, squad: str, on: date, slot_id: int) -> list:
     out = [f"THE PLAN FOR THIS SESSION ({s.get('label') or 'session'}, focus main / 2nd / 3rd):"]
     for bid in plan.branches:
         if plan.runs_in(bid, i):
-            out.append(f"- {plan.branches[bid].get('name')}: {say(plan.session_target(bid, i, s['id']))}")
+            t = plan.session_target(bid, i, key)
+            out.append(f"- {plan.branches[bid].get('name')}: {say(t)}")
+            for n, v in enumerate(t.get("v") or []):       # versions are part of the plan (4.3)
+                who = ""
+                if att:
+                    on_it = [names[pid] for pid, sw in plan.swimmers.items() if sw.get("branch") in plan.branches
+                             and plan.group_at(sw, i) == bid and version_for(plan, att, t, pid, i, occ) == n]
+                    who = f" ({', '.join(on_it)})" if on_it else " (nobody this time)"
+                lead = version_label(plan, v, names) if v["k"] == "names" else "those who " + version_label(plan, v, names)
+                out.append(f"  - version for {lead}: {say(v)}{who}")
     for sid, sw in plan.swimmers.items():
         if not sw.get("branch") or sw.get("branch") not in plan.branches:
             continue
-        t = plan.session_target(f"sw:{sid}", i, s["id"])
+        t = plan.session_target(f"sw:{sid}", i, key)
         if t.get("own"):
             out.append(f"- {sw.get('name')} (own week): {say(t)}")
     return out
@@ -433,6 +542,204 @@ def staff_lines(db: DBSession, squad: Optional[str], on: date, slot_id: Optional
         except Exception:  # noqa: BLE001 - the week's lines still go
             pass
     return "\n".join(lines)
+
+
+
+# ---------------------------------------------------------------- what actually happened
+# (docs/design/season-planner-weeks.md 4.3-4.5): registers, cancelled and extra sessions, usual sessions,
+# time away and the Right now notes, for the planner's week view and for working out versions.
+
+def _clock(t) -> Optional[int]:
+    try:
+        h, m = str(t or "")[:5].split(":")
+        return int(h) * 60 + int(m)
+    except ValueError:
+        return None
+
+
+def _session_hours(s: models.Session) -> float:
+    a, z = _clock(s.start_time), _clock(s.end_time)
+    return round((z - a) / 60, 2) if a is not None and z is not None and z > a else 1.5
+
+
+def _picked(audience) -> list:
+    a = audience or {}
+    return [int(i) for i in (a.get("swimmer_ids") or []) if str(i).isdigit()] if a.get("kind") == "swimmer" else []
+
+
+def _metres(s: models.Session) -> Optional[int]:
+    if not s.builder:
+        return None
+    try:
+        from backend.services import session_notation as N
+        b = copy.deepcopy(s.builder)
+        N.normalize_session(b)
+        return int(max((t["dist"] for t in N.totals_for(b)), default=0)) or None
+    except Exception:  # noqa: BLE001 - the metres are a nicety
+        return None
+
+
+def actuals(db: DBSession, squad: str, date_from: date, date_to: date) -> Optional[dict]:
+    """What happened (and is known ahead) between two dates, in the planner's swimmer ids."""
+    from sqlalchemy import or_
+    from backend.services import usual_sessions
+    plan = load(db, squad)
+    if not plan:
+        return None
+    to_pid = {aid: pid for pid, aid in app_ids(db, plan).items()}
+    slots = [x.get("slot") for x in plan.p.get("sessions") or [] if x.get("slot")]
+    rows = db.query(models.Session).filter(
+        models.Session.date >= date_from, models.Session.date <= date_to,
+        or_(models.Session.squad == squad, models.Session.pool_slot_id.in_(slots or [-1])),
+    ).order_by(models.Session.date).all()
+    entries = {}
+    if rows:
+        for e in db.query(models.SessionEntry).filter(models.SessionEntry.session_id.in_([s.id for s in rows])).all():
+            entries.setdefault(e.session_id, []).append(e)
+    sessions = []
+    for s in rows:
+        es = entries.get(s.id, [])
+        taken = bool(s.register_saved_at) or any(e.attended is not None for e in es)
+        sessions.append({
+            "id": s.id, "date": s.date.isoformat(), "slot": s.pool_slot_id, "status": s.status or "completed",
+            "reason": s.cancel_reason or "", "extra": bool(s.extra_session),
+            "picked": [to_pid[i] for i in _picked(s.audience) if i in to_pid],
+            "attended": sorted(to_pid[e.swimmer_id] for e in es if e.attended and e.swimmer_id in to_pid) if taken else None,
+            "title": s.title or "", "metres": _metres(s), "notes": (s.coach_notes or "")[:400],
+            "hours": _session_hours(s), "start": s.start_time or "",
+        })
+    ids = list(to_pid)
+    usual = {to_pid[sid]: sorted(v) for sid, v in usual_sessions.usual(db, ids).items() if sid in to_pid}
+    away = {to_pid[sid]: [[a.isoformat(), b.isoformat()] for a, b in v]
+            for sid, v in usual_sessions._away(db, ids, date_from, date_to).items() if sid in to_pid} if ids else {}
+    notes = db.query(models.SwimmerCurrentNote).filter(
+        models.SwimmerCurrentNote.swimmer_id.in_(ids or [-1]), models.SwimmerCurrentNote.cleared_at.is_(None),
+        models.SwimmerCurrentNote.date_from <= date_to).all()
+    right_now = [{"swimmer": to_pid[n.swimmer_id], "id": n.id, "kind": n.kind, "title": n.title, "impact": n.impact or "",
+                  "from": n.date_from.isoformat(), "until": n.until.isoformat() if n.until else None}
+                 for n in notes if not n.until or n.until >= date_from]
+    return {"sessions": sessions, "usual": usual, "excused": away, "right_now": right_now}
+
+
+def plan_actual(data: Optional[dict]) -> dict:
+    """actuals() in the form the Plan reads: cancelled sessions and extra ones."""
+    data = data or {}
+    out = {"cancelled": {}, "extra": []}
+    for s in data.get("sessions") or []:
+        if s["status"] == "cancelled" and s["slot"]:
+            out["cancelled"][(s["date"], s["slot"])] = s["reason"] or "cancelled"
+        elif s["extra"] and s["picked"]:
+            out["extra"].append({"date": s["date"], "hours": s["hours"], "picked": s["picked"]})
+    return out
+
+
+class Attendance:
+    """Did a swimmer come to a session (the register once it's taken), or will they (their usual sessions,
+    unless they're away)? The planner's came()."""
+
+    def __init__(self, plan: Plan, data: Optional[dict]):
+        data = data or {}
+        self.plan = plan
+        self.reg, self.cancelled = {}, set()
+        for s in data.get("sessions") or []:
+            key = (s["date"], s["slot"])
+            if s["status"] == "cancelled":
+                self.cancelled.add(key)
+            elif s["attended"] is not None and not s["extra"]:
+                self.reg[key] = set(s["attended"])
+        self.usual = {str(k): set(v) for k, v in (data.get("usual") or {}).items()}
+        self.excused = {str(k): [(_iso(a), _iso(b)) for a, b in v] for k, v in (data.get("excused") or {}).items()}
+
+    def came(self, pid: str, occ: dict) -> bool:
+        key = (occ["d"].isoformat(), occ["x"].get("slot"))
+        if key in self.cancelled:
+            return False
+        if key in self.reg:
+            return pid in self.reg[key]
+        d = occ["d"]
+        if any(a <= d <= b for a, b in self.excused.get(pid, [])):
+            return False
+        for a in self.plan._pers(pid).get("away") or []:
+            if a.get("from") and _iso(a["from"]) <= d <= _iso(a.get("to") or a["from"]):
+                return False
+        u = self.usual.get(pid)
+        return not u or not occ["x"].get("slot") or occ["x"]["slot"] in u
+
+
+def last_before(plan: Plan, i: int, occ: dict, sid: str) -> Optional[dict]:
+    """The last time session sid ran before this one: earlier in the column, or up to 14 days back."""
+    for j in range(i, max(-1, i - 4), -1):
+        found = [o for o in plan.occurrences(j) if o["x"]["id"] == sid and o["d"] < occ["d"] or
+                 (j == i and o["x"]["id"] == sid and o["k"] < occ["k"])]
+        found = [o for o in found if (occ["d"] - o["d"]).days <= 14]
+        if found:
+            return found[-1]
+    return None
+
+
+def version_for(plan: Plan, att: Attendance, target: dict, pid: str, i: int, occ: dict) -> Optional[int]:
+    """Which version of a session a swimmer is on (None = the session itself): the first they fit."""
+    for n, v in enumerate(target.get("v") or []):
+        if v["k"] == "names":
+            if pid in v["ids"]:
+                return n
+            continue
+        prev = [last_before(plan, i, occ, s) for s in v["s"]]
+        came = [p is not None and att.came(pid, p) for p in prev]
+        if not came:
+            continue
+        if (v["k"] == "did" and all(came)) or (v["k"] == "missed" and not all(came)):
+            return n
+    return None
+
+
+def version_label(plan: Plan, v: dict, names: Optional[dict] = None) -> str:
+    """Who a version is for, in words: "missed Tue PM", "did Mon PM and Tue PM", "Sam, Ali"."""
+    if v["k"] == "names":
+        return ", ".join((names or {}).get(x, x) for x in v["ids"]) or "named swimmers"
+    labels = {x["id"]: x.get("label") or x["id"] for x in plan.p.get("sessions") or []}
+    which = " and ".join(labels.get(s, s) for s in v["s"]) or "an earlier session"
+    return ("did " if v["k"] == "did" else "missed ") + which
+
+
+def session_versions(db: DBSession, squad: Optional[str], on: date, slot_id: Optional[int]) -> list:
+    """For the Session Builder: each group's versions of the plan's session on a date and slot, with the
+    app swimmers on each. Only groups whose session has versions."""
+    if not squad or not slot_id:
+        return []
+    plan = load(db, squad)
+    if not plan:
+        return []
+    occ = plan.occurrence_on(on, slot_id)
+    if not occ:
+        return []
+    i = plan.week_of(on)
+    data = actuals(db, squad, on - timedelta(days=21), on)
+    att = Attendance(plan, data)
+    ids = app_ids(db, plan)
+    names = {pid: (sw.get("name") or "").split(" ")[0] for pid, sw in plan.swimmers.items()}
+    label = _labeller(db, plan)
+    out = []
+    for bid, b in plan.branches.items():
+        if not plan.runs_in(bid, i):
+            continue
+        t = plan.session_target(bid, i, occ["key"])
+        if not t.get("v"):
+            continue
+        members = [pid for pid, sw in plan.swimmers.items()
+                   if sw.get("branch") in plan.branches and plan.group_at(sw, i) == bid]
+        groups = [{"label": None, "focus": t, "pids": []}] + [{"label": version_label(plan, v, names), "focus": v, "pids": []}
+                                                                for v in t["v"]]
+        for pid in members:
+            n = version_for(plan, att, t, pid, i, occ)
+            groups[0 if n is None else n + 1]["pids"].append(pid)
+
+        def say(f):
+            return " / ".join(label(x) for x in (f.get("a"), f.get("b"), f.get("c")) if x is not None)
+        out.append({"group": b.get("name"), "branch": bid, "versions": [
+            {"label": g["label"], "focus": say(g["focus"]), "notes": g["focus"].get("n") or "",
+             "swimmer_ids": [ids[p] for p in g["pids"] if p in ids]} for g in groups]})
+    return out
 
 
 # ---------------------------------------------------------------- after a save
@@ -470,7 +777,7 @@ def after_save(db: DBSession, squad: str) -> dict:
                                                 models.GroupMembership.group_id.in_([g.id for g in groups.values()])).delete(synchronize_session=False)
         for g, a, z in runs:
             if g in groups:
-                end = None if z == plan.weeks - 1 else plan.wk_start(z) + timedelta(days=6)
+                end = None if z == plan.weeks - 1 else plan.wk_end(z)
                 db.add(models.GroupMembership(swimmer_id=aid, group_id=groups[g].id, date_from=plan.wk_start(a), date_to=end,
                                               note="from the season plan"))
                 moved += 1

@@ -26,11 +26,15 @@ export function withShortGroup(plan, roster){
   return { plan, roster }
 }
 
-export function buildCases(short = false){
+// Micros of uneven lengths (8, 8, 6, 4, 16 days, then the rest of the season), so a session comes round twice.
+export const MICROS = ['2026-09-01', '2026-09-09', '2026-09-15', '2026-09-19', '2026-10-05']
+
+export function buildCases(short = false, micros = null){
   const M = plannerModel()
   M.S.plan = JSON.parse(readFileSync(join(dir, 'sample-plan.json'), 'utf8'))
   M.S.roster = JSON.parse(readFileSync(join(dir, 'sample-roster.json'), 'utf8'))
   if (short) withShortGroup(M.S.plan, M.S.roster)
+  if (micros) M.S.plan.settings.micros = micros
   M.inval()
   const out = {}
   const ids = M.S.plan.branches.map(b => b.id).concat(M.S.roster.swimmers.filter(s => s.branch).map(s => 'sw:' + s.id))
@@ -45,4 +49,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const short = buildCases(true)
   writeFileSync(join(dir, 'cases-short-group.json'), JSON.stringify(short, null, 1) + '\n')
   console.log(`Wrote ${Object.keys(short).length} planner timelines to shared/planner/cases-short-group.json`)
+  const micro = buildCases(false, MICROS)
+  writeFileSync(join(dir, 'cases-micros.json'), JSON.stringify(micro, null, 1) + '\n')
+  console.log(`Wrote ${Object.keys(micro).length} planner timelines to shared/planner/cases-micros.json`)
 }
