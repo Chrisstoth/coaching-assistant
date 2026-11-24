@@ -49,6 +49,14 @@ def docs(squad: str, db: DBSession = Depends(get_db)):
         db.rollback()
         import logging
         logging.getLogger(__name__).exception("Could not line the season plan up with the app")
+    # The swimmers' goals are one list with the swimmer's page: bring the planner's copy up to date.
+    from backend.services import goals
+    try:
+        goals.fill_roster(db, squad)
+    except Exception:  # noqa: BLE001 - the plan still opens as saved
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).exception("Could not bring the planner's goals up to date")
     out = {}
     for k in KEYS:
         d = _doc(db, squad, k)
@@ -72,13 +80,21 @@ def put_doc(squad: str, key: str, body: DocIn, db: DBSession = Depends(get_db)):
     db.commit()
     revision = d.revision
     # The swimmers and their groups live in the roster; the groups themselves in the plan.
-    from backend.services import season_planner
+    from backend.services import goals, season_planner
     try:
         if key == "roster":
             season_planner.sync_swimmers(db, squad, before, body.data)
         season_planner.after_save(db, squad)
     except Exception:  # noqa: BLE001 - the plan is saved even if following it in the app fails
         db.rollback()
+    if key == "roster":
+        # Goals edited in the planner are the swimmer's goals everywhere else too.
+        try:
+            goals.sync_from_roster(db, squad, before, body.data)
+        except Exception:  # noqa: BLE001
+            db.rollback()
+            import logging
+            logging.getLogger(__name__).exception("Could not save the planner's goals to the swimmers")
     return {"revision": revision}
 
 

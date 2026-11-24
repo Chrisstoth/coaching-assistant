@@ -10,7 +10,7 @@ from backend.database import init_db
 from backend.routers import swimmers, sessions, times, meets, ai, periodization, schedule, coaching_context, ai_chat, coaching_notes, session_debriefs
 from backend.services.meet_links import link_swims_to_meets_on_startup
 from backend.services.relays import move_relays_out_on_startup
-from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs, staff, lanewatch, swimmer_plans, groups, session_workshops, coach_guidance, session_builder, workbooks, history_import, season_planner, setup, target_sets, current_notes
+from backend.routers import auth, benchmarks, season, skills, dashboard, cohorts, planning_agent, qualification_standards, session_presentation, coach_checkins, ai_operations, session_debriefs, staff, lanewatch, swimmer_plans, groups, session_workshops, coach_guidance, session_builder, workbooks, history_import, season_planner, setup, target_sets, current_notes, goals
 from backend.services.ai_operations import recover_interrupted_operations, run_operation_worker
 from backend.auth_dep import verify_token
 
@@ -339,6 +339,7 @@ app.include_router(setup.router, prefix="/setup", tags=["Setup"], dependencies=_
 app.include_router(coach_guidance.router, prefix="/coach-guidance", tags=["Coach guidance"], dependencies=_auth)
 app.include_router(target_sets.router, prefix="/target-sets", tags=["Target sets"], dependencies=_auth)
 app.include_router(current_notes.router, prefix="/current-notes", tags=["Current notes"], dependencies=_auth)
+app.include_router(goals.router, prefix="/goals", tags=["Goals"], dependencies=_auth)
 
 
 @app.get("/health")

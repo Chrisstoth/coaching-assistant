@@ -344,6 +344,9 @@ def delete_meet(meet_id: int, db: DBSession = Depends(get_db)):
         {"meet_id": None}, synchronize_session=False)
     db.query(models.RelaySwim).filter(models.RelaySwim.meet_id == meet.id).update(
         {"meet_id": None}, synchronize_session=False)
+    # A goal for this meet stays a goal, with the meet's date kept as its deadline.
+    db.query(models.SwimmerTarget).filter(models.SwimmerTarget.meet_id == meet.id).update(
+        {"meet_id": None}, synchronize_session=False)
     db.delete(meet)
     db.commit()
 

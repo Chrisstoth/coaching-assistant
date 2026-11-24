@@ -150,14 +150,19 @@ def facts_athlete(db, swimmer, start, end) -> str:
 
 
 def facts_towards(db, swimmer, start, end) -> str:
+    from backend.services import goals as goal_svc
     lines = []
-    targets = db.query(models.SwimmerTarget).filter(
-        models.SwimmerTarget.swimmer_id == swimmer.id, models.SwimmerTarget.achieved.is_(False)).all()
+    targets = [r for r in goal_svc.goals_of(db, swimmer.id) if goal_svc.in_period(r, start, end)]
     if targets:
-        lines.append("Targets set:")
+        lines.append("The swimmer's goals (printed as a list on the plan just above this section):")
         for t in targets:
-            lines.append(f"  {t.label}" + (f": {_fmt_time(t.target_time_seconds)}" if t.target_time_seconds else "")
-                         + (f" by {t.deadline}" if t.deadline else "") + (f" - {t.description[:160]}" if t.description else ""))
+            g = goal_svc.goal_out(db, t)
+            lines.append(f"  {g['label']}" + (f": {g['target']}" if g["target"] and not g["race"] else "")
+                         + (f" [{g['race']}]" if g["race"] and g["race"] != g["label"] else "")
+                         + (f" at {g['meet_name']}" if g["meet_name"] else "")
+                         + (f" by {g['deadline']}" if g["deadline"] else "")
+                         + (f" ({g['status']})" if g["status"] else "")
+                         + (f" - {t.description[:160]}" if t.description else ""))
     meet_targets = db.query(models.MeetTarget).join(models.Meet).filter(
         models.MeetTarget.swimmer_id == swimmer.id, models.Meet.date >= start, models.Meet.date <= end,
     ).order_by(models.Meet.date).all()
@@ -501,6 +506,22 @@ def update_sections(plan, changes: list) -> None:
     plan.sections = sections
 
 
+def live_goals(db: DBSession, plan) -> list:
+    """The swimmer's goals for this plan's period, as they stand now."""
+    from backend.services import goals as goal_svc
+    rows = [r for r in goal_svc.goals_of(db, plan.swimmer_id) if goal_svc.in_period(r, plan.period_from, plan.period_to)]
+    keep = ("id", "label", "race", "description", "meet_name", "meet_date", "deadline", "achieved", "status")
+    return [{k: g[k] for k in keep} for g in (goal_svc.goal_out(db, r) for r in rows)]
+
+
+def plan_goals(plan) -> list:
+    """A final plan keeps the goals it was finalised with; a draft shows them live."""
+    if plan.status == "final":
+        return list(plan.goals or [])
+    db = DBSession.object_session(plan)
+    return live_goals(db, plan) if db is not None else []
+
+
 def plan_out(plan) -> dict:
     from backend.services.staff_room import ROSTER
     return {
@@ -515,6 +536,7 @@ def plan_out(plan) -> dict:
         "finalised_at": plan.finalised_at.isoformat() if plan.finalised_at else None,
         "created_at": plan.created_at.isoformat() if plan.created_at else None,
         "updated_at": plan.updated_at.isoformat() if plan.updated_at else None,
+        "goals": plan_goals(plan),
         "sections": [
             {**s, "drafted_by": ROSTER[s["role"]].title if s.get("role") in ROSTER else "You"}
             for s in plan.sections or []

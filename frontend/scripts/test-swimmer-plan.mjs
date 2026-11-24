@@ -51,4 +51,26 @@ const panel = await read('../src/components/SwimmerPlanPanel.jsx')
 assert.match(panel, /Mark final/)
 assert.match(panel, /Make a new version/, 'A final plan is changed by starting a new version.')
 
+// --- goals: the same list as the swimmer's page and the planner, printed in place ---
+const withGoals = buildPlanHtml({ ...plan, goals: [
+  { id: 1, label: 'Sub 28.0 in 50 Fly', race: '50 Fly in 27.99 SC', meet_name: 'County Champs', meet_date: '2027-01-16',
+    status: 'PB 28.40 · 0.41s (1.5%) to find', achieved: false },
+  { id: 2, label: '10m underwater <every wall>', race: '', achieved: true, status: 'Achieved' },
+] })
+assert.match(withGoals, /<h2>Goals<\/h2>/, 'The goals print on the plan.')
+assert.ok(withGoals.indexOf('<h2>Goals</h2>') < withGoals.indexOf("What we're working towards"),
+  'The goals come just before what we are working towards.')
+assert.match(withGoals, /50 Fly in 27.99 SC · by County Champs \(16 Jan 2027\) · PB 28.40/)
+assert.match(withGoals, /class="goal done"><span class="box">&#10003;/, 'An achieved goal is ticked.')
+assert.match(withGoals, /&lt;every wall&gt;/, 'Goal words are escaped.')
+assert.doesNotMatch(html, /<h2>Goals<\/h2>/, 'No goals, no Goals heading.')
+const offTowards = buildPlanHtml({ ...plan, sections: plan.sections.map(s => s.key === 'towards' ? { ...s, included: false } : s),
+  goals: [{ id: 3, label: 'Make the final' }] })
+assert.match(offTowards, /<h2>Goals<\/h2>/, 'The goals print even with that section switched off.')
+assert.match(panel, /GoalsCard/, 'A draft plan edits the goals in place.')
+for (const method of ['getGoals', 'createGoal', 'updateGoal', 'deleteGoal']) {
+  assert.match(api, new RegExp(`${method}:`), `api.${method} must exist.`)
+}
+assert.match(detail, /<GoalsCard/, "The swimmer's page has the goals.")
+
 console.log('Swimmer plan checks passed')

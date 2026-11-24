@@ -756,17 +756,25 @@ class BenchmarkLog(Base):
 
 class SwimmerTarget(Base):
     """
-    A coach-set performance target for a swimmer. Can be a benchmark target
-    (e.g. hit 1:04 aerobic 100 free by Christmas) or a freeform goal.
-    Tracked against BenchmarkLog entries over time.
+    A swimmer's goal: one list, edited on the swimmer's page (Squad) and in the
+    Season Planner, and printed on the athlete plan. A race goal (event, target
+    time, course, by a meet), a training benchmark target (e.g. hit 1:04
+    aerobic 100 free by Christmas) or just words. backend/services/goals.py
+    keeps the planner's copy (sw.goals in its roster) in step with these rows.
     """
     __tablename__ = "swimmer_targets"
 
     id = Column(Integer, primary_key=True, index=True)
     swimmer_id = Column(Integer, ForeignKey("swimmers.id"), nullable=False)
 
-    label = Column(String, nullable=False)           # e.g. "Aerobic 100 free target"
+    label = Column(String, nullable=False)           # the goal in words, e.g. "Sub 28.0 in 50 Fly"
     description = Column(Text, nullable=True)        # freeform context / rationale
+
+    # A race goal, as the Season Planner keeps it
+    event = Column(String, nullable=True)            # planner form, e.g. "100 Free"
+    course = Column(String(2), nullable=True)        # SC / LC (a meet with a course sets it)
+    meet_id = Column(Integer, ForeignKey("meets.id", ondelete="SET NULL"), nullable=True)
+    plan_ref = Column(String, nullable=True, index=True)  # the goal's id in the planner
 
     # Optional: link to a specific benchmark category
     distance = Column(Integer, nullable=True)
@@ -781,6 +789,7 @@ class SwimmerTarget(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     swimmer = relationship("Swimmer", back_populates="targets")
+    meet = relationship("Meet")
 
 
 class TargetSet(Base):
@@ -1597,6 +1606,8 @@ class SwimmerPlan(Base):
     period_to = Column(Date, nullable=True)
     # [{key, title, role, content, included, edited, drafted_at}]
     sections = Column(JSON, default=list)
+    # The swimmer's goals as they were when the plan was marked final (a draft shows them live)
+    goals = Column(JSON, nullable=True)
     status = Column(String, default="draft")             # draft / final
     finalised_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())

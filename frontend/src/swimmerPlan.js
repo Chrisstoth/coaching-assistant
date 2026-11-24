@@ -51,8 +51,45 @@ export function sectionHtml(text) {
   return blocks.join('')
 }
 
+// The swimmer's goals as printed: the same list the plan shows, just before
+// "What we're working towards".
+export const GOALS_BEFORE = 'towards'
+
+function shortDate(value) {
+  return new Date(`${String(value).slice(0, 10)}T12:00:00`)
+    .toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+export function goalsHtml(goals = []) {
+  if (!goals.length) return ''
+  const items = goals.map(g => {
+    const detail = [
+      g.race && g.race !== g.label ? g.race : '',
+      g.meet_name ? `by ${g.meet_name}${g.meet_date ? ` (${shortDate(g.meet_date)})` : ''}` : g.deadline ? `by ${shortDate(g.deadline)}` : '',
+      g.status || '',
+    ].filter(Boolean).join(' · ')
+    return `<li class="goal${g.achieved ? ' done' : ''}"><span class="box">${g.achieved ? '&#10003;' : ''}</span><div><b>${escapeHtml(g.label)}</b>`
+      + (detail ? `<div class="gd">${escapeHtml(detail)}</div>` : '')
+      + (g.description ? `<div class="gd">${escapeHtml(g.description)}</div>` : '')
+      + '</div></li>'
+  }).join('')
+  return `<section><h2>Goals</h2><ul class="goals">${items}</ul></section>`
+}
+
+// Everything that prints, in order: the sections switched on, with the goals in their place.
+export function planBody(plan) {
+  const all = plan?.sections || []
+  const included = new Set(includedSections(plan).map(s => s.key))
+  const goals = goalsHtml(plan?.goals || [])
+  const parts = all.some(s => s.key === GOALS_BEFORE) ? [] : [goals]
+  for (const s of all) {
+    if (s.key === GOALS_BEFORE) parts.push(goals)
+    if (included.has(s.key)) parts.push(`<section><h2>${escapeHtml(s.title)}</h2>${sectionHtml(s.content)}</section>`)
+  }
+  return parts.filter(Boolean).join('\n')
+}
+
 export function buildPlanHtml(plan, { autoPrint = false } = {}) {
-  const sections = includedSections(plan)
   const draft = plan.status !== 'final'
   const stamp = plan.status === 'final' && plan.finalised_at ? `Final, ${longDate(plan.finalised_at)}` : 'Draft'
   return `<!doctype html>
@@ -76,6 +113,11 @@ export function buildPlanHtml(plan, { autoPrint = false } = {}) {
   ul { margin: 0 0 8px; padding-left: 20px; }
   li { margin: 0 0 4px; }
   mark { background: #fef3c7; }
+  ul.goals { list-style: none; padding-left: 0; }
+  li.goal { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 8px; break-inside: avoid; }
+  li.goal .box { flex: none; width: 14px; height: 14px; margin-top: 4px; border: 1.5px solid #111827; border-radius: 3px; font: 10px/12px system-ui, sans-serif; text-align: center; }
+  li.goal.done b { text-decoration: line-through; color: #6b7280; }
+  .gd { font-family: system-ui, sans-serif; font-size: 9.5pt; color: #4b5563; }
   footer { margin-top: 28px; padding-top: 8px; border-top: 1px solid #e5e7eb; font-family: system-ui, sans-serif; font-size: 8.5pt; color: #6b7280; }
   @media print { .toolbar { display: none; } .page { padding: 0; } }
 </style></head>
@@ -86,7 +128,7 @@ export function buildPlanHtml(plan, { autoPrint = false } = {}) {
   <h1>${escapeHtml(plan.title)}</h1>
   <div class="meta">${escapeHtml(plan.swimmer_name || '')} &middot; ${escapeHtml(longDate(plan.period_from))} to ${escapeHtml(longDate(plan.period_to))}<span class="stamp">${escapeHtml(stamp)}</span></div>
 </header>
-${sections.map(s => `<section><h2>${escapeHtml(s.title)}</h2>${sectionHtml(s.content)}</section>`).join('\n')}
+${planBody(plan)}
 <footer>Prepared by the coach${plan.status === 'final' && plan.finalised_at ? ` on ${escapeHtml(longDate(plan.finalised_at))}` : ''}.</footer>
 </div>
 ${autoPrint ? '<script>window.addEventListener("load", () => window.print())</script>' : ''}

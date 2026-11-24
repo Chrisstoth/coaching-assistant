@@ -1282,7 +1282,9 @@ document.addEventListener('click',e=>{
 });
 async function saveVersion(){if(!verCol||S.ro)return;const name=($('#verName').value||'').trim()||('Version '+new Date().toLocaleDateString());
   try{prune();await verCol.add({name,savedAt:new Date().toISOString(),plan:clone(S.plan),roster:clone(S.roster)});renderVersions();}catch(e){$('#verList').insertAdjacentHTML('afterbegin',`<li class="small" style="color:var(--bad)">${e&&e.code==='quota_exceeded'?'Storage is full: delete an old version first.':'Could not save the version. Try again.'}</li>`);}}
-async function restoreVersion(id){try{const d=await verCol.doc(id).get();if(!d.exists)return;const v=d.data();pushUndo();S.plan=toCommonLine(clone(v.plan));S.roster=clone(v.roster);S.sel=null;inval();dirty('both');renderAll();}catch(e){}}
+async function restoreVersion(id){try{const d=await verCol.doc(id).get();if(!d.exists)return;const v=d.data();pushUndo();S.plan=toCommonLine(clone(v.plan));
+  /* goals are the swimmers' own (also on their page and plan): a restore keeps today's */
+  const goalsNow=new Map((S.roster?.swimmers||[]).map(w=>[w.id,w.goals||[]]));S.roster=clone(v.roster);(S.roster?.swimmers||[]).forEach(w=>{w.goals=clone(goalsNow.get(w.id)||[]);});S.sel=null;inval();dirty('both');renderAll();}catch(e){}}
 function blankPlan(){if(S.ro)return;const st=new Date();st.setUTCDate(st.getUTCDate()-((st.getUTCDay()+6)%7));const weeks={};for(let i=0;i<50;i++)weeks[i]={p:'p1',load:.6};
   S.plan={schema:1,line:'common',settings:{start:toISO(Date.UTC(st.getUTCFullYear(),st.getUTCMonth(),st.getUTCDate())),weeks:50,near:.015,squad:'Squad',season:'Season'},sessions:[{id:'s1',label:'Session 1',time:'',hours:1.5,pool:'25m',mph:2500,day:0,role:''}],templates:[{name:'General',s:{},note:''}],
     phases:{p1:{macro:'1',name:'Block 1',template:'General',course:'SC',objective:''}},calendar:[],events:[],branches:[{id:'core',name:'Core',parent:null,color:'#E8731A',note:'',weeks}],notes:{}};

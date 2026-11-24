@@ -69,6 +69,15 @@ def _apply_migrations():
             add_col("swimmers", "para_class_status", "VARCHAR")
             add_col("swimmers", "considerations", "TEXT")
 
+        # A swimmer's goals: one list for the swimmer's page, the planner and the athlete plan
+        if "swimmer_targets" in insp.get_table_names():
+            add_col("swimmer_targets", "event", "VARCHAR")
+            add_col("swimmer_targets", "course", "VARCHAR(2)")
+            add_col("swimmer_targets", "meet_id", "INTEGER")
+            add_col("swimmer_targets", "plan_ref", "VARCHAR")
+        if "swimmer_plans" in insp.get_table_names():
+            add_col("swimmer_plans", "goals", "JSON")
+
         if "sessions" in insp.get_table_names():
             add_col("sessions", "start_time", "VARCHAR")
             add_col("sessions", "end_time", "VARCHAR")

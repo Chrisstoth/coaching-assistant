@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../api'
 import { staffStyle } from '../staffRoom'
 import StaffAvatar from './StaffAvatar'
-import { AUDIENCE_LABELS, gapsToFill } from '../swimmerPlan'
+import GoalsCard, { GoalLine } from './GoalsCard'
+import { AUDIENCE_LABELS, GOALS_BEFORE, gapsToFill } from '../swimmerPlan'
 
 // An athlete plan for one swimmer: what we're working towards, what we're
 // working on, and how we plan to do it. The staff draft each section from the
@@ -95,6 +96,29 @@ function SectionEditor({ plan, section, onPlan, locked }) {
   )
 }
 
+// The swimmer's goals on the plan: the same list as on their page and in the
+// Season Planner, edited here while the plan is a draft. A final plan keeps the
+// goals it was finalised with.
+function PlanGoals({ plan, locked }) {
+  if (!locked) {
+    return (
+      <div className="space-y-1">
+        <GoalsCard swimmerId={plan.swimmer_id} firstName={(plan.swimmer_name || '').split(' ')[0]}
+          period={{ from: plan.period_from, to: plan.period_to }} />
+        <p className="text-[11px] text-pool-500 px-1">The same goals as on the swimmer's Overview and in the Season Planner.</p>
+      </div>
+    )
+  }
+  if (!plan.goals?.length) return null
+  return (
+    <div className="bg-pool-800 rounded-xl p-3 space-y-1.5">
+      <p className="text-sm font-semibold text-pool-100">Goals</p>
+      {plan.goals.map(g => <GoalLine key={g.id} goal={g} />)}
+      <p className="text-[11px] text-pool-500">As they were when this plan was marked final.</p>
+    </div>
+  )
+}
+
 function PlanEditor({ plan, onPlan, onClose, onChanged }) {
   const [busy, setBusy] = useState('')
   const locked = plan.status === 'final'
@@ -140,8 +164,12 @@ function PlanEditor({ plan, onPlan, onClose, onChanged }) {
         </div>
       )}
 
+      {!plan.sections.some(s => s.key === GOALS_BEFORE) && <PlanGoals plan={plan} locked={locked} />}
       {plan.sections.map(section => (
-        <SectionEditor key={section.key} plan={plan} section={section} onPlan={onPlan} locked={locked} />
+        <div key={section.key} className="space-y-3">
+          {section.key === GOALS_BEFORE && <PlanGoals plan={plan} locked={locked} />}
+          <SectionEditor plan={plan} section={section} onPlan={onPlan} locked={locked} />
+        </div>
       ))}
 
       <div className="flex flex-wrap gap-2 pt-1">

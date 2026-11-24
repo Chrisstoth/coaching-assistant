@@ -6,6 +6,7 @@ import VoiceInput from '../components/VoiceInput'
 import ObservationsTab from '../components/ObservationsTab'
 import AskTheStaff from '../components/AskTheStaff'
 import SwimmerPlanPanel from '../components/SwimmerPlanPanel'
+import GoalsCard from '../components/GoalsCard'
 import HelpLink from '../components/HelpLink'
 import { LaneWatchMark } from '../components/LaneWatchBrand'
 import TargetTable from '../components/TargetTable'
@@ -437,7 +438,6 @@ export default function SwimmerDetail() {
   const [newMeetObs, setNewMeetObs] = useState({ date: '', event: '', content: '' })
   const [addingMeetObs, setAddingMeetObs] = useState(false)
   const [benchmarks, setBenchmarks] = useState([])
-  const [targets, setTargets] = useState([])
   const [targetTimes, setTargetTimes] = useState(null)
   const [blockStatus, setBlockStatus] = useState(null)
   const [adaptationReview, setAdaptationReview] = useState(null)
@@ -449,9 +449,6 @@ export default function SwimmerDetail() {
   const [showBenchmarkForm, setShowBenchmarkForm] = useState(false)
   const [benchmarkForm, setBenchmarkForm] = useState({ distance: 100, stroke: 'free', effort: 'max', time_seconds: '', date: new Date().toISOString().split('T')[0], notes: '' })
   const [savingBenchmark, setSavingBenchmark] = useState(false)
-  const [showTargetForm, setShowTargetForm] = useState(false)
-  const [targetForm, setTargetForm] = useState({ label: '', description: '', distance: '', stroke: '', effort: '', target_time_seconds: '', deadline: '' })
-  const [savingTarget, setSavingTarget] = useState(false)
   const [groupHistory, setGroupHistory] = useState(null)
 
   useEffect(() => {
@@ -494,7 +491,6 @@ export default function SwimmerDetail() {
       api.getPerformanceAnalyses(id).then(setPerfAnalyses)
       api.getAttendanceStats(id).then(setAttendanceStats).catch(() => {})
       api.getCurrentBenchmarks(id).then(setBenchmarks).catch(() => {})
-      api.getTargets(id).then(setTargets).catch(() => {})
       api.getBlockStatus(id).then(setBlockStatus).catch(() => {})
     }
     if (show('Context')) {
@@ -670,6 +666,8 @@ export default function SwimmerDetail() {
               api.getSwimmer(id).then(setSwimmer).catch(() => {})
               api.getGroupHistory(id).then(setGroupHistory).catch(() => {})
             }} />
+
+            <GoalsCard swimmerId={Number(id)} firstName={swimmer.name.split(' ')[0]} />
 
             <ProfileProgressCard
               status={swimmer.profile_status}
@@ -1411,15 +1409,11 @@ export default function SwimmerDetail() {
         {show('Benchmarks') && (
           <div className="space-y-4">
 
-            {/* Training Benchmarks & Targets */}
+            {/* Training benchmarks (targets are goals now: the Goals card on Overview) */}
             <section className="bg-pool-800 rounded-xl p-4 space-y-3">
               <div className="flex justify-between items-center">
                 <h3 className="font-semibold text-sm text-indigo-400">Training Benchmarks</h3>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setShowTargetForm(v => !v)}
-                    className="text-xs text-pool-400 hover:text-pool-200"
-                  >+ target</button>
                   <button
                     onClick={() => setShowBenchmarkForm(v => !v)}
                     className="text-xs text-indigo-400 hover:text-indigo-200"
@@ -1477,53 +1471,8 @@ export default function SwimmerDetail() {
                 </div>
               )}
 
-              {/* Add target form */}
-              {showTargetForm && (
-                <div className="bg-pool-700/50 rounded-xl p-3 space-y-2">
-                  <p className="text-xs text-pool-400 font-semibold">Set a target</p>
-                  <input placeholder="Label (e.g. Sub-60 100 free)" value={targetForm.label}
-                    onChange={e => setTargetForm(p => ({...p, label: e.target.value}))}
-                    className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
-                  <input placeholder="Description (optional)" value={targetForm.description}
-                    onChange={e => setTargetForm(p => ({...p, description: e.target.value}))}
-                    className="w-full bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="number" step="0.01" placeholder="Target time (s, optional)" value={targetForm.target_time_seconds}
-                      onChange={e => setTargetForm(p => ({...p, target_time_seconds: e.target.value}))}
-                      className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
-                    <input type="date" placeholder="Deadline" value={targetForm.deadline}
-                      onChange={e => setTargetForm(p => ({...p, deadline: e.target.value}))}
-                      className="bg-pool-700 rounded-lg px-3 py-2 text-sm border border-pool-600 focus:border-indigo-500 focus:outline-none" />
-                  </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => setShowTargetForm(false)} className="flex-1 py-2 text-sm text-pool-400">Cancel</button>
-                    <button
-                      disabled={savingTarget || !targetForm.label.trim()}
-                      onClick={async () => {
-                        setSavingTarget(true)
-                        try {
-                          await api.createTarget({
-                            swimmer_id: Number(id),
-                            label: targetForm.label,
-                            description: targetForm.description || null,
-                            target_time_seconds: targetForm.target_time_seconds ? Number(targetForm.target_time_seconds) : null,
-                            deadline: targetForm.deadline || null,
-                          })
-                          const updated = await api.getTargets(id)
-                          setTargets(updated)
-                          setShowTargetForm(false)
-                          setTargetForm({ label: '', description: '', distance: '', stroke: '', effort: '', target_time_seconds: '', deadline: '' })
-                        } catch(e) { alert(e.message) }
-                        setSavingTarget(false)
-                      }}
-                      className="flex-1 bg-indigo-700 rounded-lg py-2 text-sm font-semibold disabled:opacity-40"
-                    >{savingTarget ? 'Saving…' : 'Save'}</button>
-                  </div>
-                </div>
-              )}
-
               {/* Benchmarks list */}
-              {benchmarks.length === 0 && targets.length === 0 ? (
+              {benchmarks.length === 0 ? (
                 <p className="text-pool-400 text-xs">No benchmarks logged yet. Use AI Chat to log times, or tap "+ log time" above.</p>
               ) : (
                 <div className="space-y-2">
@@ -1550,45 +1499,6 @@ export default function SwimmerDetail() {
                     </div>
                   )}
 
-                  {targets.length > 0 && (
-                    <div className="space-y-1.5 pt-1">
-                      <p className="text-xs text-pool-500 uppercase tracking-wide">Targets</p>
-                      {targets.map(t => (
-                        <div key={t.id} className={`flex items-start justify-between rounded-lg px-3 py-2 ${t.achieved ? 'bg-green-900/20' : 'bg-pool-700/40'}`}>
-                          <div className="flex-1 min-w-0">
-                            <p className={`text-sm font-medium ${t.achieved ? 'line-through text-pool-400' : ''}`}>{t.label}</p>
-                            {t.description && <p className="text-xs text-pool-400">{t.description}</p>}
-                            {t.deadline && <p className="text-xs text-pool-500">By {t.deadline}</p>}
-                          </div>
-                          <div className="flex items-center gap-2 ml-2 shrink-0">
-                            {t.target_time_seconds && (
-                              <span className="text-xs font-mono text-indigo-300">
-                                {Math.floor(t.target_time_seconds / 60) > 0
-                                  ? `${Math.floor(t.target_time_seconds / 60)}:${(t.target_time_seconds % 60).toFixed(2).padStart(5, '0')}`
-                                  : `${Number(t.target_time_seconds).toFixed(2)}s`}
-                              </span>
-                            )}
-                            {!t.achieved && (
-                              <button
-                                onClick={async () => {
-                                  await api.updateTarget(t.id, { achieved: true, achieved_date: new Date().toISOString().split('T')[0] })
-                                  setTargets(prev => prev.map(x => x.id === t.id ? {...x, achieved: true} : x))
-                                }}
-                                className="text-xs text-green-400 border border-green-800 rounded px-2 py-0.5"
-                              >✓</button>
-                            )}
-                            <button
-                              onClick={async () => {
-                                await api.deleteTarget(t.id)
-                                setTargets(prev => prev.filter(x => x.id !== t.id))
-                              }}
-                              className="text-xs text-pool-600 hover:text-red-400"
-                            >✕</button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
                 </div>
               )}
             </section>

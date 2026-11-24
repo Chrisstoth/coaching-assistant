@@ -7,6 +7,7 @@ from datetime import date
 
 from backend.database import get_db
 from backend import models
+from backend.services import goals as goal_svc
 
 router = APIRouter()
 
@@ -84,6 +85,7 @@ def create_target(data: TargetIn, db: Session = Depends(get_db)):
     target = models.SwimmerTarget(**data.model_dump())
     db.add(target)
     db.commit()
+    goal_svc.write_to_rosters(db, target.swimmer)   # a target is one of the swimmer's goals
     db.refresh(target)
     return target
 
@@ -107,6 +109,7 @@ def update_target(target_id: int, data: dict, db: Session = Depends(get_db)):
         if hasattr(target, k):
             setattr(target, k, v)
     db.commit()
+    goal_svc.write_to_rosters(db, target.swimmer)
     db.refresh(target)
     return target
 
@@ -116,5 +119,7 @@ def delete_target(target_id: int, db: Session = Depends(get_db)):
     target = db.query(models.SwimmerTarget).filter(models.SwimmerTarget.id == target_id).first()
     if not target:
         raise HTTPException(404, "Target not found")
+    swimmer = target.swimmer
     db.delete(target)
     db.commit()
+    goal_svc.write_to_rosters(db, swimmer)

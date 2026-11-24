@@ -626,6 +626,12 @@ export const api = {
   updateTarget: (id, data) => request('PATCH', `/benchmarks/targets/${id}`, data),
   deleteTarget: (id) => request('DELETE', `/benchmarks/targets/${id}`),
 
+  // A swimmer's goals: the same list the Season Planner shows and the athlete plan prints
+  getGoals: (swimmerId) => request('GET', `/goals?swimmer_id=${swimmerId}`),
+  createGoal: (data) => request('POST', '/goals', data),
+  updateGoal: (id, data) => request('PATCH', `/goals/${id}`, data),
+  deleteGoal: (id) => request('DELETE', `/goals/${id}`),
+
   // Target sets: training target times worked out from PBs
   getTargetSets: () => request('GET', '/target-sets'),
   createTargetSet: (data) => request('POST', '/target-sets', data),

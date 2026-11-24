@@ -125,6 +125,7 @@ def finalise(plan_id: int, db: Session = Depends(get_db)):
     _draft_or_409(plan)
     if not any(s.get("included") and (s.get("content") or "").strip() for s in plan.sections or []):
         raise HTTPException(422, "There is nothing in this plan yet.")
+    plan.goals = swimmer_plan.live_goals(db, plan)      # kept as they were, like the words
     plan.status = "final"
     plan.finalised_at = datetime.now(timezone.utc)
     db.commit()
