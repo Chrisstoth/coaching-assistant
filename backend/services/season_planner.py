@@ -67,6 +67,23 @@ def to_common(r) -> Optional[float]:
     return COMMON_BY_COLOUR[lvl] if lvl else None
 
 
+def common_level(v) -> Optional[str]:
+    """A value on the common line as its BPSC colour (White below 12.5 ... Gold from 20.5)."""
+    if v is None or v == "":
+        return None
+    v = float(v)
+    for name, top in (("White", 12.5), ("Yellow", 14.5), ("Pink", 16.5), ("Red", 17.5), ("Purple", 18.5), ("Blue", 20.5)):
+        if v < top:
+            return name
+    return "Gold"
+
+
+def _norm_t(o: dict) -> dict:
+    def v(x):
+        return None if x is None or x == "" else float(x)
+    return {"a": v(o.get("a")), "b": v(o.get("b")), "c": v(o.get("c")), "n": o.get("n") or ""}
+
+
 def _iso(s) -> date:
     return date.fromisoformat(str(s)[:10])
 
@@ -233,17 +250,48 @@ class Plan:
         self._tl[bid] = out
         return out
 
+    # ---- one session's focus in a week (the planner's sessT): the block's standard week, the parent group's
+    # week while it is on the same block, and any change made for this group or swimmer that week
+    def _tpl_target(self, p, sid: str) -> dict:
+        ph = (self.p.get("phases") or {}).get(p) or {}
+        t = next((x for x in self.p.get("templates") or [] if x.get("name") == ph.get("template")), None) or {}
+        f = dict((t.get("f") or {}).get(sid) or {})
+        return _norm_t({**f, "n": (t.get("s") or {}).get(sid, "")})
+
+    def session_target(self, bid: str, i: int, sid: str) -> dict:
+        if bid.startswith("sw:"):
+            sw = self.swimmers.get(bid[3:])
+            g = self.group_at(sw, i)
+            own = ((((self._pers(bid[3:]).get("ownSess") or {}).get(g) or {}).get(str(i))) or {}).get(sid)
+            if own:
+                return {**_norm_t(own), "own": True}
+            w = self.timeline(bid)[i]
+            if w["camp"]:
+                return {"camp": w["camp"], "a": None, "b": None, "c": None, "n": "Camp"}
+            return self.session_target(g, i, sid) if self.timeline(g)[i]["p"] == w["p"] else self._tpl_target(w["p"], sid)
+        b = self.branches.get(bid) or {}
+        own = (((b.get("sess") or {}).get(str(i))) or {}).get(sid)
+        if own:
+            return {**_norm_t(own), "own": True}
+        w = self.timeline(bid)[i]
+        par = b.get("parent")
+        if par and par in self.branches and self.timeline(par)[i]["p"] == w["p"]:
+            return self.session_target(par, i, sid)
+        return self._tpl_target(w["p"], sid)
+
     def targets(self, template: Optional[str]) -> list:
         """The template's session targets, each focus on the common scale too."""
         t = next((x for x in self.p.get("templates") or [] if x.get("name") == template), None)
         if not t:
             return []
         out = []
+        common = self.p.get("line") == "common"
         for s in self.p.get("sessions") or []:
             f = (t.get("f") or {}).get(s["id"]) or {}
             focus = [v for v in (f.get("a"), f.get("b")) if v is not None]
             out.append({"session": s.get("label") or s["id"], "text": (t.get("s") or {}).get(s["id"], ""),
-                        "levels": [planner_level(v) for v in focus], "common": [to_common(v) for v in focus]})
+                        "levels": [common_level(v) if common else planner_level(v) for v in focus],
+                        "common": [float(v) if common else to_common(v) for v in focus]})
         return out
 
 
@@ -316,8 +364,57 @@ def week_code(db: DBSession, squad: Optional[str], on: date) -> Optional[str]:
     return plan.timeline(root)[i]["code"] if root else None
 
 
-def staff_lines(db: DBSession, squad: Optional[str], on: date) -> str:
-    """The week's plan as the staff read it."""
+def _labeller(db: DBSession, plan: Plan):
+    """A focus value as the plan shows it: in its scale, else the club's usual one."""
+    try:
+        from backend.services import session_builder as B
+        from backend.services import session_notation as N
+        B.load_scales(db)
+        key = plan.p.get("scale") or B.usual_scale(db)
+
+        def label(v):
+            z = N.zone_for(v, key)
+            return z["label"] if z else (str(int(v)) if v == int(v) else str(v))
+        return label
+    except Exception:  # noqa: BLE001 - BPSC colours will do
+        return common_level
+
+
+def session_lines(db: DBSession, squad: str, on: date, slot_id: int) -> list:
+    """What the plan says for one timetable session: each group's focus, and swimmers with their own."""
+    plan = load(db, squad)
+    if not plan or not slot_id:
+        return []
+    i = plan.week_of(on)
+    s = next((x for x in plan.p.get("sessions") or [] if x.get("slot") == slot_id), None)
+    if not s or not 0 <= i < plan.weeks:
+        return []
+    label = _labeller(db, plan)
+
+    def say(t):
+        if t.get("camp"):
+            return "camp"
+        f = " / ".join(label(v) for v in (t["a"], t["b"], t["c"]) if v is not None) or "no focus set"
+        return f + (f" ({t['n']})" if t.get("n") else "")
+
+    out = [f"THE PLAN FOR THIS SESSION ({s.get('label') or 'session'}, focus main / 2nd / 3rd):"]
+    for bid in plan.branches:
+        if plan.runs_in(bid, i):
+            out.append(f"- {plan.branches[bid].get('name')}: {say(plan.session_target(bid, i, s['id']))}")
+    for sid, sw in plan.swimmers.items():
+        if not sw.get("branch") or sw.get("branch") not in plan.branches:
+            continue
+        t = plan.session_target(f"sw:{sid}", i, s["id"])
+        if t.get("own"):
+            out.append(f"- {sw.get('name')} (own week): {say(t)}")
+    return out
+
+
+def staff_lines(db: DBSession, squad: Optional[str], on: date, slot_id: Optional[int] = None) -> str:
+    """The week's plan as the staff read it, and the plan for the session being written."""
+    if not squad:                             # a club-wide slot: the club's one plan, if it has one
+        squads = {d.squad for d in db.query(models.PlanDoc).filter_by(club=CLUB, key="plan")}
+        squad = squads.pop() if len(squads) == 1 else None
     w = week(db, squad, on) if squad else None
     if not w:
         return ""
@@ -330,6 +427,11 @@ def staff_lines(db: DBSession, squad: Optional[str], on: date) -> str:
            for s in w["swimmers"].values() if s["camp"] or s["away"]]
     if odd:
         lines.append("Swimmers off the usual plan: " + "; ".join(odd))
+    if slot_id:
+        try:
+            lines += session_lines(db, squad, on, slot_id)
+        except Exception:  # noqa: BLE001 - the week's lines still go
+            pass
     return "\n".join(lines)
 
 
@@ -533,3 +635,272 @@ def swimmer_week(db: DBSession, swimmer: models.Swimmer, on: Optional[date] = No
             "code": me["code"], "phase": g.get("phase") if g else None, "objective": g.get("objective") if g else None,
             "load": me["load"], "comps": me["comps"], "camp": bool(me["camp"]), "away": bool(me["away"]),
             "groups": [{"id": x["id"], "name": x["name"]} for x in w["groups"]]}
+
+
+# ---------------------------------------------------------------- lining the plan up with the app
+# docs/design/season-planner-weeks.md. The app keeps one list of each thing: the
+# intensity line, the pool timetable and the meets. When the plan opens, its copy
+# is brought into line; the planner keeps only what is about planning.
+
+# The planner's old RPE 1-21 line, carried across to the common line by BPSC colour.
+OLD_LINE = [(10, 10), (12, 13.5), (14, 15.5), (16, 17), (18, 18), (20, 19.5), (99, 21)]
+DAYS3 = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+
+def _from_old(v):
+    if v is None or v == "":
+        return v
+    v = float(v)
+    return next(c for hi, c in OLD_LINE if v <= hi)
+
+
+def to_common_line(p: dict) -> bool:
+    """Move every focus in a plan from the planner's old RPE line onto the common line."""
+    if p.get("line") == "common":
+        return False
+
+    def cv(o):
+        if isinstance(o, dict):
+            for k in ("a", "b", "c"):
+                if o.get(k) not in (None, ""):
+                    o[k] = _from_old(o[k])
+
+    for t in p.get("templates") or []:
+        for o in (t.get("f") or {}).values():
+            cv(o)
+    for b in p.get("branches") or []:
+        for wk in (b.get("sess") or {}).values():
+            for o in wk.values():
+                cv(o)
+    for x in (p.get("personal") or {}).values():
+        for g in (x.get("ownSess") or {}).values():
+            for wk in g.values():
+                for o in wk.values():
+                    cv(o)
+    p.pop("notation", None)
+    p["line"] = "common"
+    return True
+
+
+def _mins(hhmm) -> Optional[int]:
+    s = str(hhmm or "").strip()
+    if len(s) < 4 or ":" not in s[:5]:
+        return None
+    try:
+        h, m = s[:5].split(":")
+        return int(h) * 60 + int(m)
+    except ValueError:
+        return None
+
+
+def _times(text) -> tuple:
+    """A planner time such as 05:30-07:00 (any dash) as its start and end."""
+    t = str(text or "")
+    for dash in ("—", "–"):
+        t = t.replace(dash, "-")
+    parts = [x.strip() for x in t.split("-")]
+    a = parts[0] if parts and _mins(parts[0]) is not None else None
+    b = parts[1] if len(parts) > 1 and _mins(parts[1]) is not None else None
+    return a, b
+
+
+def _half(hhmm) -> Optional[str]:
+    m = _mins(hhmm)
+    return None if m is None else ("PM" if m >= 12 * 60 else "AM")
+
+
+def squad_slots(db: DBSession, squad: str) -> list:
+    """The squad's timetable: its own slots and every slot with no squad (as the register reads it)."""
+    q = db.query(models.PoolSlot).filter(models.PoolSlot.active == True)  # noqa: E712
+    return [s for s in q.all() if not s.squad or s.squad == squad]
+
+
+def _slot_fields(s: models.PoolSlot) -> dict:
+    out = {"day": int(s.day_of_week), "time": f"{s.time}–{s.end_time}" if s.end_time else (s.time or "")}
+    a, b = _mins(s.time), _mins(s.end_time)
+    if a is not None and b is not None and b > a:
+        out["hours"] = round((b - a) / 60 * 4) / 4
+    if s.course in ("SCM", "LCM"):
+        out["pool"] = "50m" if s.course == "LCM" else "25m"
+    return out
+
+
+def align_timetable(db: DBSession, squad: str, p: dict) -> bool:
+    """Tie every planner session to a pool slot, and take its day, times and pool from it."""
+    slots = {s.id: s for s in squad_slots(db, squad)}
+    ses = p.setdefault("sessions", [])
+    retired = p.get("sessionsRetired") or []
+    changed = False
+    for x in list(ses):                       # its slot was deleted or turned off: put it aside
+        if x.get("slot") and x["slot"] not in slots:
+            ses.remove(x)
+            retired.append(x)
+            changed = True
+    linked = {x.get("slot") for x in ses if x.get("slot")}
+    for x in list(retired):                   # and back again if the slot is
+        if x.get("slot") in slots and x["slot"] not in linked:
+            retired.remove(x)
+            ses.append(x)
+            linked.add(x["slot"])
+            changed = True
+    for x in ses:
+        if x.get("slot"):
+            continue
+        a, b = _times(x.get("time"))
+        free = [s for s in slots.values() if s.id not in linked and s.day_of_week == int(x.get("day") or 0)
+                and (a is None or _half(s.time) == _half(a))]
+        free.sort(key=lambda s: abs((_mins(s.time) or 0) - (_mins(a) or 0)))
+        if free:
+            s = free[0]
+        else:                                 # not on the timetable yet: add it there
+            s = models.PoolSlot(day_of_week=int(x.get("day") or 0), time=a or "06:00", end_time=b, squad=squad,
+                                label=x.get("label") or None, active=True,
+                                course={"50m": "LCM", "25m": "SCM"}.get(x.get("pool")))
+            db.add(s)
+            db.flush()
+            slots[s.id] = s
+        x["slot"] = s.id
+        linked.add(s.id)
+        changed = True
+    for x in ses:
+        f = _slot_fields(slots[x["slot"]])
+        if any(x.get(k) != v for k, v in f.items()):
+            x.update(f)
+            changed = True
+    for s in sorted(slots.values(), key=lambda s: (s.day_of_week, _mins(s.time) or 0)):
+        if s.id in linked:
+            continue
+        x = {"id": f"slot{s.id}", "slot": s.id, "label": f"{DAYS3[s.day_of_week % 7]} {_half(s.time) or ''}".strip(),
+             "hours": 1.5, "pool": "25m", "mph": 2500, "role": ""}
+        x.update(_slot_fields(s))
+        ses.append(x)
+        changed = True
+    order = sorted(ses, key=lambda x: (int(x.get("day") or 0), _mins(_times(x.get("time"))[0]) or 0))
+    if order != ses:
+        ses[:] = order
+        changed = True
+    if retired:
+        p["sessionsRetired"] = retired
+    elif "sessionsRetired" in p:
+        p.pop("sessionsRetired")
+        changed = True
+    return changed
+
+
+def _norm(n) -> str:
+    return " ".join("".join(c if c.isalnum() else " " for c in str(n or "").lower()).split())
+
+
+GENERIC = {"championships", "championship", "champs", "open", "meet", "gala", "swimming", "swim", "club", "the", "and",
+            "round", "league", "level", "long", "short", "course", "weekend", "wkd", "festival", "event", "series",
+            "winter", "summer", "spring", "autumn", "county", "regional", "regionals", "national", "nationals"}
+
+
+def _meet_score(a, b) -> float:
+    """How alike two meet names are, 0 to 1. Meets on the same start date match on one distinctive
+    shared word (Northampton, Essex, Arena), so "Northampton Winter Festival" is "Northampton Winter Meet"."""
+    a, b = _norm(a), _norm(b)
+    if not a or not b:
+        return 0
+    if a == b or a in b or b in a:
+        return 1
+    ta = {w for w in a.split() if len(w) > 2 and not w.isdigit()}
+    tb = {w for w in b.split() if len(w) > 2 and not w.isdigit()}
+    if not ta or not tb:
+        return 0
+    j = len(ta & tb) / len(ta | tb)
+    if ta & tb - GENERIC:
+        j = max(j, 0.5)
+    return j
+
+
+def _same_meet(a, b) -> bool:
+    return _meet_score(a, b) >= 0.5
+
+
+COURSE_IN = {"SCM": "25m", "LCM": "50m"}
+COURSE_OUT = {"25m": "SCM", "50m": "LCM"}
+
+
+def _meet_fields(m: models.Meet) -> dict:
+    out = {"name": m.name, "start": m.date.isoformat(), "end": (m.date_to or m.date).isoformat()}
+    if m.course in COURSE_IN:
+        out["course"] = COURSE_IN[m.course]
+    if m.location:
+        out["venue"] = m.location
+    return out
+
+
+def align_meets(db: DBSession, p: dict) -> bool:
+    """Tie every planner meet to a meet in the Meets tab, and show every club meet in the season."""
+    s = p.get("settings") or {}
+    first = _iso(s["start"])
+    last = first + timedelta(weeks=int(s.get("weeks") or 50)) - timedelta(days=1)
+    meets = {m.id: m for m in db.query(models.Meet).all()}
+    cal = p.setdefault("calendar", [])
+    changed = False
+    for c in list(cal):                       # deleted in the Meets tab
+        if c.get("meet") and c["meet"] not in meets:
+            cal.remove(c)
+            changed = True
+    linked = {c["meet"] for c in cal if c.get("meet")}
+    for c in cal:
+        if c.get("meet"):
+            continue
+        try:
+            d = _iso(c.get("start"))
+        except ValueError:
+            continue
+        same_day = sorted((m for m in meets.values() if m.id not in linked and m.date == d and _same_meet(m.name, c.get("name"))),
+                          key=lambda m: -_meet_score(m.name, c.get("name")))
+        m = same_day[0] if same_day else None
+        if not m:                             # not in the Meets tab yet: add it there
+            try:
+                end = _iso(c["end"]) if c.get("end") else None
+            except ValueError:
+                end = None
+            m = models.Meet(name=c.get("name") or "Meet", date=d, date_to=end if end and end != d else None,
+                            location=c.get("venue") or None, course=COURSE_OUT.get(c.get("course")))
+            db.add(m)
+            db.flush()
+            meets[m.id] = m
+        c["meet"] = m.id
+        linked.add(m.id)
+        changed = True
+    for c in cal:
+        m = meets.get(c.get("meet"))
+        if not m or not m.date:
+            continue
+        f = _meet_fields(m)
+        if any(c.get(k) != v for k, v in f.items()):
+            c.update(f)
+            changed = True
+    used = {c.get("id") for c in cal}
+    for m in sorted(meets.values(), key=lambda m: (m.date or first, m.id)):
+        if m.id in linked or not m.date or not first <= m.date <= last:
+            continue
+        cid = f"m{m.id}"
+        while cid in used:
+            cid += "x"
+        c = {"id": cid, "meet": m.id, "short": "", "level": "", "note": "", "prio": {}, "course": ""}
+        c.update(_meet_fields(m))
+        cal.append(c)
+        used.add(cid)
+        changed = True
+    return changed
+
+
+def align(db: DBSession, squad: str) -> bool:
+    """Bring the saved plan into line with the app before it is opened. True if it changed."""
+    d = db.query(models.PlanDoc).filter_by(club=CLUB, squad=squad, key="plan").first()
+    if not d or not d.data:
+        return False
+    p = copy.deepcopy(d.data)
+    changed = to_common_line(p)
+    changed = align_timetable(db, squad, p) or changed
+    changed = align_meets(db, p) or changed
+    if changed:
+        d.data = p
+        d.revision = (d.revision or 0) + 1
+    db.commit()
+    return changed

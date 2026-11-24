@@ -219,6 +219,102 @@ class PlannerInTheAppTests(unittest.TestCase):
             db.refresh(eve)
             self.assertEqual(eve.status, "occasional", "Not planned: uni / visiting")
 
+    def test_the_plan_opens_in_line_with_the_timetable_the_meets_and_the_scales(self):
+        with SessionLocal() as db:
+            mon = models.PoolSlot(day_of_week=0, time="05:30", end_time="07:00", squad=None, course="LCM", label="Monday AM", active=True)
+            other = models.PoolSlot(day_of_week=2, time="05:30", end_time="07:00", squad="Other Squad", active=True)
+            thu = models.PoolSlot(day_of_week=3, time="06:00", end_time="07:30", squad="Test Squad", course="SCM", active=True)
+            county = models.Meet(name="County Champs 2026", date=date(2026, 11, 7), date_to=date(2026, 11, 8), course="SCM", location="Test pool")
+            autumn = models.Meet(name="Autumn Open", date=date(2026, 9, 19), course="LCM")
+            later = models.Meet(name="Summer Open", date=date(2027, 8, 1))
+            db.add_all([mon, other, thu, county, autumn, later])
+            db.commit()
+            ids = {k: v.id for k, v in (("mon", mon), ("other", other), ("thu", thu), ("county", county), ("autumn", autumn), ("later", later))}
+        http = TestClient(app)
+        with http:
+            h = {"Authorization": f"Bearer {http.post('/auth/login', json={'password': 'test-password'}).json()['token']}"}
+            http.put("/season-planner/Test Squad/docs/roster", headers=h, json={"data": ROSTER})
+            http.put("/season-planner/Test Squad/docs/plan", headers=h, json={"data": PLAN})
+            got = http.get("/season-planner/Test Squad/docs", headers=h).json()["plan"]
+            p, rev = got["data"], got["revision"]
+
+            # intensity: the old RPE line carried over by colour, onto the common line
+            self.assertEqual(p["line"], "common")
+            self.assertEqual(p["templates"][0]["f"]["monam"], {"a": 13.5, "b": 15.5}, "Yellow and Pink")
+            self.assertEqual(p["templates"][0]["f"]["tuepm"], {"a": 21}, "Gold stays at 21")
+
+            # timetable: Mon AM is the club's slot (and its 50m pool), Tue PM goes onto the timetable,
+            # the squad's Thursday slot joins the plan, another squad's slot doesn't
+            ses = {x["id"]: x for x in p["sessions"]}
+            self.assertEqual((ses["monam"]["slot"], ses["monam"]["pool"], ses["monam"]["mph"]), (ids["mon"], "50m", 2500))
+            thu_s = next(x for x in p["sessions"] if x.get("slot") == ids["thu"])
+            self.assertEqual((thu_s["label"], thu_s["day"], thu_s["hours"], thu_s["time"]), ("Thu AM", 3, 1.5, "06:00–07:30"))
+            self.assertNotIn(ids["other"], [x["slot"] for x in p["sessions"]])
+            self.assertEqual([x["id"] for x in p["sessions"]], ["monam", "tuepm", f"slot{ids['thu']}"], "in timetable order")
+            with SessionLocal() as db:
+                tue = db.get(models.PoolSlot, ses["tuepm"]["slot"])
+                self.assertEqual((tue.day_of_week, tue.time, tue.end_time, tue.squad, tue.course), (1, "20:00", "21:00", "Test Squad", "SCM"))
+
+            # meets: County Champs is the Meets tab's meet, Autumn Open joins the plan, next summer's doesn't
+            cal = {c["name"]: c for c in p["calendar"]}
+            self.assertEqual((cal["County Champs 2026"]["meet"], cal["County Champs 2026"]["prio"]["core"], cal["County Champs 2026"]["short"]),
+                             (ids["county"], "A", "County"), "the plan's own A/B/C and short name stay")
+            self.assertEqual((cal["Autumn Open"]["meet"], cal["Autumn Open"]["course"], cal["Autumn Open"]["prio"]), (ids["autumn"], "50m", {}))
+            self.assertNotIn("Summer Open", cal)
+
+            # opening it again changes nothing
+            self.assertEqual(http.get("/season-planner/Test Squad/docs", headers=h).json()["plan"]["revision"], rev)
+
+            # a slot turned off puts its session aside, with what's planned on it; turned on, it comes back
+            with SessionLocal() as db:
+                db.get(models.PoolSlot, ids["mon"]).active = False
+                db.delete(db.get(models.Meet, ids["autumn"]))
+                db.commit()
+            p = http.get("/season-planner/Test Squad/docs", headers=h).json()["plan"]["data"]
+            self.assertEqual([x["id"] for x in p["sessions"]], ["tuepm", f"slot{ids['thu']}"])
+            self.assertEqual([x["id"] for x in p["sessionsRetired"]], ["monam"])
+            self.assertNotIn("Autumn Open", {c["name"] for c in p["calendar"]}, "deleted in the Meets tab")
+            with SessionLocal() as db:
+                db.get(models.PoolSlot, ids["mon"]).active = True
+                db.commit()
+            p = http.get("/season-planner/Test Squad/docs", headers=h).json()["plan"]["data"]
+            self.assertEqual([x["id"] for x in p["sessions"]], ["monam", "tuepm", f"slot{ids['thu']}"])
+            self.assertNotIn("sessionsRetired", p)
+            self.assertEqual(p["templates"][0]["f"]["monam"], {"a": 13.5, "b": 15.5})
+
+    def test_the_staff_read_the_plan_for_the_session_they_are_writing(self):
+        plan = json.loads(json.dumps(PLAN))
+        SP.to_common_line(plan)
+        plan["scale"] = "bpsc"
+        plan["sessions"][0]["slot"] = 5                                   # Mon AM is slot 5
+        plan["branches"][1]["sess"] = {"3": {"monam": {"a": 21, "n": "Race pace 50s"}}}   # Nationals, week 3 only
+        plan["personal"] = {"s1": {"ownSess": {"core": {"3": {"monam": {"a": 10}}}}}}    # Alex has an easy one
+        with SessionLocal() as db:
+            db.add_all([models.PlanDoc(club="default", squad="Test Squad", key="plan", data=plan, revision=1),
+                        models.PlanDoc(club="default", squad="Test Squad", key="roster", data=ROSTER, revision=1)])
+            db.commit()
+            text = SP.staff_lines(db, "Test Squad", date(2026, 9, 14), 5)
+            self.assertIn("THE PLAN FOR THIS SESSION (Mon AM", text)
+            self.assertIn("- Regionals: Red", text, "General prep's standard week")
+            self.assertIn("- Nationals: Gold (Race pace 50s)", text, "the group's own change for the week")
+            self.assertIn("- Girls group: Red", text, "a group on the same block follows its parent")
+            self.assertIn("- Alex Test (own week): White", text)
+            self.assertNotIn("THE PLAN FOR THIS SESSION", SP.staff_lines(db, "Test Squad", date(2026, 9, 14), 99), "not a plan session")
+            self.assertIn("- Regionals: Red", SP.staff_lines(db, None, date(2026, 9, 14), 5), "a club-wide slot reads the club's one plan")
+
+    def test_meets_on_the_same_day_match_on_a_distinctive_word(self):
+        self.assertTrue(SP._same_meet("Northampton Winter Festival", "Northampton Winter Meet 2026"))
+        self.assertTrue(SP._same_meet("Essex Age Groups - Wkd 1", "Essex County Age Group Championships Weekend 1"))
+        self.assertFalse(SP._same_meet("County Championships", "Regional Championships"), "only generic words shared")
+        self.assertFalse(SP._same_meet("Winter Open 2026", "Summer Open 2026"))
+
+    def test_a_plan_on_the_common_line_reads_its_colours(self):
+        plan = json.loads(json.dumps(PLAN))
+        SP.to_common_line(plan)
+        self.assertFalse(SP.to_common_line(plan), "only once")
+        t = SP.Plan(plan, ROSTER).targets(plan["templates"][0]["name"])
+        self.assertEqual([(x["levels"], x["common"]) for x in t], [(["Yellow", "Pink"], [13.5, 15.5]), (["Gold"], [21.0])])
+
 
 if __name__ == "__main__":
     unittest.main()

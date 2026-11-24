@@ -368,3 +368,32 @@
 .sp .lockbtn[aria-pressed="true"]{color:#fff;background:var(--accent);border-color:var(--accent)}
 /* iOS zooms in on any box under 16px when it's tapped; now that pinch-zoom is on, keep boxes at 16px. */
 @media (pointer:coarse){.sp input:not([type="checkbox"]):not([type="radio"]),.sp select,.sp textarea{font-size:16px}}
+
+/* ---- the Weeks tab (docs/design/season-planner-weeks.md) ---- */
+.sp .zbar{position:relative;height:26px;border-radius:6px;overflow:hidden;border:1px solid var(--line);margin-top:10px;background:var(--surface-2)}
+.sp .zbar span{position:absolute;top:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;overflow:hidden;white-space:nowrap;border-right:1px solid rgba(0,0,0,.25)}
+.sp .linkbtn{border:0;background:none;padding:0;color:var(--accent-soft);font:inherit;cursor:pointer;text-decoration:underline;min-height:0}
+.sp section.wkb{margin-top:12px;padding:0;overflow:hidden;border-top:4px solid var(--b)}
+.sp .wkb-head{display:flex;justify-content:space-between;gap:10px 16px;flex-wrap:wrap;padding:12px 14px 8px}
+.sp .wkb-head h3{margin:2px 0 2px;font-family:var(--f-display);font-size:17px}
+.sp .std-sum{display:flex;align-items:center;gap:8px;flex-wrap:wrap;align-self:flex-start}
+.sp .wkb-std{padding:10px 14px;border-top:1px solid var(--line);background:var(--surface)}
+.sp .std-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.sp table.wk{min-width:100%}
+.sp table.wk td{vertical-align:top}
+.sp table.wk th:first-child,.sp table.wk td.wk-c{position:sticky;left:0;z-index:1;background:var(--surface);min-width:84px}
+.sp table.wk tr.wkrow{cursor:pointer}
+.sp table.wk tr.wkrow:hover td{background:var(--accent-2)}
+.sp table.wk tr.wkrow.now td{background:var(--surface-2)}
+.sp table.wk tr.wkrow.now td.wk-c{box-shadow:inset 3px 0 0 var(--accent)}
+.sp table.wk tr.wkrow.open td{background:var(--accent-2)}
+.sp table.wk tr.wk-edit>td{background:var(--surface);padding:4px 12px 14px;border-bottom:2px solid var(--b)}
+.sp table.wk td.wc{min-width:112px}
+.sp table.wk td.wc.own{box-shadow:inset 3px 0 0 var(--b)}
+.sp td.wk-g{min-width:120px} .sp td.wk-m{min-width:140px}
+.sp .gcode{display:block;font-size:11.5px;color:var(--muted);white-space:nowrap;padding-left:6px;border-left:3px solid var(--b);margin:1px 0;line-height:1.35}
+.sp .gcode b{font-family:var(--f-data);color:var(--muted);font-weight:600} .sp .gcode.me,.sp .gcode.me b{color:var(--ink);font-weight:700}
+.sp .mA{color:var(--ink)} .sp .mA b{display:inline-block;background:var(--accent);color:var(--accent-ink);border-radius:3px;padding:0 4px;font-size:10.5px}
+.sp .mN{color:var(--muted)}
+.sp .slink{display:inline-block;margin-top:5px;border:1px solid var(--line);background:var(--surface-2);color:var(--accent-soft);border-radius:999px;padding:1px 9px;font-size:11px;font-weight:600;cursor:pointer;min-height:0}
+.sp .slink.done{color:var(--good);border-color:var(--good)}

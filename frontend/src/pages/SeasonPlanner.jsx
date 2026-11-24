@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { mountPlanner } from '../planner/plannerApp'
@@ -10,9 +10,13 @@ import '../planner/planner.css'
    counter read the same plan. */
 export default function SeasonPlanner() {
   const params = useParams()
+  const navigate = useNavigate()
+  const nav = useRef(navigate)
+  nav.current = navigate
   const host = useRef(null)
   const [squads, setSquads] = useState(null)
   const [club, setClub] = useState(null)
+  const [scales, setScales] = useState(null)
   const squad = params.squad || (squads && squads[0]) || 'Silver 1'
 
   // The rest of the app stops pinch-zoom (no accidental zoom at poolside); the season
@@ -28,10 +32,12 @@ export default function SeasonPlanner() {
   useEffect(() => {
     api.getPlannerSquads().then(setSquads).catch(() => setSquads([]))
     api.getSessionPresentation().then(setClub).catch(() => setClub({}))
+    // the club's intensity scales (Settings): the planner shows its focuses in them
+    api.getBuilderSettings().then(setScales).catch(() => setScales({}))
   }, [])
 
   useEffect(() => {
-    if (!squads || !club || !host.current) return
+    if (!squads || !club || !scales || !host.current) return
     const store = {
       getDocs: () => api.getPlannerDocs(squad),
       putDoc: (key, data) => api.putPlannerDoc(squad, key, data),
@@ -41,9 +47,19 @@ export default function SeasonPlanner() {
       addVersion: v => api.addPlannerVersion(squad, v),
     }
     const mark = (club.club_name || 'Plan').split(/\s+/).map(w => w[0]).join('').slice(0, 5).toUpperCase()
-    const planner = mountPlanner(host.current, { store, squad, mark })
+    const planner = mountPlanner(host.current, {
+      store, squad, mark,
+      scales: { usual: scales.effort_scale || 'effort20', standard: scales.standard || [], custom: scales.custom || [] },
+      navigate: to => nav.current(to),
+      // the Meets tab's meets and the sessions already written, shared with the rest of the app
+      api: {
+        createMeet: data => api.createMeet(data),
+        updateMeet: (id, data) => api.updateMeet(id, data),
+        sessionsBetween: (from, to) => api.getSessions({ date_from: from, date_to: to, limit: 2000 }),
+      },
+    })
     return () => planner.destroy()
-  }, [squads, club, squad])
+  }, [squads, club, scales, squad])
 
   return (
     <div className="min-h-full">

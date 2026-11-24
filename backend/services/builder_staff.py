@@ -381,7 +381,7 @@ def draft(db: DBSession, session: models.Session, current: dict, brief: str, ask
         parts.append(who)
     try:
         from backend.services import season_planner
-        week_plan = season_planner.staff_lines(db, session.squad, session.date)
+        week_plan = season_planner.staff_lines(db, session.squad, session.date, getattr(session, "pool_slot_id", None))
         if week_plan:
             parts.append(week_plan)
     except Exception:  # noqa: BLE001 - the plan is extra context, never a blocker

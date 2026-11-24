@@ -40,6 +40,15 @@ def squads(db: DBSession = Depends(get_db)):
 
 @router.get("/{squad}/docs")
 def docs(squad: str, db: DBSession = Depends(get_db)):
+    # One timetable, one list of meets, one intensity line: the plan is brought into
+    # line with the app as it opens (docs/design/season-planner-weeks.md).
+    from backend.services import season_planner
+    try:
+        season_planner.align(db, squad)
+    except Exception:  # noqa: BLE001 - the plan still opens as saved
+        db.rollback()
+        import logging
+        logging.getLogger(__name__).exception("Could not line the season plan up with the app")
     out = {}
     for k in KEYS:
         d = _doc(db, squad, k)

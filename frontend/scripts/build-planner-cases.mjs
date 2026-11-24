@@ -13,7 +13,7 @@ const dir = join(here, '..', '..', 'shared', 'planner')
 export function plannerModel(){
   const lines = readFileSync(join(here, '..', 'src', 'planner', 'plannerApp.js'), 'utf8').split('\n')
   const start = lines.findIndex(l => l.startsWith('const DAY=864e5'))
-  const end = lines.findIndex(l => l.startsWith('/* ---------- intensity notation'))
+  const end = lines.findIndex(l => l.startsWith('/* ---------- intensity'))
   const body = lines.slice(start, end).join('\n') + '\n' + lines.find(l => l.startsWith('const planned='))
   return new Function('document', body + '\nreturn { S, TL, inval };')({ createElementNS(){ return {} } })
 }
