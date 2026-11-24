@@ -15,6 +15,16 @@ export default function SeasonPlanner() {
   const [club, setClub] = useState(null)
   const squad = params.squad || (squads && squads[0]) || 'Silver 1'
 
+  // The rest of the app stops pinch-zoom (no accidental zoom at poolside); the season
+  // chart is dense, so here a coach can pinch in. The app's setting comes back on leaving.
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="viewport"]')
+    if (!meta) return
+    const before = meta.getAttribute('content')
+    meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes')
+    return () => meta.setAttribute('content', before)
+  }, [])
+
   useEffect(() => {
     api.getPlannerSquads().then(setSquads).catch(() => setSquads([]))
     api.getSessionPresentation().then(setClub).catch(() => setClub({}))

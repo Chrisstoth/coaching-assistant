@@ -84,7 +84,7 @@
 .sp .timeline{display:flex;overflow:hidden}
 .sp .tl-labels{flex:0 0 172px;min-width:0;overflow:hidden;transition:flex-basis .15s;border-right:1px solid var(--line);background:var(--surface);position:relative;z-index:2}
 .sp .tl-scroll{flex:1;overflow-x:auto;overflow-y:hidden;position:relative;min-width:0}
-.sp #tl{display:block;touch-action:pan-x pan-y;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+.sp #tl{display:block;touch-action:pan-x pan-y pinch-zoom;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 .sp #tl.dragging{touch-action:none}
 .sp .lab-head{display:flex;align-items:flex-end;justify-content:space-between;padding:0 10px 6px;border-bottom:1px solid var(--line-2)}
 .sp .lab-cal{padding:6px 10px;border-bottom:1px solid var(--line)}
@@ -361,3 +361,10 @@
 .sp .timeline.slim .lab-lane{padding:24px 4px 8px 4px}
 .sp .timeline.slim .lab-lane::before{left:calc(50% - 4.5px);top:9px}
 .sp .tool .chips label.chip{white-space:normal}
+
+/* Touch screens: the padlock in the top bar, and pinch-zoom (the page allows it here). */
+.sp .lockbtn{display:inline-flex;align-items:center;gap:5px;margin-right:4px;padding:5px 10px 5px 8px;font-size:12px;font-weight:600;color:var(--muted);background:transparent;border:1px solid var(--line)}
+.sp .lockbtn svg{width:16px;height:16px}
+.sp .lockbtn[aria-pressed="true"]{color:#fff;background:var(--accent);border-color:var(--accent)}
+/* iOS zooms in on any box under 16px when it's tapped; now that pinch-zoom is on, keep boxes at 16px. */
+@media (pointer:coarse){.sp input:not([type="checkbox"]):not([type="radio"]),.sp select,.sp textarea{font-size:16px}}

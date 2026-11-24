@@ -81,7 +81,26 @@ export function mountPlanner(root, opts){
     b.innerHTML = icon(d); b.setAttribute('aria-label', label); b.title = label; b.classList.add('icon')
   });
   const hintEl = root.querySelector('#hint')
-  if (hintEl && COARSE) hintEl.textContent = 'Tap a block, a week or a swimmer to open it · to change the plan, press and hold a bar or a block edge, then slide'
+  /* On a touch screen the chart starts locked: a finger scrolling or resting on it can't
+     change anyone's load or move a swimmer. The padlock in the top bar unlocks it; after
+     that a press and hold on a bar or a block edge still comes before any change. */
+  const TOUCH = !!(globalThis.matchMedia && (globalThis.matchMedia('(any-pointer: coarse)').matches || globalThis.matchMedia('(pointer: coarse)').matches))
+  let touchEdit = false
+  const lockBtn = root.ownerDocument.createElement('button')
+  lockBtn.id = 'lockBtn'; lockBtn.className = 'btn lockbtn'; lockBtn.dataset.cmd = 'touchedit'; lockBtn.hidden = !TOUCH
+  root.querySelector('#undoBtn').before(lockBtn)
+  const LOCK_SHUT = 'M16.5 10.5V6.75a4.5 4.5 0 1 0-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H6.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z'
+  const LOCK_OPEN = 'M13.5 10.5V6.75a4.5 4.5 0 1 1 9 0v3.75M3.75 21.75h10.5a2.25 2.25 0 0 0 2.25-2.25v-6.75a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v6.75a2.25 2.25 0 0 0 2.25 2.25Z'
+  const paintLock = () => {
+    lockBtn.innerHTML = icon(touchEdit ? LOCK_OPEN : LOCK_SHUT) + `<span>${touchEdit ? 'Editing' : 'Locked'}</span>`
+    lockBtn.setAttribute('aria-pressed', String(touchEdit))
+    lockBtn.title = touchEdit ? 'Editing the chart by touch. Tap to lock it again.' : "Chart locked, so scrolling can't change it. Tap to edit by dragging."
+    lockBtn.setAttribute('aria-label', lockBtn.title)
+    if (hintEl && COARSE) hintEl.textContent = touchEdit
+      ? 'Editing: press and hold a bar or a block edge, then slide · tap Editing at the top to lock the chart again'
+      : 'Tap a block, a week or a swimmer to open it · pinch to zoom · tap Locked at the top to change the plan by dragging'
+  }
+  paintLock()
 
 'use strict';
 const DAY=864e5, WK=7*DAY, NS='http://www.w3.org/2000/svg';
@@ -404,7 +423,7 @@ function renderAll(){
   if(S.plan&&S.plan.templates&&S.plan.templates.some(t=>!t.f))upgradeTemplates();
   document.querySelectorAll('.tab').forEach(t=>t.setAttribute('aria-selected',String(t.dataset.v===S.view)));
   ['season','squad','calendar','sessions'].forEach(v=>{$('#v-'+v).hidden=S.view!==v;});
-  $('#undoBtn').disabled=!S.undo.length||S.ro;$('#redoBtn').disabled=!S.redo.length||S.ro;
+  $('#undoBtn').disabled=!S.undo.length||S.ro;$('#redoBtn').disabled=!S.redo.length||S.ro;$('#lockBtn').hidden=!TOUCH||S.ro;
   if(!S.plan){renderEmpty();return;}
   inval();
   $('#subtitle').textContent=`${S.plan.settings.season} · ${S.plan.settings.squad} · three macros · ${S.plan.branches.length} groups`;
@@ -634,7 +653,9 @@ tl.addEventListener('pointerdown',e=>{
   if(e.pointerType==='mouse'){if(tapAct(t))return;if(!S.ro&&(a==='bnd'||a==='paint'))e.preventDefault();startDrag(t,e);return;}
   if(press)clearTimeout(press.timer);
   const p={t,id:e.pointerId,x:e.clientX,y:e.clientY,timer:0};press=p;
-  if(!S.ro&&(a==='bnd'||a==='paint'))p.timer=setTimeout(()=>{if(press!==p)return;press=null;
+  if(!S.ro&&(a==='bnd'||a==='paint')&&!touchEdit)p.timer=setTimeout(()=>{if(press!==p)return;press=null;
+    showTip({clientX:p.x,clientY:p.y},"The chart is locked so scrolling can't change it.<br>Tap <b>Locked</b> at the top to edit.");setTimeout(hideTip,2500);},600);
+  else if(!S.ro&&(a==='bnd'||a==='paint'))p.timer=setTimeout(()=>{if(press!==p)return;press=null;
     try{startDrag(t,{pointerId:p.id,clientX:p.x,clientY:p.y});}catch(err){drag=null;return;}
     if(!drag)return;drag.touch=true;tl.classList.add('dragging');if(navigator.vibrate)navigator.vibrate(10);
     showTip({clientX:p.x,clientY:p.y},drag.type==='bnd'?'Slide left or right to move this edge':'Slide up or down to set the load');},420);
@@ -1148,6 +1169,7 @@ document.addEventListener('click',e=>{
   case 'undo':undo();break;case 'redo':redo();break;
   case 'versions':{const p=$('#versPanel');p.hidden=!p.hidden;renderVersions();break;}
   case 'names':S.names=S.names==='short'?'full':'short';renderTimeline();break;
+  case 'touchedit':touchEdit=!touchEdit;paintLock();break;
   case 'zoom':S.colW=Math.max(26,Math.min(70,S.colW+(+ds.d)));renderTimeline();break;
   case 'today':scrollToWeek(weekOf(today()));break;
   case 'closesel':S.sel=null;renderAll();break;
@@ -1277,7 +1299,9 @@ document.addEventListener('change',e=>{
   if(k==='swtime'){const v=pt(t.value);if(Number.isNaN(v)){t.style.borderColor='var(--bad)';t.title='Use 26.31 or 1:02.45';return;}return commit(()=>{const sw=S.roster.swimmers.find(s=>s.id===ds.id);sw.events[+ds.n][ds.f]=v;},'roster');}
 });
 // squad drag & drop
-document.addEventListener('dragstart',e=>{const c=e.target.closest&&e.target.closest('[data-sw]');if(!c||S.ro)return;e.dataTransfer.setData('text/plain',c.dataset.sw);e.dataTransfer.effectAllowed='move';});
+// A finger only drags a swimmer to another group once the chart is unlocked.
+let lastPtr='mouse';document.addEventListener('pointerdown',e=>{lastPtr=e.pointerType;},true);
+document.addEventListener('dragstart',e=>{const c=e.target.closest&&e.target.closest('[data-sw]');if(!c||S.ro)return;if(lastPtr!=='mouse'&&!touchEdit){e.preventDefault();return;}e.dataTransfer.setData('text/plain',c.dataset.sw);e.dataTransfer.effectAllowed='move';});
 document.addEventListener('dragover',e=>{const z=e.target.closest&&e.target.closest('[data-drop]');if(!z)return;e.preventDefault();document.querySelectorAll('.scol.over').forEach(x=>x!==z&&x.classList.remove('over'));z.classList.add('over');});
 document.addEventListener('dragleave',e=>{const z=e.target.closest&&e.target.closest('[data-drop]');if(z&&!z.contains(e.relatedTarget))z.classList.remove('over');});
 document.addEventListener('drop',e=>{const z=e.target.closest&&e.target.closest('[data-drop]');if(!z)return;e.preventDefault();z.classList.remove('over');const id=e.dataTransfer.getData('text/plain');const sw=S.roster&&S.roster.swimmers.find(s=>s.id===id);if(sw&&(planned(sw)?curGroup(sw):'')!==z.dataset.drop)commit(()=>{moveNow(sw,z.dataset.drop);},'roster');});
@@ -1285,6 +1309,8 @@ document.addEventListener('keydown',e=>{const tag=(e.target.tagName||'').toLower
   if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('[role="button"][data-cmd]')){e.preventDefault();e.target.click();return;}
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
   else if(e.key==='Escape'){if(S.sheet){S.sheet='';$('#sheetOverlay').hidden=true;}else{S.sel=null;renderAll();}}});
+// A mouse wheel over a number box being typed in scrolls the page; it doesn't change the number.
+document.addEventListener('wheel',e=>{const a=e.target;if(a&&a.matches&&a.matches('input[type="number"]')&&a===a.ownerDocument.activeElement&&root.contains(a))a.blur();},{passive:true});
 document.addEventListener('toggle',e=>{const d=e.target;if(d&&d.classList&&d.classList.contains('tplcard')){const n=d.dataset.tpl;S.tplOpen=d.open?[...new Set(S.tplOpen.concat(n))]:S.tplOpen.filter(x=>x!==n);}},true);
 $('#sheetOverlay').addEventListener('click',e=>{if(e.target.id==='sheetOverlay'){S.sheet='';e.target.hidden=true;}});
 
