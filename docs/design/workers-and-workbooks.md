@@ -191,7 +191,7 @@ A missing session file means **unknown**, never a rest day, so load figures aren
   - as a **quick summary** when they haven't ("Manchester para camp, 5 days, 9 sessions, mostly aerobic, about 40 km"), marked as an estimate.
 - **Why it matters:** the load counter stays right, and each worker gets the context. The physio sees a heavy, different week. The analyst links it to the next meet. The swimmer manager knows it's part of the swimmer's para pathway. Estimates are always treated as estimates.
 
-**Who a session was for.** Every session, written or imported, says who it was for: the whole squad, a group or sub group, a camp, or one swimmer. Camp sessions (Lanzarote, Cyprus, "CAMP 2026") are linked to the camp and its attendees, never counted for the whole squad. Several sessions can share a date and time. Where the register exists, it confirms who actually swam. Where it doesn't (past seasons), a session counts only for the group or camp it was written for.
+**Who a session was for.** Every session, written or imported, says who it was for: the whole squad, a group or sub group, a camp, or selected swimmers (one or several). Camp sessions (Lanzarote, Cyprus, "CAMP 2026") are linked to the camp and its attendees, never counted for the whole squad. Several sessions can share a date and time. Where the register exists, it confirms who actually swam. Where it doesn't (past seasons), a session counts only for the group or camp it was written for.
 
 ### Records Officer workbook
 

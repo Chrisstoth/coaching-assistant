@@ -128,7 +128,7 @@ def save_session(session_id: int, body: SaveSession, db: DBSession = Depends(get
 
 @router.put("/sessions/{session_id}/audience")
 def set_audience(session_id: int, body: Audience, db: DBSession = Depends(get_db)):
-    """Who the session was for: the whole squad, a group, a camp or one swimmer."""
+    """Who the session was for: the whole squad, a group, a camp or picked swimmers."""
     if body.kind not in ("squad", "group", "camp", "swimmer"):
         raise HTTPException(status_code=422, detail="Choose squad, group, camp or swimmer")
     s = _get(db, session_id)

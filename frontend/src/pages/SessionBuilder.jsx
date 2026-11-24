@@ -22,32 +22,53 @@ function audienceText(payload) {
   return payload.squad ? `${payload.squad} squad` : 'Whole squad'
 }
 
-/* Who the session was for: the whole squad, one of the plan's groups, a camp, or one
-   swimmer (e.g. their own sessions on a national or para camp). The staff only count a
-   session for the swimmers it was for; the register confirms who actually swam it. */
+/* Who the session was for: the whole squad, one of the plan's groups, a camp, or the
+   swimmers picked for it (one on a national or para camp, or the three who still wanted a
+   session when the pool shut). The staff only count a session for the swimmers it was for;
+   the register confirms who actually swam it. */
+// "Ben", "Ben and Sam", "Ben, Sam and Ella", "Ben, Sam and 3 others"
+function swimmersLabel(names) {
+  if (names.length <= 1) return names[0] || ''
+  if (names.length <= 3) return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  return `${names.slice(0, 2).join(', ')} and ${names.length - 2} others`
+}
+
 function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
   const a = payload.audience || { kind: 'squad' }
   const [kind, setKind] = useState(a.kind || 'squad')
   const [label, setLabel] = useState(a.label || '')
   const [groupId, setGroupId] = useState((a.training_group_ids || [])[0] || '')
-  const [swimmerId, setSwimmerId] = useState((a.swimmer_ids || [])[0] || '')
+  const [picked, setPicked] = useState(a.kind === 'swimmer' ? (a.swimmer_ids || []).map(String) : [])
+  const [find, setFind] = useState('')
   const [groups, setGroups] = useState([])
   const [swimmers, setSwimmers] = useState([])
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     api.getPlanGroups(payload.session.date, payload.squad).then(setGroups).catch(() => setGroups([]))
-    api.getSwimmers().then(list => setSwimmers((list || []).filter(s => s.status !== 'left'))).catch(() => setSwimmers([]))
-  }, [payload.session.date, payload.squad])
+    api.getSwimmers().then(list => {
+      const live = (list || []).filter(s => s.status !== 'left')
+      setSwimmers(live)
+      // A name list made from the swimmers isn't the coach's own label: it follows the picks.
+      if (a.kind === 'swimmer' && a.label) {
+        const names = (a.swimmer_ids || []).map(id => (live.find(s => String(s.id) === String(id)) || {}).name).filter(Boolean)
+        if (a.label === swimmersLabel(names) || a.label === names.join(', ')) setLabel('')
+      }
+    }).catch(() => setSwimmers([]))
+  }, [payload.session.date, payload.squad]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const chosen = picked.map(id => swimmers.find(s => String(s.id) === id)).filter(Boolean)
+  const toggle = id => setPicked(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]))
+  const q = find.trim().toLowerCase()
+  const listed = swimmers.filter(s => !q || String(s.name || '').toLowerCase().includes(q))
 
   const save = async () => {
     setBusy(true)
     const group = groups.find(g => String(g.training_group_id) === String(groupId))
-    const swimmer = swimmers.find(s => String(s.id) === String(swimmerId))
     const body = { kind, label: null, training_group_ids: [], swimmer_ids: [] }
     if (kind === 'group' && group) Object.assign(body, { label: group.name, training_group_ids: [group.training_group_id], swimmer_ids: group.swimmer_ids })
     if (kind === 'camp') Object.assign(body, { label: label.trim() || 'Camp' })
-    if (kind === 'swimmer' && swimmer) Object.assign(body, { label: label.trim() || swimmer.name, swimmer_ids: [swimmer.id] })
+    if (kind === 'swimmer' && chosen.length) Object.assign(body, { label: label.trim() || swimmersLabel(chosen.map(s => s.name)), swimmer_ids: chosen.map(s => s.id) })
     try { const res = await api.setBuilderAudience(payload.id, body); onSaved(res.audience) } finally { setBusy(false) }
   }
 
@@ -57,7 +78,7 @@ function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
       <p className="text-pool-400">Who the whole session is for.{hasGroups && <> To say who swims each of its groups, use{' '}
         <button type="button" onClick={onWho} className="text-accent-400 font-semibold">Who swims each group</button>.</>}</p>
       <div className="flex gap-1.5 flex-wrap">
-        {[['squad', 'Whole squad'], ['group', 'One training group'], ['camp', 'A camp'], ['swimmer', 'One swimmer']].map(([k, t]) => (
+        {[['squad', 'Whole squad'], ['group', 'One training group'], ['camp', 'A camp'], ['swimmer', 'Select swimmers']].map(([k, t]) => (
           <button key={k} onClick={() => setKind(k)}
             className={`rounded px-3 py-1.5 font-semibold ${kind === k ? 'bg-accent-600 text-white' : 'bg-pool-700 text-pool-300'}`}>{t}</button>
         ))}
@@ -69,18 +90,34 @@ function AudiencePicker({ payload, hasGroups, onSaved, onClose, onWho }) {
         </select>
       )}
       {kind === 'swimmer' && (
-        <select className={field} value={swimmerId} onChange={e => setSwimmerId(e.target.value)}>
-          <option value="">Choose a swimmer…</option>
-          {swimmers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <div className="space-y-2">
+          <p className="text-pool-300">
+            {chosen.length ? <><b className="text-pool-100">{chosen.length} picked:</b> {chosen.map(s => s.name).join(', ')}</> : 'Tap each swimmer the session is for.'}
+          </p>
+          {swimmers.length > 12 && (
+            <input className={field} value={find} onChange={e => setFind(e.target.value)} placeholder="Find a swimmer…" />
+          )}
+          <div className="flex gap-1.5 flex-wrap max-h-56 overflow-y-auto" role="group" aria-label="Swimmers">
+            {listed.map(s => {
+              const on = picked.includes(String(s.id))
+              return (
+                <button key={s.id} type="button" aria-pressed={on} onClick={() => toggle(String(s.id))}
+                  className={`rounded px-2.5 py-1.5 border ${on ? 'bg-accent-600 border-accent-600 text-white font-semibold' : 'bg-pool-700 border-pool-600 text-pool-300'}`}>
+                  {on ? '✓ ' : ''}{s.name}
+                </button>
+              )
+            })}
+            {!listed.length && <span className="text-pool-500">No swimmer matches “{find}”.</span>}
+          </div>
+        </div>
       )}
       {(kind === 'camp' || kind === 'swimmer') && (
         <input className={field} value={label} onChange={e => setLabel(e.target.value)}
-          placeholder={kind === 'camp' ? 'Camp name, e.g. Lanzarote camp' : 'Optional, e.g. Manchester para camp'} />
+          placeholder={kind === 'camp' ? 'Camp name, e.g. Lanzarote camp' : 'Optional name, e.g. Pool shut extra or Manchester para camp'} />
       )}
       <div className="flex gap-2 justify-end">
         <button onClick={onClose} className="px-3 py-1.5 text-pool-400">Cancel</button>
-        <button onClick={save} disabled={busy || (kind === 'group' && !groupId) || (kind === 'swimmer' && !swimmerId)}
+        <button onClick={save} disabled={busy || (kind === 'group' && !groupId) || (kind === 'swimmer' && !chosen.length)}
           className="px-3 py-1.5 rounded bg-accent-600 text-white font-semibold disabled:opacity-40">Save</button>
       </div>
     </div>

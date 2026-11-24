@@ -140,6 +140,11 @@ class BuilderStaffTests(unittest.TestCase):
             BS.review(db, s, b, ask=self.fake)
             self.assertIn("WHO IT IS FOR: Ben Cole only", self.seen[0])
             self.assertTrue(all("Amy Hart" not in u for u in self.seen), "nobody else in the group is read")
+            # The pool shut and a few still wanted a session: picked swimmers from across the groups.
+            s.audience = {"kind": "swimmer", "label": "Amy Hart and Ben Cole", "swimmer_ids": [ben.id, amy.id]}
+            ids, who, _ = BS.who_for(db, s, b)
+            self.assertEqual(sorted(ids), sorted([amy.id, ben.id]))
+            self.assertIn("WHO IT IS FOR: Amy Hart, Ben Cole only", who)
             s.audience = {"kind": "swimmer", "label": "Una Reid", "swimmer_ids": [uni.id]}
             self.seen = []
             BS.review(db, s, b, ask=self.fake)

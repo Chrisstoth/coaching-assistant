@@ -148,7 +148,7 @@ This already reads your 2022-onward Excel files. It's a head start for the histo
 | Today | In the app |
 |---|---|
 | Its own list of saved sessions | The app's sessions, linked to the calendar slot, the week in the plan and the register |
-| Nothing says who a session was for | Every session says **who it's for**: the whole squad, a group or sub group, a **camp** (linked to the camp in the season plan), or one swimmer. Several sessions can share a date and time (home squad and camp at once). The workers only count a session for the swimmers it was for, and the register confirms who actually swam it. |
+| Nothing says who a session was for | Every session says **who it's for**: the whole squad, a group or sub group, a **camp** (linked to the camp in the season plan), or selected swimmers (one or several). Several sessions can share a date and time (home squad and camp at once). The workers only count a session for the swimmers it was for, and the register confirms who actually swam it. |
 | Week key typed in | Filled in from the season plan, and still editable |
 | Intensity scale chosen per session | Your usual scale everywhere, with a different one allowed for a single session |
 | Groups typed in for each session | **Groups start from the season plan** (e.g. Girls, Boys, sub groups), already holding the swimmers in them. Per session you can rename or re-split them (IM / No.1 stroke) and move individual swimmers. The register shows each swimmer's expected group, and you correct it on the day if someone swam a different set. |
