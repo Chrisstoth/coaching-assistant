@@ -125,10 +125,15 @@ def plan_week(squad: str, db: DBSession = Depends(get_db)):
     w = season_planner.week(db, squad, date.today())
     if not w:
         return None
-    return {"squad": squad, "week_start": w["week_start"],
-            "groups": [{"id": g["id"], "name": g["name"], "code": g.get("code"), "phase": g.get("phase"),
-                        "objective": g.get("objective"), "load": g.get("load"), "camp": g.get("camp")} for g in w["groups"]],
-            "away": sum(1 for s in w["swimmers"].values() if s.get("camp") or s.get("away"))}
+    out = {"squad": squad, "week_start": w["week_start"],
+           "groups": [{"id": g["id"], "name": g["name"], "code": g.get("code"), "phase": g.get("phase"),
+                       "objective": g.get("objective"), "load": g.get("load"), "camp": g.get("camp")} for g in w["groups"]],
+           "away": sum(1 for s in w["swimmers"].values() if s.get("camp") or s.get("away"))}
+    try:                                      # the staff's guide to the week (or micro)
+        out["guide"] = season_planner.guide(db, squad, date.today())
+    except Exception:  # noqa: BLE001 - Today still shows the week without it
+        out["guide"] = None
+    return out
 
 
 @router.get("/{squad}/actuals")

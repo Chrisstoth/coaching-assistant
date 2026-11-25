@@ -418,7 +418,7 @@ function PlanWeekCard({ squads }) {
   if (!weeks.length) return null
   return (
     <section className="space-y-2">
-      {weeks.map(w => (
+      {weeks.map(w => w.guide ? <PlanGuide key={w.squad} squad={w.squad} g={w.guide} /> : (
         <Link key={w.squad} to={`/season/${encodeURIComponent(w.squad)}`} data-tone="teal" className="desk-card block p-4 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-teal-300 uppercase tracking-wider">{w.squad} · this week</p>
@@ -435,6 +435,108 @@ function PlanWeekCard({ squads }) {
         </Link>
       ))}
     </section>
+  )
+}
+
+const shortDate = iso => new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
+const guideKey = (squad, start) => `planGuide:${squad}:${start}`
+function guideHidden(squad, start) {
+  try { return window.localStorage.getItem(guideKey(squad, start)) === '1' } catch { return false }
+}
+
+/* The week (or micro) for the staff: the block, each group's sessions and versions, who isn't with their
+   group, and what was cancelled last time. Each person hides it for themselves until the next one starts. */
+function PlanGuide({ squad, g }) {
+  const [hidden, setHidden] = useState(() => guideHidden(squad, g.week_start))
+  const unit = g.micro ? 'micro' : 'week'
+  const hide = value => {
+    try { value ? window.localStorage.setItem(guideKey(squad, g.week_start), '1') : window.localStorage.removeItem(guideKey(squad, g.week_start)) } catch { /* a private window: hidden until reload */ }
+    setHidden(value)
+  }
+  if (hidden) {
+    return (
+      <button type="button" onClick={() => hide(false)}
+        className="w-full text-left text-sm text-pool-400 border border-dashed border-pool-700 rounded px-4 py-2.5">
+        {squad} · this {unit}'s guide is hidden · <span className="text-accent-400 font-semibold">Show it</span>
+      </button>
+    )
+  }
+  const b = g.block
+  const nw = g.not_with_group || []
+  const last = g.last
+  return (
+    <div data-tone="teal" className="desk-card p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-teal-300 uppercase tracking-wider">{squad} · this {unit}</p>
+          <h2 className="font-semibold text-pool-100 mt-0.5">
+            {b ? `${b.name}, ${unit} ${b.n} of ${b.of}` : `This ${unit}`}
+          </h2>
+          <p className="text-xs text-pool-400">
+            {shortDate(g.week_start)} – {shortDate(g.week_end)}{g.micro ? ` · ${g.days} days` : ''}
+            {b?.next && b.n === b.of ? ` · then ${b.next}` : ''}
+          </p>
+          {b?.objective && <p className="text-xs text-pool-300 mt-1">{b.objective}</p>}
+        </div>
+        <button type="button" onClick={() => hide(true)} title={`Hide until next ${unit}'s guide`}
+          className="shrink-0 text-xs font-semibold text-pool-300 border border-pool-600 rounded px-2.5 py-1" style={{ minHeight: 0 }}>
+          Got it ✕
+        </button>
+      </div>
+
+      {g.groups.map(gr => (
+        <div key={gr.id} className="space-y-1">
+          <p className="text-sm font-semibold text-pool-100">
+            {gr.name} <span className="text-xs font-normal text-pool-400">· {Math.round((gr.load || 0) * 100)}% load</span>
+          </p>
+          {gr.same_as ? (
+            <p className="text-xs text-pool-400">Same sessions as {gr.same_as}</p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-1">
+                {gr.sessions.map(s => (
+                  <span key={s.label + s.date} title={s.notes || undefined}
+                    className={`text-[11px] px-1.5 py-0.5 rounded bg-pool-700 ${s.cancelled ? 'line-through text-pool-500' : 'text-pool-300'}`}>
+                    {s.label} · {s.versions.length ? s.versions.map(v => v.focus).join(' | ') : s.focus}
+                  </span>
+                ))}
+              </div>
+              {gr.sessions.filter(s => s.versions.length && !s.cancelled).map(s => (
+                <p key={'v' + s.label + s.date} className="text-xs text-pool-400">
+                  <span className="text-pool-100 font-semibold">{s.label}:</span>{' '}
+                  {s.versions.map((v, n) => (
+                    <span key={n}>{n > 0 && '; '}{v.focus} for {v.who}{v.names.length ? ` (${v.names.join(', ')})` : ''}</span>
+                  ))}
+                </p>
+              ))}
+            </>
+          )}
+        </div>
+      ))}
+
+      {nw.length > 0 && (
+        <div className="space-y-0.5">
+          <p className="text-xs font-semibold text-amber-300">Not with their group</p>
+          <p className="text-xs text-pool-300">
+            {nw.map((x, n) => <span key={x.name + n}>{n > 0 && ' · '}<span className="text-pool-100 font-semibold">{x.first}</span> {x.why.join(', ')}</span>)}
+          </p>
+        </div>
+      )}
+
+      {last && (last.cancelled.length > 0 || last.extra > 0) && (
+        <p className="text-xs text-pool-400">
+          <span className="font-semibold text-pool-300">Last {unit}:</span>{' '}
+          {last.cancelled.map((c, n) => <span key={c.date + n}>{n > 0 && ', '}{c.label} cancelled{c.reason ? ` (${c.reason})` : ''}</span>)}
+          {last.cancelled.length > 0 && last.extra > 0 && ' · '}
+          {last.extra > 0 && `${last.extra} extra session${last.extra === 1 ? '' : 's'}`}
+        </p>
+      )}
+
+      <div className="flex items-center justify-between gap-2">
+        <Link to={`/season/${encodeURIComponent(squad)}?tab=weeks`} className="text-sm font-semibold text-accent-400">Open the {unit} ›</Link>
+        <span className="text-[11px] text-pool-500">Hidden for you only, until the next {unit}</span>
+      </div>
+    </div>
   )
 }
 

@@ -102,34 +102,40 @@ time, where the coach plans the next few and looks back at the last.
 
 ### 4.2 The week view
 
-* **This micro at the top**, with ◀ ▶ to step back and forward one micro at a time.
-* **One card per group**: its code, its load (read only: the bars set it) and
-  each session with its day and slot, its focus (main, 2nd, optional 3rd) and
-  notes, its versions (4.3), and **Open ›** (the session's PDF) once written or
-  **Write** (the Session Builder) before. A session not yet planned for this
-  micro shows the standard micro, faded; changing it makes it this micro's own.
-* **Far ahead is faded.** The arrows go as far ahead as the season, but more
-  than 3–4 micros ahead is faded: tap a day to fill it in. Nothing needs
-  planning that far ahead.
-* **Last micro**, folded under each group card, with its own ◀ ▶ (it starts on
-  the micro before the one at the top): the sessions actually written and swum
-  (metres, as-swum notes, Open › to the PDF), with what was planned on a small
-  line under each to compare.
-* **Swimmers who differ**, below the groups and clearly apart from them. A
-  swimmer differs only where their season chart bar differs from their group's
-  (a deliberate change by the coach). Following a version of a session (4.3) or
-  coming to fewer sessions (4.4) is not differing. Swimmers with the same
-  difference share one card; editing it changes all of them, and "Split off"
-  makes one different. **+ Swimmer differs** picks the swimmers, what is
-  different (misses sessions, lighter load, changed sessions) and for how long
-  (this micro, or the next N). An injury or illness in the debrief's Right now
-  notes comes up here as a prompt ("Jo: shoulder, no fly until 8 Dec. Plan
-  around it?"), never applied by itself.
-* The weekly timetable and the standard weeks no block uses move to the
-  Calendar tab.
+Simplified with the coach on 2026-11-25: set things up once, then just fill in the week.
+
+* **A strip of every micro** along the top replaces the arrows and the overview:
+  each chip has a bar for its load and block, a dot when someone isn't with their
+  group, and × when a session was cancelled. More than 3 ahead is faded.
+* **What happened** (the record) sits beside the micro (left on a big screen,
+  above on a phone): the whole of the micro before, as it was swum. Sessions
+  written, metres, who came, cancelled sessions struck through, extra sessions,
+  each with its PDF, and the planned focus alongside. It is recessed and dashed,
+  with nothing to type into: it is for looking back (cancellations, the shape of
+  the week). ‹ › go further back.
+* **The plan** (raised, blue along the top): each group's sessions as tappable
+  rows (focus, a short note, versions with how many are on each, written / to
+  write / cancelled). A tap opens the session in a sheet: focus, notes, this
+  micro's versions, last time, Write or Open ›.
+* **Where a group's sessions come from**: a dropdown on each group, "Its own
+  sessions" or "Same as" any other group (`branch.follow`; unset = its parent
+  while on the same block). A group copying another folds to one line until one
+  session is changed just this micro. Loops fall back to the block's usual week.
+* **Weeks roll forward**: a micro nobody changed shows the block's usual week,
+  faded. "Use it for every week of <block>" makes a changed micro the usual one.
+* **Not with their group** (amber along the top): one list, each swimmer once,
+  with the reason (own load, time away, camp, a session changed, Right now
+  injury or illness). A swimmer differs only where their season chart bar
+  differs from their group's; a version of a session or coming to fewer sessions
+  is not differing. Same differences share a line; each line opens to edit.
+* The timetable, **How the season is split** (weeks or micros) and **Session
+  versions** are on the Calendar tab.
 
 ### 4.3 Versions of a session
 
+* **Versions are set once on the timetable** (the Calendar tab, `sessions[].v`)
+  and apply every micro; a block's usual week, or one micro ("Split it just this
+  week"), can still have its own.
 * A session can have **versions, each saying who it is for**: swimmers who did
   certain sessions, swimmers who missed any of them, named swimmers, or everyone
   else (the default). For example, Wednesday AM is recovery for those who did
@@ -172,12 +178,15 @@ time, where the coach plans the next few and looks back at the last.
 
 ### 4.6 The overview
 
-* A grid with micros down the side and every group across the top (sub groups
-  and short-term groups included, so none can go missing from view). Each cell
-  shows the load, a strip of focus colours for its sessions, and a badge when
-  swimmers differ ("2 differ"). Tapping a cell opens that micro in the week view.
+Replaced on 2026-11-25 by the strip of micros at the top of the Weeks tab.
 
 ## 5. What the staff see
+
+**Today** shows the staff a guide to the micro (season_planner.guide, on
+`/season-planner/{squad}/week`): the block and how far through it, each group's
+sessions with their versions and who is on each, who isn't with their group, and
+what was cancelled last time. Each person can hide it ("Got it") until the next
+micro starts; "Open the week" opens the planner on the Weeks tab.
 
 The staff's week lines (season_planner.staff_lines) include the planned focus of
 the session being written, for each group and each version, so the Session

@@ -341,6 +341,10 @@ class Plan:
         ph = (self.p.get("phases") or {}).get(p) or {}
         t = next((x for x in self.p.get("templates") or [] if x.get("name") == ph.get("template")), None) or {}
         f = dict((t.get("f") or {}).get(sid) or {})
+        if not f.get("v"):                    # versions set once on the timetable (the Calendar tab)
+            x = next((x for x in self.p.get("sessions") or [] if x.get("id") == sid), None) or {}
+            if x.get("v"):
+                f["v"] = x["v"]
         return _norm_t({**f, "n": (t.get("s") or {}).get(sid, "")})
 
     def _tpl_at(self, p, i: int, key: str) -> dict:
@@ -363,10 +367,31 @@ class Plan:
         if own:
             return {**_norm_t(own), "own": True}
         w = self.timeline(bid)[i]
-        par = b.get("parent")
-        if par and par in self.branches and self.timeline(par)[i]["p"] == w["p"]:
-            return self.session_target(par, i, sid)
+        src = self.copy_of(bid, i)
+        if src:
+            return self.session_target(src, i, sid)
         return self._tpl_at(w["p"], i, sid)
+
+    def _src(self, bid: str, i: int) -> Optional[str]:
+        """Where a group's sessions come from (the planner's srcOf): the group it was set to copy ("Same as";
+        "" = its own), else its parent while on the same block."""
+        b = self.branches.get(bid) or {}
+        if b.get("follow") is not None:
+            f = b["follow"]
+            return f if f and f in self.branches else None
+        par = b.get("parent")
+        return par if par and par in self.branches and self.timeline(par)[i]["p"] == self.timeline(bid)[i]["p"] else None
+
+    def copy_of(self, bid: str, i: int) -> Optional[str]:
+        """The group a group copies in column i; a loop of groups copying each other copies nobody."""
+        s = self._src(bid, i)
+        seen, x = {bid}, s
+        while x:
+            if x in seen:
+                return None
+            seen.add(x)
+            x = self._src(x, i)
+        return s
 
     def targets(self, template: Optional[str]) -> list:
         """The template's session targets, each focus on the common scale too."""
@@ -741,6 +766,104 @@ def session_versions(db: DBSession, squad: Optional[str], on: date, slot_id: Opt
              "swimmer_ids": [ids[p] for p in g["pids"] if p in ids]} for g in groups]})
     return out
 
+
+
+def guide(db: DBSession, squad: str, on: date) -> Optional[dict]:
+    """The week (or micro) for the staff on Today: the block and how far through it, each group's sessions with
+    their versions and who is on each, who isn't with their group, and what was cancelled last time."""
+    base = load(db, squad)
+    if not base:
+        return None
+    i = base.week_of(on)
+    if not 0 <= i < base.weeks:
+        return None
+    a, z = base.wk_start(i), base.wk_end(i)
+    prev_a = base.wk_start(i - 1) if i > 0 else a
+    data = actuals(db, squad, min(prev_a, a - timedelta(days=21)), z) or {}
+    plan = Plan(base.p, base.roster, plan_actual(data))
+    att = Attendance(plan, data)
+    label = _labeller(db, plan)
+    first = {pid: (sw.get("name") or "").split(" ")[0] for pid, sw in plan.swimmers.items()}
+    full = {pid: sw.get("name") or "" for pid, sw in plan.swimmers.items()}
+    on_plan = {pid: sw for pid, sw in plan.swimmers.items() if sw.get("branch") in plan.branches}
+
+    def say(t):
+        if t.get("camp"):
+            return "Camp"
+        return " / ".join(label(v) for v in (t.get("a"), t.get("b"), t.get("c")) if v is not None) or "No focus set"
+
+    root = next((bid for bid, b in plan.branches.items() if not b.get("parent")), None) or next(iter(plan.branches), None)
+    block = None
+    if root:
+        tl = plan.timeline(root)
+        p = tl[i]["p"]
+        s0, s1 = i, i
+        while s0 > 0 and tl[s0 - 1]["p"] == p:
+            s0 -= 1
+        while s1 < plan.weeks - 1 and tl[s1 + 1]["p"] == p:
+            s1 += 1
+        block = {"name": tl[i]["phase"], "code": tl[i]["code"], "objective": tl[i]["objective"], "n": i - s0 + 1, "of": s1 - s0 + 1,
+                 "next": tl[s1 + 1]["phase"] if s1 + 1 < plan.weeks and tl[s1 + 1]["phase"] != tl[i]["phase"] else None}
+
+    groups = []
+    for bid, b in plan.branches.items():
+        if not plan.runs_in(bid, i):
+            continue
+        w = plan.timeline(bid)[i]
+        src = plan.copy_of(bid, i)
+        own = bool(((b.get("sess") or {}).get(str(i))))
+        g = {"id": bid, "name": b.get("name"), "color": b.get("color"), "load": w["load"], "code": w["code"],
+             "same_as": plan.branches[src].get("name") if src and not own else None, "sessions": []}
+        if not g["same_as"]:
+            members = [pid for pid, sw in on_plan.items() if plan.group_at(sw, i) == bid]
+            for occ in plan.occurrences(i):
+                t = plan.session_target(bid, i, occ["key"])
+                versions = []
+                if t.get("v"):
+                    on_it, rest = [[] for _ in t["v"]], []
+                    for pid in members:
+                        n = version_for(plan, att, t, pid, i, occ)
+                        (rest if n is None else on_it[n]).append(first[pid])
+                    versions = [{"who": version_label(plan, v, first) if v["k"] == "names" else "those who " + version_label(plan, v, first),
+                                 "focus": say(v), "notes": v.get("n") or "", "names": on_it[n]} for n, v in enumerate(t["v"])]
+                    versions.append({"who": "everyone else", "focus": say(t), "notes": t.get("n") or "", "names": rest})
+                g["sessions"].append({"label": occ["x"].get("label") or "", "date": occ["d"].isoformat(), "focus": say(t),
+                                      "notes": t.get("n") or "", "versions": versions,
+                                      "cancelled": (occ["d"].isoformat(), occ["x"].get("slot")) in att.cancelled})
+        groups.append(g)
+
+    out = []                                  # not with their group: their own bar, time away, a camp, a session changed
+    for pid, sw in on_plan.items():
+        tw = plan.timeline(f"sw:{pid}")[i]
+        gid = plan.group_at(sw, i)
+        gw = plan.timeline(gid)[i] if gid else None
+        why = []
+        if tw["camp"]:
+            why.append("camp")
+        if tw["away"]:
+            why += [str(x["type"] or "away").lower() for x in tw["away"]["items"]]
+        if gw and (tw["p"] != gw["p"] or abs((tw["plan_load"] or 0) - (gw["plan_load"] or 0)) > 1e-6):
+            why.append(f"own load {round((tw['plan_load'] or 0) * 100)}%")
+        if ((((plan._pers(pid).get("ownSess") or {}).get(gid) or {}).get(str(i)))):
+            why.append("a session changed")
+        if why:
+            out.append({"name": full[pid], "first": first[pid], "why": why})
+    for n in data.get("right_now") or []:
+        if n.get("kind") in ("injury", "illness") and n.get("swimmer") in on_plan and _iso(n["from"]) <= z and (not n.get("until") or _iso(n["until"]) >= a):
+            out.append({"name": full[n["swimmer"]], "first": first[n["swimmer"]], "why": [f"{n['kind']}: {n['title']}"], "right_now": True})
+
+    last = None
+    if i > 0:
+        pa, pz = plan.wk_start(i - 1), plan.wk_end(i - 1)
+        labels = {x.get("slot"): x.get("label") for x in plan.p.get("sessions") or []}
+        rows = [x for x in data.get("sessions") or [] if pa <= _iso(x["date"]) <= pz]
+        last = {"cancelled": [{"label": labels.get(x["slot"]) or "A session", "date": x["date"], "reason": x["reason"]}
+                              for x in rows if x["status"] == "cancelled"],
+                "extra": sum(1 for x in rows if x["extra"] and x["status"] != "cancelled"),
+                "ran": sum(1 for x in rows if not x["extra"] and x["status"] != "cancelled"),
+                "metres": sum(int(x.get("metres") or 0) for x in rows if x["status"] != "cancelled")}
+    return {"squad": squad, "week": i, "micro": plan.micro, "week_start": a.isoformat(), "week_end": z.isoformat(),
+            "days": (z - a).days + 1, "block": block, "groups": groups, "not_with_group": out, "last": last}
 
 # ---------------------------------------------------------------- after a save
 

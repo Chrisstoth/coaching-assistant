@@ -109,5 +109,45 @@ class PlanVersionTests(unittest.TestCase):
             self.assertEqual([s["slot"] for s in actual["sessions"]], [self.slots[2]], "the session just written")
 
 
+    def test_versions_set_once_on_the_timetable_and_groups_that_copy_another(self):
+        with SessionLocal() as db:
+            doc = db.query(models.PlanDoc).filter_by(squad="Silver 1", key="plan").one()
+            d = dict(doc.data)
+            d["templates"] = [{"name": "Build", "s": {"wedam": "Speed and pace"}, "f": {"wedam": {"a": 21}}}]
+            d["sessions"] = [dict(x) for x in d["sessions"]]
+            d["sessions"][2]["v"] = [{"k": "did", "s": ["monpm", "tuepm"], "a": 10, "n": "Recovery"}]   # the Calendar tab
+            doc.data = d
+            db.commit()
+        self.assertEqual(self.versions(), {"main": [self.ali], "did Mon PM and Tue PM": [self.sam]},
+                         "versions set on the timetable apply every week")
+        with SessionLocal() as db:
+            doc = db.query(models.PlanDoc).filter_by(squad="Silver 1", key="plan").one()
+            d = dict(doc.data)
+            d["branches"] = d["branches"] + [
+                {"id": "dev", "name": "Development", "parent": None, "color": "#888", "weeks": {str(i): {"p": "p1", "load": .5} for i in range(4)},
+                 "sess": {"0": {"wedam": {"a": 5, "n": "Kick"}}}},
+                {"id": "ral", "name": "Arena League", "parent": "core", "color": "#555", "weeks": {str(i): {"p": "p1", "load": .8} for i in range(4)}}]
+            doc.data = d
+            db.commit()
+        with SessionLocal() as db:
+            plan = SP.load(db, "Silver 1")
+            self.assertEqual(plan.session_target("ral", 0, "wedam")["a"], 21, "a sub group copies its parent by default")
+            plan.branches["ral"]["follow"] = "dev"
+            plan._tl.clear()
+            self.assertEqual(plan.session_target("ral", 0, "wedam")["n"], "Kick", '"Same as Development"')
+            plan.branches["ral"]["follow"] = ""
+            self.assertEqual(plan.session_target("ral", 0, "wedam")["n"], "Speed and pace", "its own: the block's usual week")
+            plan.branches["ral"]["follow"], plan.branches["dev"]["follow"] = "dev", "ral"
+            self.assertIsNone(plan.copy_of("ral", 0), "two groups copying each other copy nobody")
+            g = SP.guide(db, "Silver 1", WED)
+        self.assertEqual(g["block"]["name"], "Build")
+        self.assertEqual((g["block"]["n"], g["block"]["of"]), (1, 4))
+        reg = next(x for x in g["groups"] if x["name"] == "Regionals")
+        wed = next(x for x in reg["sessions"] if x["label"] == "Wed AM")
+        self.assertEqual([(v["who"], v["names"]) for v in wed["versions"]],
+                         [("those who did Mon PM and Tue PM", ["Sam"]), ("everyone else", ["Ali"])])
+        self.assertEqual(next(x for x in g["groups"] if x["name"] == "Arena League")["same_as"], "Regionals")
+
+
 if __name__ == "__main__":
     unittest.main()

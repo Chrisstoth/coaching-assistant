@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import HelpLink from '../components/HelpLink'
 import { api } from '../api'
 import { mountPlanner } from '../planner/plannerApp'
@@ -10,6 +10,8 @@ import '../planner/planner.css'
    counter read the same plan. */
 export default function SeasonPlanner() {
   const params = useParams()
+  const [search] = useSearchParams()
+  const startView = search.get('tab') === 'weeks' ? 'sessions' : undefined
   const navigate = useNavigate()
   const nav = useRef(navigate)
   nav.current = navigate
@@ -48,7 +50,7 @@ export default function SeasonPlanner() {
     }
     const mark = (club.club_name || 'Plan').split(/\s+/).map(w => w[0]).join('').slice(0, 5).toUpperCase()
     const planner = mountPlanner(host.current, {
-      store, squad, mark,
+      store, squad, mark, view: startView,
       scales: { usual: scales.effort_scale || 'effort20', standard: scales.standard || [], custom: scales.custom || [] },
       navigate: to => nav.current(to),
       // a session written for a week opens as its PDF, in a window of its own

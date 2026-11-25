@@ -104,7 +104,8 @@ export function mountPlanner(root, opts){
 
 'use strict';
 const DAY=864e5, WK=7*DAY, NS='http://www.w3.org/2000/svg';
-const S={plan:null,roster:null,view:'season',sel:null,colW:46,names:typeof root!=='undefined'&&root.clientWidth>=760?'full':'short',ro:false,undo:[],redo:[],focus:'',sheet:'',hidden:[],collapsed:[],expanded:[],expandAll:false,adding:false,wwLine:'',wwDiff:false,tplOpen:[],loaded:{plan:false,roster:false},actual:null,wkI:null,wkMode:'week',ghost:{},ghostOpen:[],farOpen:[],split:[],rnSkip:[],dpend:[],showSame:[],addDiff:false,microTools:false,ovPast:false};
+const S={plan:null,roster:null,view:'season',sel:null,colW:46,names:typeof root!=='undefined'&&root.clientWidth>=760?'full':'short',ro:false,undo:[],redo:[],focus:'',sheet:'',hidden:[],collapsed:[],expanded:[],expandAll:false,adding:false,wwLine:'',wwDiff:false,tplOpen:[],loaded:{plan:false,roster:false},actual:null,wkI:null,lwBack:1,wvOpen:null,dOpen:[],split:[],rnSkip:[],dpend:[],showSame:[],addDiff:false};
+if(typeof opts!=='undefined'&&opts&&opts.view)S.view=opts.view;                       /* e.g. the Weeks tab, from Today's guide */
 let db=null, planRef=null, rosterRef=null, verCol=null, downloads=null;
 const $=s=>document.querySelector(s);
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -356,14 +357,20 @@ const fNum=v=>v!=null&&v!==''?+v:null;
 const normV=v=>({k:['did','missed','names'].includes(v&&v.k)?v.k:'missed',s:(v&&v.s||[]).map(String),ids:(v&&v.ids||[]).map(String),a:fNum(v&&v.a),b:fNum(v&&v.b),c:fNum(v&&v.c),n:(v&&v.n)||''});
 const normT=o=>{const t={a:fNum(o&&o.a),b:fNum(o&&o.b),c:fNum(o&&o.c),n:(o&&o.n)||''};if(o&&Array.isArray(o.v)&&o.v.length)t.v=o.v.map(normV);return t;};
 const sKey=t=>t.camp?'camp:'+t.camp:[t.a,t.b,t.c,String(t.n||'').trim()].join('|')+(t.v&&t.v.length?'|'+JSON.stringify(t.v):'');
-function tplTarget(p,sid){const ph=S.plan.phases[p];const t=ph&&tplOf(ph.template);const f=t&&t.f&&t.f[sid];return normT(Object.assign({},f,{n:t&&t.s&&t.s[sid]||''},f&&f.v?{v:clone(f.v)}:{}));}
+function tplTarget(p,sid){const ph=S.plan.phases[p];const t=ph&&tplOf(ph.template);const f=t&&t.f&&t.f[sid];const x=S.plan.sessions.find(y=>y.id===sid);
+  const v=f&&f.v&&f.v.length?f.v:x&&x.v&&x.v.length?x.v:null;return normT(Object.assign({},f,{n:t&&t.s&&t.s[sid]||''},v?{v:clone(v)}:{}));}
 /* the standard target for a session in column i (its key there) */
 function tplAt(p,i,key){const o=occOf(i,key);return o&&o.tpl?tplTarget(p,o.tpl.id):normT({});}
 function sessOwn(bid,i,sid){const b=BR(bid);if(!b)return null;if(b.kind==='swimmer'){const g=groupAt(b.sw,i);return ((((persOf(b.sw.id).ownSess||{})[g]||{})[i])||{})[sid]||null;}return (((b.sess||{})[i])||{})[sid]||null;}
 function sessBase(bid,i,sid){const b=BR(bid);const w=TL(bid)[i];
   if(b.kind==='swimmer'){if(w.camp){const ev=S.plan.events.find(e=>e.id===w.camp)||{};return {camp:w.camp,a:null,b:null,c:null,n:'Camp: '+(ev.name||'')};}
     const g=groupAt(b.sw,i);return TL(g)[i].p===w.p?sessT(g,i,sid):tplAt(w.p,i,sid);}
-  return b.parent&&TL(b.parent)[i].p===w.p?sessT(b.parent,i,sid):tplAt(w.p,i,sid);}
+  const src=copyOf(b,i);return src?sessT(src,i,sid):tplAt(w.p,i,sid);}
+/* where a group's sessions come from: the group it was set to copy ("Same as", b.follow; '' = its own), else its parent
+   while on the same block. A loop of groups copying each other falls back to the block's usual week. */
+function srcOf(b,i){if(!b||b.kind==='swimmer')return null;if(b.follow!=null)return b.follow&&BR(b.follow)&&BR(b.follow).kind!=='swimmer'?b.follow:null;
+  return b.parent&&BR(b.parent)&&TL(b.parent)[i].p===TL(b.id)[i].p?b.parent:null;}
+function copyOf(b,i){const s=srcOf(b,i);const seen=new Set([b.id]);let x=s;while(x){if(seen.has(x))return null;seen.add(x);x=srcOf(BR(x),i);}return s;}
 function sessT(bid,i,sid){const k=bid+'|'+i+'|'+sid;if(sMemo.has(k))return sMemo.get(k);const o=sessOwn(bid,i,sid);const r=o?Object.assign(normT(o),{own:true}):sessBase(bid,i,sid);sMemo.set(k,r);return r;}
 function sessStore(bid,i,make){const b=BR(bid);if(b.kind==='swimmer'){const g=groupAt(b.sw,i);if(make){S.plan.personal=S.plan.personal||{};const P=S.plan.personal[b.sw.id]=S.plan.personal[b.sw.id]||{};P.ownSess=P.ownSess||{};return P.ownSess[g]=P.ownSess[g]||{};}return (persOf(b.sw.id).ownSess||{})[g]||null;}
   if(make)b.sess=b.sess||{};return b.sess||null;}
@@ -782,7 +789,7 @@ function detailRun(d,s){
       <div class="row"><button class="btn sm edit" data-cmd="merge" data-bid="${esc(b.id)}" data-start="${r.start}" data-d="-1" ${prev?'':'disabled'}>Merge into previous</button><button class="btn sm edit" data-cmd="merge" data-bid="${esc(b.id)}" data-start="${r.start}" data-d="1" ${next?'':'disabled'}>Merge into next</button></div>
       ${b.parent?`<div class="row"><button class="btn sm edit" data-cmd="resetrange" data-bid="${esc(b.id)}" data-a="${r.start}" data-b="${r.end}">Reset these weeks to ${esc(BR(b.parent).name)}</button></div>`:''}</div>
   </div>
-  <details class="std-run" data-p="${esc(r.k)}"${(S.stdOpen||[]).includes(r.k)?' open':''}><summary><b>Standard ${isMicro()?'sessions':'week'} for this block</b> <span class="small muted">every ${isMicro()?'micro':'week'} starts from it</span></summary>${stdWeek(r.k)}</details>
+  <details class="std-run" data-p="${esc(r.k)}"${(S.stdOpen||[]).includes(r.k)?' open':''}><summary><b>Usual ${isMicro()?'sessions':'week'} for this block</b> <span class="small muted">every ${isMicro()?'micro':'week'} starts from it</span></summary>${stdWeek(r.k)}</details>
   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Code</th><th>${isMicro()?'Micro':'Week'}</th><th>Load %</th><th>Volume</th><th>Meets</th><th>Notes</th></tr></thead><tbody>
   ${arr.slice(r.start,r.end+1).map(w=>`<tr><td class="mono">${esc(w.code)}</td><td>${range(wkS(w.i),wkE(w.i))}</td><td class="num"><input class="inp t edit" type="number" min="0" max="110" step="5" data-k="wkload" data-bid="${esc(b.id)}" data-i="${w.i}" value="${Math.round(w.plan*100)}" style="width:66px"></td><td class="num">${(w.load*volOf(w.i)/1000).toFixed(1)} km</td><td>${meetsInWeek(w.i).map(c=>esc(c.short||c.name)).join(', ')}</td><td class="small muted">${esc((S.plan.notes||{})[w.i]||'')}</td></tr>`).join('')}
   </tbody></table></div>`;
@@ -960,7 +967,7 @@ function renderCalendar(){
   <div class="card detail"><div class="d-head"><div><span class="label">Holidays · exams · camp</span><h2>Other dates</h2></div><button class="btn primary sm edit" data-cmd="addev">Add date</button></div>
   <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Name</th><th>Type</th><th>Starts</th><th>Ends</th><th></th></tr></thead><tbody>
   ${[...S.plan.events].sort((a,b)=>a.start.localeCompare(b.start)).map(e=>`<tr><td><input class="inp" style="min-width:200px" data-k="ev" data-id="${esc(e.id)}" data-f="name" value="${esc(e.name)}"></td><td><select class="inp" data-k="ev" data-id="${esc(e.id)}" data-f="type">${['Holiday','Bank holiday','Exams','Camp'].map(t=>opt(t,e.type)).join('')}</select></td>
-    <td><input class="inp" type="date" data-k="ev" data-id="${esc(e.id)}" data-f="start" value="${esc(e.start)}"></td><td><input class="inp" type="date" data-k="ev" data-id="${esc(e.id)}" data-f="end" value="${esc(e.end)}"></td><td style="white-space:nowrap">${e.type==='Camp'?`<button class="btn sm" data-cmd="selevent" data-id="${esc(e.id)}">Who's going (${((e.camp||{}).attendees||[]).length})</button> `:''}<button class="btn sm danger edit" data-cmd="delev" data-id="${esc(e.id)}">Delete</button></td></tr>`).join('')}</tbody></table></div></div>`+timetableCard()+unusedCard();
+    <td><input class="inp" type="date" data-k="ev" data-id="${esc(e.id)}" data-f="start" value="${esc(e.start)}"></td><td><input class="inp" type="date" data-k="ev" data-id="${esc(e.id)}" data-f="end" value="${esc(e.end)}"></td><td style="white-space:nowrap">${e.type==='Camp'?`<button class="btn sm" data-cmd="selevent" data-id="${esc(e.id)}">Who's going (${((e.camp||{}).attendees||[]).length})</button> `:''}<button class="btn sm danger edit" data-cmd="delev" data-id="${esc(e.id)}">Delete</button></td></tr>`).join('')}</tbody></table></div></div>`+microCard()+timetableCard()+ttVersCard()+unusedCard();
 }
 /* ---------- the Weeks tab: one week (or micro) at a time (docs/design/season-planner-weeks.md, 4.2–4.6) ----------
    The bars on the Season tab set each column's timing and load. Here the coach plans what each session is for, a few
@@ -1013,8 +1020,8 @@ const blockCode=w=>w.macro==='–'?'Off':w.macro+'.'+w.meso;
 function stdWeek(pid){const ph=S.plan.phases[pid]||{};const k=S.plan.templates.findIndex(t=>t.name===ph.template);const t=S.plan.templates[k];const ses=tSorted();
   const others=[...new Set(Object.keys(S.plan.phases).filter(p=>p!==pid&&S.plan.phases[p].template===ph.template).map(p=>S.plan.phases[p].name))];
   const pick=`<select class="inp" style="width:auto" data-k="ph" data-p="${esc(pid)}" data-f="template" aria-label="Standard week for this block">${S.plan.templates.map(x=>opt(x.name,ph.template)).join('')}</select>`;
-  if(!t)return `<div class="std-top"><label class="small muted">Standard week ${pick}</label></div>`;const f=t.f||{};
-  return `<div class="std-top"><label class="small muted">Standard week ${pick}</label><button class="btn sm edit" data-cmd="tplcopy" data-p="${esc(pid)}">${others.length?'Copy for this block only':'Copy as a new standard week'}</button></div>
+  if(!t)return `<div class="std-top"><label class="small muted">Usual week ${pick}</label></div>`;const f=t.f||{};
+  return `<div class="std-top"><label class="small muted">Usual week ${pick}</label><button class="btn sm edit" data-cmd="tplcopy" data-p="${esc(pid)}">${others.length?'Copy for this block only':'Copy as a new standard week'}</button></div>
     ${others.length?`<p class="small near" style="margin:4px 0 0">Also used by ${esc(others.join(' · '))}: a change here changes those blocks too.</p>`:''}
     ${isMicro()?'<p class="small muted" style="margin:4px 0 0">In micros, a micro\'s 1st session takes the 1st session here, its 2nd the 2nd, and so on.</p>':''}
     <div class="tpl-grid">${ses.map(x=>{const o=f[x.id]||{};const at=`data-k="tf" data-n="${k}" data-s="${esc(x.id)}"`;return `<div class="stile"><div class="st-h"><b>${esc(x.label)}</b><span class="small muted">${esc(x.pool)}${x.role?' · '+esc(x.role):''}</span></div>
@@ -1024,7 +1031,7 @@ function stdWeek(pid){const ph=S.plan.phases[pid]||{};const k=S.plan.templates.f
     <div class="tpl-head"><label>Name<input class="inp" data-k="tpl" data-n="${k}" data-f="name" value="${esc(t.name)}"></label>
       ${COMPS.map(c=>`<label><span style="color:var(--${c.k})">${esc(c.short)} ×</span><input class="inp t" type="number" step="0.05" min="0" data-k="tplw" data-n="${k}" data-f="${c.k}" value="${wts(t.name)[c.k]}"></label>`).join('')}
       <label class="wide">Note<textarea class="inp" data-k="tpl" data-n="${k}" data-f="note">${esc(t.note||'')}</textarea></label></div>
-    <p class="small muted">The × numbers set how aerobic, anaerobic endurance and speed load follow the overall load in this block. To give a session versions, add them on the Weeks tab and tap "Make this the standard".</p>`;}
+    <p class="small muted">The × numbers set how aerobic, anaerobic endurance and speed load follow the overall load in this block. Versions for every week are set under Session versions on the Calendar tab.</p>`;}
 function timetableCard(){const ses=tSorted();const pv=peakVol();const ret=(S.plan.sessionsRetired||[]).length;
   return `<div class="card detail"><div class="d-head"><div><span class="label">Weekly timetable</span><h2>${ses.reduce((s,x)=>s+(+x.hours||0),0).toFixed(2)} h · 100% load = ${(pv/1000).toFixed(1)} km</h2></div>${opts.navigate?'<button class="btn sm" data-cmd="goto" data-to="/schedule">Edit in Schedule ›</button>':''}</div>
   <p class="small muted" style="margin-top:0">Days, times and pools come from the Schedule page: the same timetable the Today tab, the register and the Session Builder use. Here you set the name used on the plan, the metres per hour and what each session is for.${ret?` ${ret} session${ret>1?'s are':' is'} set aside because ${ret>1?'their slots are':'its slot is'} off the timetable; ${ret>1?'they come':'it comes'} back with ${ret>1?'their':'its'} plan if the slot does.`:''}</p>
@@ -1035,57 +1042,103 @@ function timetableCard(){const ses=tSorted();const pv=peakVol();const ret=(S.pla
     <td><input class="inp t" type="number" step="100" min="0" ${at} data-f="mph" value="${x.mph}"></td><td><input class="inp" style="min-width:200px" ${at} data-f="role" value="${esc(x.role||'')}"></td><td class="num">${Math.round(x.hours*x.mph).toLocaleString()} m</td></tr>`;}).join('')}</tbody></table></div>
   <div class="form" style="margin-top:8px"><label>Season starts (Monday of 0.1.1)<input class="inp" type="date" data-k="set" data-f="start" value="${esc(S.plan.settings.start)}"></label><label>"Near" QT threshold (%)<input class="inp" type="number" step="0.5" min="0" data-k="set" data-f="near" value="${(S.plan.settings.near*100).toFixed(1)}"></label></div></div>`;}
 function unusedCard(){const used=new Set(Object.values(S.plan.phases).map(p=>p.template));const un=S.plan.templates.map((t,k)=>({t,k})).filter(o=>!used.has(o.t.name));if(!un.length)return '';
-  return `<div class="card detail"><div class="d-head"><div><span class="label">Standard weeks</span><h2>Not used by any block</h2></div></div><p class="small muted" style="margin-top:0">Pick one for a block from the block on the Season tab, or delete it.</p>
+  return `<div class="card detail"><div class="d-head"><div><span class="label">Usual weeks</span><h2>Not used by any block</h2></div></div><p class="small muted" style="margin-top:0">Pick one for a block from the block on the Season tab, or delete it.</p>
   <div class="tbl-wrap"><table class="tbl"><tbody>${un.map(o=>`<tr><td><b>${esc(o.t.name)}</b></td><td><span class="tpl-mini">${tSorted().map(x=>`<span title="${esc(x.label)}">${fChip(((o.t.f||{})[x.id]||{}).a,'sm')||'<span class="fchip sm empty">–</span>'}</span>`).join('')}</span></td><td><button class="btn sm danger edit" data-cmd="deltpl" data-n="${o.k}">Delete</button></td></tr>`).join('')}</tbody></table></div></div>`;}
 
-/* ---- the week view ---- */
+/* ---- the week view: a strip of every week (or micro) to jump between; last week as it happened (the record, to look
+   at); this week as the plan (to change), group by group; then the swimmers not with their group ---- */
 const wkCur=()=>Math.max(0,Math.min(NW()-1,S.wkI==null?nowWk():S.wkI));
 const isFar=i=>i>nowWk()+AHEAD;
-function relWord(i){const nw=nowWk(),u=isMicro()?'micro':'week',d=i-nw;if(!d)return 'This '+u;if(d===1)return 'Next '+u;if(d===-1)return 'Last '+u;
+const uW=()=>isMicro()?'micro':'week';
+function relWord(i){const nw=nowWk(),u=uW(),d=i-nw;if(!d)return 'This '+u;if(d===1)return 'Next '+u;if(d===-1)return 'Last '+u;
   return d>0?`${d} ${u}s ahead`:`${-d} ${u}s ago`;}
 const colName=i=>isMicro()?`Micro ${i+1} · ${mLen(i)} days`:`Week ${i+1} of ${NW()}`;
-function focusRow(t,at,locked){if(locked)return `<div class="wv-chips">${tgtHTML(t)}</div>`;
-  return `<div class="sf"><span>Main</span>${focusSel(t.a,at+' data-f="a"')}<span>2nd</span>${focusSel(t.b,at+' data-f="b"')}<span>3rd</span>${focusSel(t.c,at+' data-f="c"','none')}</div>`;}
-/* one session of a group's week: its focus, notes and versions */
-function sessRow(b,i,o,locked){const t=sessT(b.id,i,o.key);const A=S.actual;const k=toISO(o.d)+'|'+o.x.slot;const cx=A&&o.x.slot&&A.cancelled.has(k);
-  const at=`data-k="sf" data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}"`;const fk=b.id+'|'+i+'|'+o.key;const lk=locked&&!S.farOpen.includes(fk);
+const trimTo=(s,n)=>s&&s.length>n?s.slice(0,n-1)+'…':(s||'');
+const cxAt=o=>{const A=S.actual;return !!(A&&o.x.slot&&A.cancelled.has(toISO(o.d)+'|'+o.x.slot));};
+function focusRow(t,at){return `<div class="sf"><span>Main</span>${focusSel(t.a,at+' data-f="a"')}<span>2nd</span>${focusSel(t.b,at+' data-f="b"')}<span>3rd</span>${focusSel(t.c,at+' data-f="c"','none')}</div>`;}
+function leadsTo(from,to,i){const seen=new Set();let x=from;while(x&&!seen.has(x)){if(x===to)return true;seen.add(x);x=srcOf(BR(x),i);}return false;}
+/* the block a column is in, and how far through it */
+function blockLine(bid,i){const w=TL(bid)[i];let a=i,z=i;while(a>0&&TL(bid)[a-1].p===w.p)a--;while(z<NW()-1&&TL(bid)[z+1].p===w.p)z++;
+  return `${esc(w.code)} · ${esc(w.ph.name||'')}, ${uW()} ${i-a+1} of ${z-a+1}`;}
+
+/* the strip: every column, its load and block as a bar; a dot when someone isn't with their group, × when a session was cancelled */
+function stripHTML(i){const nw=nowWk(),root=lanes()[0];
+  return `<div class="wv-strip" role="list">${Array.from({length:NW()},(_,j)=>{const w=root?TL(root.id)[j]:null;const cx=occs(j).filter(cxAt).length;const df=Math.abs(j-nw)<=AHEAD+1?diffCards(j).length:0;
+    const tip=`${fdow(wkS(j))} – ${fdow(wkE(j))}${w?' · '+w.code+' · '+pct(w.load)+' load':''}${cx?` · ${cx} cancelled`:''}${df?` · ${df} not with their group`:''}`;
+    return `<button class="wv-chip${j===nw?' now':''}${isFar(j)?' far':''}" role="listitem" data-cmd="wkgo" data-i="${j}" aria-pressed="${j===i}" title="${esc(tip)}">${cx?'<span class="wv-x">×</span>':df?'<span class="wv-dot"></span>':''}
+      <b>${j===nw?'This '+uW():(isMicro()?'M':'Wk ')+(j+1)}</b><span>${fd(wkS(j))}</span><i style="background:${MCOL[w?w.macro:'–']||MCOL['–']};width:${Math.max(8,Math.round(Math.min(1,w?w.load:0)*100))}%"></i></button>`;}).join('')}</div>
+    <p class="small muted wv-key">Bar: load and block · <span class="wv-dot in"></span> someone not with their group · <span class="wv-x in">×</span> a session was cancelled · faded: far ahead, nothing needed yet</p>`;}
+
+/* the record: a whole week as it happened, read-only; ‹ › go further back */
+function recordHTML(i){const back=Math.max(1,S.lwBack||1),j=i-back;
+  const head=(sub)=>`<div class="wv-ph"><div><span class="label">What happened</span><h2>${j>=0?esc(back===1?(i===nowWk()?'Last '+uW():'The '+uW()+' before'):back+' '+uW()+'s before'):'Before the season'}</h2><div class="small muted">${sub}</div></div>
+    <div class="wv-nav"><button class="btn sm" data-cmd="lwstep" data-d="1" ${j>0?'':'disabled'} aria-label="Further back">‹</button><button class="btn sm" data-cmd="lwstep" data-d="-1" ${back>1?'':'disabled'} aria-label="Nearer">›</button></div></div>`;
+  if(j<0)return `<section class="card wv-rec">${head('Nothing before this '+uW()+'.')}</section>`;
+  const A=S.actual,os=occs(j);const cols=lanes().filter(b=>runsIn(b,j)&&!copyOf(b,j));
+  const also=b=>lanes().filter(o=>o.id!==b.id&&runsIn(o,j)&&copyOf(o,j)&&(()=>{let x=o.id;while(copyOf(BR(x),j))x=copyOf(BR(x),j);return x===b.id;})());
+  let cxN=0,m=0,ran=0;
+  const rows=os.map(o=>{const s=actualAt(o),cx=cxAt(o);if(cx)cxN++;else if(s){ran++;m+=+s.metres||0;}
+    const what=cx?`<b>Cancelled</b><small>${esc(A.cancelled.get(toISO(o.d)+'|'+o.x.slot)||'')}</small>`:s?`<b>${esc(s.title||'Session')}</b><small>${[s.metres?(+s.metres).toLocaleString()+' m':'',s.attended?s.attended.length+' came':''].filter(Boolean).join(' · ')}</small>`:`<span class="muted">${o.d<today()?'Nothing written':'Not yet'}</span>`;
+    return `<tr class="${cx?'cx':''}"><td class="day">${esc(o.x.label)}<small>${esc(fd(o.d))}</small></td><td class="what">${what}${s&&!cx?` <button class="slink done" data-cmd="pdf" data-id="${s.id}" title="Open the session as a PDF">PDF</button>`:''}</td>
+      <td class="plan">${cols.map(b=>`<span title="${esc(b.name)}">${tgtHTML(sessT(b.id,j,o.key))}</span>`).join('')}</td></tr>`;}).join('');
+  const extra=(A?A.extra:[]).filter(x=>iso(x.date)>=wkS(j)&&iso(x.date)<=wkE(j));extra.forEach(x=>{m+=+x.metres||0;});
+  const ex=extra.map(x=>`<tr><td class="day">${esc(fdow(iso(x.date)).slice(0,3))}<small>${esc(fd(iso(x.date)))}</small></td><td class="what"><b>${esc(x.title||'Extra session')}</b> <span class="tag ex">extra</span><small>${esc(x.picked.map(firstName).join(', '))}</small> <button class="slink done" data-cmd="pdf" data-id="${x.id}">PDF</button></td><td></td></tr>`).join('');
+  const sum=`${fd(wkS(j))} – ${fd(wkE(j))} · ${ran} of ${os.length} sessions ran${cxN?` · <span class="bad">${cxN} cancelled</span>`:''}${extra.length?` · ${extra.length} extra`:''}${m?` · ${(m/1000).toFixed(1)} km written`:''}`;
+  return `<section class="card wv-rec">${head(sum)}<p class="small muted wv-aim">From the registers and the sessions written. To look back at, not to change.</p>
+    <div class="tbl-wrap"><table class="tbl wv-rt"><thead><tr><th></th><th>Swum</th><th>Planned${cols.length>1?': '+cols.map(b=>esc(b.name)+(also(b).length?' + '+also(b).map(o=>esc(o.name)).join(' + '):'')).join(' · '):''}</th></tr></thead><tbody>${rows}${ex}</tbody></table></div></section>`;}
+
+/* the plan: each group's sessions, a tap opens one to change */
+function followSel(b,i){const ls=lanes().filter(o=>o.id!==b.id&&!leadsTo(o.id,b.id,i));const cur=srcOf(b,i)||'';
+  return `<select class="inp wv-fol edit" data-k="follow" data-bid="${esc(b.id)}" aria-label="Where ${esc(b.name)}'s sessions come from"><option value=""${cur===''?' selected':''}>Its own sessions</option>${ls.map(o=>opt(o.id,cur,'Same as '+o.name)).join('')}</select>`;}
+function rowHTML(b,i,o){const t=sessT(b.id,i,o.key),cx=cxAt(o),s=actualAt(o);const vs=t.v||[];let body;
+  if(vs.length&&!t.camp){const mem=membersAt(b.id,i);const on=vs.map(()=>0);let rest=0;mem.forEach(sw=>{const n=versionFor(t,sw.id,i,o);if(n==null)rest++;else on[n]++;});
+    body=`<span class="wv-split">${vs.map((v,n)=>`<span>${tgtHTML(normT(v))}<em>${on[n]}</em><small>${esc(vLabel(normV(v)))}</small></span>`).join('')}<span>${tgtHTML(t)}<em>${rest}</em><small>everyone else</small></span></span>`;}
+  else body=`${tgtHTML(t)}${t.n?`<span class="wv-note">${esc(trimTo(t.n,90))}</span>`:''}`;
+  const st=cx?'<span class="wv-st bad">cancelled</span>':s?`<span class="wv-st ok">${o.d<today()?'ran':'written'} ✓</span>`:o.d<today()?'<span class="wv-st">not written</span>':isFar(i)?'':'<span class="wv-st">to write</span>';
+  return `<button class="wv-row${t.own?' own':''}${!t.own&&i>nowWk()?' from':''}${cx?' cx':''}" data-cmd="wvopen" data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}">
+    <span class="wv-when">${esc(o.x.label)}<small>${esc(fd(o.d))}</small></span><span class="wv-what">${body}</span>${st}</button>`;}
+function groupHTML(b,i){const w=TL(b.id)[i],mem=membersAt(b.id,i),src=copyOf(b,i);const same=src&&occs(i).every(o=>!sessOwn(b.id,i,o.key));
+  const open=!same||S.showSame.includes(b.id+'|'+i);const users=lanes().filter(o=>o.id!==b.id&&runsIn(o,i)&&copyOf(o,i)===b.id);
+  const own=occs(i).some(o=>sessOwn(b.id,i,o.key));
+  return `<div class="wv-grp" style="--b:${esc(b.color)}"><div class="wv-gh"><div><h3>${esc(b.name)}</h3>
+      <div class="small muted">${pct(w.load)} load${w.cut?` (planned ${pct(w.plan)})`:''} · ${mem.length} swimmer${mem.length===1?'':'s'}${users.length?' · also for '+esc(users.map(o=>o.name).join(', ')):''}</div></div>${followSel(b,i)}</div>
+    ${w.camp?`<p class="small near">Camp this ${uW()}.</p>`:''}
+    ${open?`<div class="wv-rows">${occs(i).map(o=>rowHTML(b,i,o)).join('')||'<p class="small muted">No sessions on the timetable in these dates.</p>'}</div>`:
+      `<p class="small muted wv-same">Same sessions as ${esc(BR(src).name)} this ${uW()}. <button class="linkbtn" data-cmd="showsame" data-k="${esc(b.id+'|'+i)}">Change one just this ${uW()}</button></p>`}
+    ${own&&i>=nowWk()?`<div class="wv-keep"><span class="small muted">Changed this ${uW()}. Happy with its shape?</span><button class="linkbtn edit" data-cmd="keepblock" data-bid="${esc(b.id)}" data-i="${i}" title="Every ${uW()} of the block starts from it">Use it for every ${uW()} of ${esc(w.ph.name||'this block')}</button></div>`:''}</div>`;}
+function planHTML(i){const root=lanes()[0];const ms=meetsInWeek(i),ev=eventsInWeek(i);
+  return `<section class="card wv-plan"><div class="wv-ph"><div><span class="label">The plan · ${esc(relWord(i))}</span><h2>${fdow(wkS(i))} – ${fdow(wkE(i))}</h2>
+      <div class="small muted">${isMicro()?esc(colName(i))+' · ':''}${root?blockLine(root.id,i):''}</div></div>${i!==nowWk()?`<button class="btn sm" data-cmd="wknow">Back to this ${uW()}</button>`:''}</div>
+    <p class="small muted wv-aim">${isFar(i)?`A while ahead: it follows each block's usual ${uW()} until you change something. Nothing needs planning yet.`:i<nowWk()?'What was planned. Tap a session to see it.':'Tap a session to set what it\'s for. Faded sessions come from the block\'s usual '+uW()+'.'}</p>
+    ${ms.length||ev.length?`<div class="chips">${ms.map(c=>`<span class="chip">${esc(c.name)} · ${esc(c.course)}</span>`).join('')}${ev.map(e=>`<span class="chip">${esc(e.name)}</span>`).join('')}</div>`:''}
+    ${lanes().filter(b=>runsIn(b,i)).map(b=>groupHTML(b,i)).join('')}</section>`;}
+
+/* one session opened from the plan: its focus, notes, versions this week, and last time */
+function sheetHTML(){const p=S.wvOpen;if(!p||p.i!==wkCur())return '';const b=BR(p.bid),i=p.i,o=occOf(i,p.key);if(!b||!o)return '';
+  const t=sessT(b.id,i,o.key);const at=`data-k="sf" data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}"`;const ref=`data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}"`;
   const mem=membersAt(b.id,i);const vs=t.v||[];const on=vs.map(()=>[]);mem.forEach(sw=>{const n=versionFor(t,sw.id,i,o);if(n!=null)on[n].push(sw);});
-  return `<div class="wv-s${t.own?' own':' std'}${cx?' cx':''}">
-    <div class="wv-sh"><b>${esc(oLab(o))}</b><span class="small muted">${esc(o.x.pool||'')}${o.x.time?' · '+esc(o.x.time):''}${t.own?'':' · '+(b.parent&&!t.own?'as planned':'standard week')}</span><span class="grow"></span>${sessLink(o)}</div>
-    ${cx?`<div class="wv-cancel">Cancelled${A.cancelled.get(k)?': '+esc(A.cancelled.get(k)):''}. Its share comes off this ${isMicro()?'micro':'week'}'s load.</div>`:''}
-    ${t.camp?'<div class="small muted">Camp</div>':lk?`<div class="wv-chips">${tgtHTML(t,true)}<button class="btn sm ghost edit" data-cmd="faropen" data-k="${esc(fk)}">Plan this</button></div>`:
-      `${focusRow(t,at,false)}<textarea class="inp" ${at} data-f="n" rows="2" placeholder="Notes for this session">${esc(t.n||'')}</textarea>
+  const src=copyOf(b,i),cx=cxAt(o);const po=i>0?occs(i-1).find(q=>q.x.id===o.x.id):null;const ps=po&&actualAt(po);
+  const from=t.own?`changed for ${esc(b.name)} this ${uW()}`:src?`as ${esc(BR(src).name)}`:`from the block's usual ${uW()}`;
+  const why=cx?(S.actual.cancelled.get(toISO(o.d)+'|'+o.x.slot)||''):'';
+  return `<div class="wv-scrim" data-cmd="wvclose"><div class="card wv-sheet" role="dialog" aria-label="${esc(oLab(o))}" data-cmd="stay">
+    <div class="wv-gh"><div><span class="label">${esc(b.name)} · ${esc(relWord(i))}</span><h2>${esc(oLab(o))}</h2><div class="small muted">${esc(o.x.pool||'')}${o.x.time?' · '+esc(o.x.time):''} · ${from}</div></div><button class="btn sm primary" data-cmd="wvclose">Done</button></div>
+    ${cx?`<div class="wv-cancel">Cancelled${why?': '+esc(why):''}. Its share comes off this ${uW()}'s load.</div>`:''}
+    ${t.camp?'<p class="small muted">Camp</p>':`${focusRow(t,at)}<textarea class="inp" ${at} data-f="n" rows="3" placeholder="Notes for whoever writes the session">${esc(t.n||'')}</textarea>
       ${vs.map((v,n)=>versionRow(b,i,o,v,n,on[n],mem)).join('')}
-      <div class="wv-acts"><button class="btn sm ghost edit" data-cmd="vadd" data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}" title="A different focus for some swimmers, e.g. those who missed an earlier session">+ Version</button>
-      ${t.own?`<button class="btn sm ghost edit" data-cmd="mkstd" data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}" title="Every week of this block starts from it">Make this the standard</button><button class="btn sm ghost edit" data-cmd="resetsess" data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}">Reset</button>`:''}
-      ${vs.length?`<span class="small muted">Everyone else (${mem.length-on.reduce((s,x)=>s+x.length,0)}) does the session above.</span>`:''}</div>`}
-  </div>`;}
+      ${vs.length?`<p class="small muted" style="margin:0">Everyone else (${mem.length-on.reduce((s,x)=>s+x.length,0)}) does the session above. Versions for every ${uW()} are set on the Calendar tab's timetable; a change here is for this ${uW()} only.</p>`:''}`}
+    ${po?`<div class="wv-prev"><span class="label">Last time · ${esc(fdow(po.d))}</span><div>${cxAt(po)?'<span class="bad">Cancelled</span>':ps?`<b>${esc(ps.title||'Session')}</b>${ps.metres?' · '+(+ps.metres).toLocaleString()+' m':''}${ps.attended?' · '+ps.attended.length+' came':''} <button class="slink done" data-cmd="pdf" data-id="${ps.id}">PDF</button>`:'<span class="muted">Nothing written</span>'}</div><div class="small muted">Planned: ${tgtHTML(sessT(b.id,i-1,po.key),true)}</div></div>`:''}
+    <div class="wv-acts">${sessLink(o)}${t.camp?'':`<button class="btn sm ghost edit" data-cmd="vadd" ${ref} title="A different focus for some swimmers, e.g. those who missed an earlier session">${vs.length?'+ Another version':'Split it just this '+uW()}</button>`}
+      ${t.own?`<button class="btn sm ghost edit" data-cmd="resetsess" ${ref}>Undo this ${uW()}'s change</button>`:''}</div></div></div>`;}
 function versionRow(b,i,o,v,n,who,mem){const at=`data-bid="${esc(b.id)}" data-i="${i}" data-s="${esc(o.key)}" data-n="${n}"`;const before=tSorted().filter(x=>x.id!==o.x.id);
   return `<div class="wv-ver"><div class="row"><span class="small">Version for those who</span><select class="inp" style="width:auto" data-k="vk" ${at}>${[['missed','missed'],['did','did'],['names','are']].map(([k,l])=>opt(k,v.k,l)).join('')}</select>
       ${v.k==='names'?mem.map(sw=>`<button class="chipbtn${v.ids.includes(sw.id)?' on':''} edit" data-cmd="vname" ${at} data-id="${esc(sw.id)}">${esc(shortName(sw))}</button>`).join(''):
         before.map(x=>`<button class="chipbtn${v.s.includes(x.id)?' on':''} edit" data-cmd="vsess" ${at} data-x="${esc(x.id)}">${esc(x.label)}</button>`).join('')}
       <button class="btn sm ghost edit" data-cmd="vdel" ${at} title="Remove this version">✕</button></div>
-    <div class="sf"><span>Main</span>${focusSel(v.a,`data-k="vf" ${at} data-f="a"`)}<span>2nd</span>${focusSel(v.b,`data-k="vf" ${at} data-f="b"`)}<span>3rd</span>${focusSel(v.c,`data-k="vf" ${at} data-f="c"`,'none')}</div>
+    ${focusRow(v,`data-k="vf" ${at}`)}
     <input class="inp" data-k="vf" ${at} data-f="n" value="${esc(v.n||'')}" placeholder="Notes for this version">
     <div class="small ${who.length?'':'muted'}">${who.length?'This time: '+esc(who.map(shortName).join(', ')):'Nobody on it this time'}</div></div>`;}
-/* last week (or micro), folded under a group: what was actually written and swum, and what was planned */
-function ghostHTML(b,i){const gi=Math.max(0,Math.min(NW()-1,S.ghost[b.id]==null?i-1:S.ghost[b.id]));if(i===0&&S.ghost[b.id]==null)return '';
-  const open=S.ghostOpen.includes(b.id);const os=occs(gi);
-  return `<details class="wv-ghost" data-bid="${esc(b.id)}"${open?' open':''}><summary>${esc(relWord(gi))} · ${range(wkS(gi),wkE(gi))}</summary>
-    <div class="row"><button class="btn sm ghost" data-cmd="ghstep" data-bid="${esc(b.id)}" data-i="${gi-1}" ${gi>0?'':'disabled'} aria-label="Earlier">◀</button><span class="small muted">${esc(TL(b.id)[gi].code)} · ${pct(TL(b.id)[gi].load)} load</span><button class="btn sm ghost" data-cmd="ghstep" data-bid="${esc(b.id)}" data-i="${gi+1}" ${gi<i-1?'':'disabled'} aria-label="Later">▶</button></div>
-    ${os.map(o=>{const s=actualAt(o),t=sessT(b.id,gi,o.key);const cx=s&&s.status==='cancelled';
-      return `<div class="wv-g-row"><div><b>${esc(oLab(o))}</b> ${cx?`<span class="near">cancelled${s.reason?': '+esc(s.reason):''}</span>`:s?`<span>${esc(s.title||'Session')}${s.metres?' · '+s.metres.toLocaleString()+' m':''}</span>`:'<span class="muted">nothing written</span>'}
-        <div class="small muted">Planned: ${t.camp?'camp':[t.a,t.b,t.c].filter(z=>z!=null).map(z=>fLabel(z)).join(' + ')||'—'}${t.n?' · '+esc(t.n.length>60?t.n.slice(0,59)+'…':t.n):''}</div>${s&&s.notes?`<div class="small tnote">${esc(s.notes.length>140?s.notes.slice(0,139)+'…':s.notes)}</div>`:''}</div>
-        ${s&&!cx?sessLink(o,true):''}</div>`;}).join('')||'<p class="small muted">No sessions on the timetable then.</p>'}</details>`;}
-function groupCard(b,i,far){const w=TL(b.id)[i];const mem=membersAt(b.id,i);
-  const same=b.parent&&!w.diff&&occs(i).every(o=>!sessOwn(b.id,i,o.key));
-  return `<section class="card wv-g" style="--b:${esc(b.color)}"><div class="wv-gh"><div><h3>${esc(b.name)}</h3><div class="small muted">${esc(w.code)} · ${esc(w.ph.name)} · ${mem.length} swimmer${mem.length===1?'':'s'}</div><div class="small">${meetCell(b.id,i)}</div></div>
-      <div class="wv-load" title="Set on the Season tab"><b>${pct(w.load)}</b><span class="small muted">load${w.cut?` (planned ${pct(w.plan)})`:''}</span></div></div>
-    ${same?`<p class="small muted" style="margin:4px 0">Same sessions as ${esc(BR(b.parent).name)} this ${isMicro()?'micro':'week'}. ${S.showSame.includes(b.id)?'':`<button class="linkbtn" data-cmd="showsame" data-bid="${esc(b.id)}">Plan ${esc(b.name)} differently</button>`}</p>`:''}
-    ${w.camp?'<p class="small near">Camp this '+(isMicro()?'micro':'week')+'.</p>':''}
-    ${same&&!S.showSame.includes(b.id)?'':`<div class="wv-sess">${occs(i).map(o=>sessRow(b,i,o,far)).join('')||'<p class="small muted">No sessions on the timetable in these dates.</p>'}</div>`}
-    ${same&&!S.showSame.includes(b.id)?'':ghostHTML(b,i)}</section>`;}
-/* swimmers who differ (4.2): only where their season chart bar differs from their group's (their own load or block,
+
+/* swimmers not with their group (4.2): only where their season chart bar differs from their group's (their own load or block,
    time away, a camp) or a session was changed for them. Following a version, or coming to fewer sessions, is not differing. */
 function diffOf(sw,i){if(!planned(sw))return null;const bid=swBid(sw),w=TL(bid)[i];const own=occs(i).filter(o=>sessOwn(bid,i,o.key));
   if(!w.diff&&!w.away&&!w.camp&&!own.length)return null;const g=groupAt(sw,i);
@@ -1096,69 +1149,70 @@ function diffCards(i){const rows=allSw().filter(planned).map(sw=>({sw,d:diffOf(s
   (S.dpend||[]).filter(p=>p.i===i).forEach(p=>{const sws=p.ids.map(id=>allSw().find(s=>s.id===id)).filter(s=>s&&planned(s)&&!sessOwn(swBid(s),i,p.key));if(sws.length)groups.set('pend|'+p.key+'|'+p.ids.join(','),{d:null,pend:p,sws});});
   return [...groups.values()];}
 function diffCard(c,i){const ids=c.sws.map(s=>s.id).join(',');const sw0=c.sws[0];const bid0=swBid(sw0);const g=BR(groupAt(sw0,i));const w=TL(bid0)[i];const gw=TL(g.id)[i];
-  const at=`data-ids="${esc(ids)}" data-i="${i}"`;const lines=[];
-  if(c.d&&w.diff)lines.push(`<div class="row"><span>Load</span><input class="inp t edit" type="number" min="0" max="150" step="5" data-k="dload" ${at} value="${Math.round(w.plan*100)}" style="width:66px">%<span class="small muted">${esc(g.name)}: ${pct(gw.plan)}${w.p!==gw.p?' · '+esc(w.ph.name):''}</span></div>`);
-  if(c.d&&w.away)lines.push(`<div class="small"><span class="awayb">${esc(w.away.items.map(a=>a.type).join(', '))}</span> ${awayTxt(w.away)}</div>`);
-  if(c.d&&w.camp){const ev=S.plan.events.find(e=>e.id===w.camp)||{};lines.push(`<div class="small near">On camp: ${esc(ev.name||'')}</div>`);}
-  const keys=c.pend?[c.pend.key]:c.d.own.map(o=>o.key);
+  const at=`data-ids="${esc(ids)}" data-i="${i}"`;const lines=[];const why=[];
+  if(c.d&&w.diff){why.push(['Own load '+pct(w.plan),'']);lines.push(`<div class="row"><span>Load</span><input class="inp t edit" type="number" min="0" max="150" step="5" data-k="dload" ${at} value="${Math.round(w.plan*100)}" style="width:66px">%<span class="small muted">${esc(g.name)}: ${pct(gw.plan)}${w.p!==gw.p?' · '+esc(w.ph.name):''}</span></div>`);}
+  if(c.d&&w.away){const ty=w.away.items.map(a=>a.type).join(', ');why.push([ty,/injur|ill/i.test(ty)?'inj':'']);lines.push(`<div class="small"><span class="awayb">${esc(ty)}</span> ${awayTxt(w.away)}</div>`);}
+  if(c.d&&w.camp){const ev=S.plan.events.find(e=>e.id===w.camp)||{};why.push(['Camp','']);lines.push(`<div class="small near">On camp: ${esc(ev.name||'')}</div>`);}
+  const keys=c.pend?[c.pend.key]:c.d.own.map(o=>o.key);if(keys.length)why.push([keys.length===1?'A session changed':keys.length+' sessions changed','']);
   keys.forEach(key=>{const o=occOf(i,key);if(!o)return;const t=sessT(bid0,i,key);const sat=`data-k="dsf" ${at} data-s="${esc(key)}"`;
     lines.push(`<div class="wv-s own"><div class="wv-sh"><b>${esc(oLab(o))}</b><span class="small muted">${esc(g.name)}: ${tgtHTML(sessT(g.id,i,key))}</span><span class="grow"></span>${c.pend?'':`<button class="btn sm ghost edit" data-cmd="dsreset" ${at} data-s="${esc(key)}">Reset</button>`}</div>
-      ${focusRow(t,sat,false)}<textarea class="inp" ${sat} data-f="n" rows="2" placeholder="What they do instead">${esc(t.n||'')}</textarea></div>`);});
-  return `<section class="card wv-diff" style="--b:${esc(g.color)}"><div class="wv-gh"><div><h3>${c.sws.map(s=>`<span class="dname">${esc(s.name)}${c.sws.length>1?` <button class="linkbtn" data-cmd="dsplit" data-id="${esc(s.id)}" title="Give ${esc(s.name.split(' ')[0])} their own card">split off</button>`:''}</span>`).join(', ')}</h3>
-      <div class="small muted">In ${esc(g.name)} · differs this ${isMicro()?'micro':'week'}</div></div>
-      ${c.pend?'':`<button class="btn sm ghost edit" data-cmd="dreset" ${at}>Back to ${esc(g.name)}</button>`}</div>${lines.join('')}
-    ${c.pend?'':`<div class="row"><select class="inp edit" data-k="dadd" ${at} style="width:auto"><option value="">+ Change a session for ${c.sws.length>1?'them':'them'}…</option>${occs(i).filter(o=>!keys.includes(o.key)).map(o=>opt(o.key,'',oLab(o))).join('')}</select></div>`}</section>`;}
-function rightNowHTML(i){const A=S.actual;if(!A||!A.rightNow.length)return '';const a=wkS(i),z=wkE(i);
-  const items=A.rightNow.filter(n=>['injury','illness'].includes(n.kind)&&!S.rnSkip.includes(n.id)&&iso(n.from)<=z&&(!n.until||iso(n.until)>=a)).filter(n=>{const sw=allSw().find(s=>s.id===String(n.swimmer));
-    return sw&&planned(sw)&&!awayFor(sw.id).some(x=>['Injury','Illness'].includes(x.type)&&x.from&&iso(x.from)<=z&&iso(x.to||x.from)>=a);});
-  return items.map(n=>{const sw=allSw().find(s=>s.id===String(n.swimmer));return `<div class="wv-rn"><span><b>${esc(sw.name.split(' ')[0])}</b>: ${esc(n.title)} (${esc(n.kind)}${n.until?' until '+fd(iso(n.until)):''})${n.impact?' · '+esc(n.impact):''}. Plan around it?</span>
+      ${focusRow(t,sat)}<textarea class="inp" ${sat} data-f="n" rows="2" placeholder="What they do instead">${esc(t.n||'')}</textarea></div>`);});
+  const k=ids+'|'+i;const open=!!c.pend||(S.dOpen||[]).includes(k);
+  return `<details class="wv-diff" data-k="${esc(k)}" style="--b:${esc(g.color)}"${open?' open':''}><summary><span class="wv-who">${esc(c.sws.map(s=>s.name).join(', '))}</span>${why.map(([t,cl])=>`<span class="why ${cl}">${esc(t)}</span>`).join('')}<span class="small muted">${esc(g.name)}</span></summary>
+    <div class="wv-dbody">${c.sws.length>1?`<div class="small muted">${c.sws.map(s=>`${esc(s.name)} <button class="linkbtn" data-cmd="dsplit" data-id="${esc(s.id)}" title="Give ${esc(s.name.split(' ')[0])} their own line">split off</button>`).join(' · ')}</div>`:''}
+    ${lines.join('')}
+    <div class="row">${c.pend?'':`<select class="inp edit" data-k="dadd" ${at} style="width:auto"><option value="">+ Change a session for them…</option>${occs(i).filter(o=>!keys.includes(o.key)).map(o=>opt(o.key,'',oLab(o))).join('')}</select><button class="btn sm ghost edit" data-cmd="dreset" ${at}>Back with ${esc(g.name)}</button>`}</div></div></details>`;}
+function rightNowItems(i){const A=S.actual;if(!A||!A.rightNow.length)return [];const a=wkS(i),z=wkE(i);
+  return A.rightNow.filter(n=>['injury','illness'].includes(n.kind)&&!S.rnSkip.includes(n.id)&&iso(n.from)<=z&&(!n.until||iso(n.until)>=a)).filter(n=>{const sw=allSw().find(s=>s.id===String(n.swimmer));
+    return sw&&planned(sw)&&!awayFor(sw.id).some(x=>['Injury','Illness'].includes(x.type)&&x.from&&iso(x.from)<=z&&iso(x.to||x.from)>=a);});}
+function rightNowHTML(i){return rightNowItems(i).map(n=>{const sw=allSw().find(s=>s.id===String(n.swimmer));return `<div class="wv-rn"><span><b>${esc(sw.name)}</b> <span class="why inj">Right now · ${esc(n.kind)}</span> ${esc(n.title)}${n.until?' until '+fd(iso(n.until)):''}${n.impact?' · '+esc(n.impact):''}</span>
     <span><button class="btn sm edit" data-cmd="rnplan" data-id="${esc(String(n.id))}" data-i="${i}">Plan around it</button> <button class="btn sm ghost" data-cmd="rnskip" data-id="${esc(String(n.id))}">Not needed</button></span></div>`;}).join('');}
 function addDiffForm(i){if(!S.addDiff)return '';const os=occs(i);
-  return `<div class="card wv-add"><b>Who differs, and how?</b>
+  return `<div class="wv-add"><b>Who, and how?</b>
     <div class="chips">${lanes().filter(b=>runsIn(b,i)).map(b=>membersAt(b.id,i).map(sw=>`<label class="chip"><input type="checkbox" class="dfsw" value="${esc(sw.id)}"> ${esc(sw.name)}</label>`).join('')).join('')}</div>
     <label class="row"><input type="radio" name="dfWhat" value="load" checked> A lighter or heavier load: <input class="inp t" id="dfLoad" type="number" min="0" max="150" step="5" value="60" style="width:66px">%</label>
     <label class="row"><input type="radio" name="dfWhat" value="miss"> Misses sessions on ${os.map(o=>o.d).filter((d,k,a)=>a.indexOf(d)===k).map(d=>`<label class="chip"><input type="checkbox" class="dfday" value="${toISO(d)}"> ${esc(fdow(d))}</label>`).join('')}</label>
     <label class="row"><input type="radio" name="dfWhat" value="sess"> A session done differently: <select class="inp" id="dfSess" style="width:auto">${os.map(o=>opt(o.key,'',oLab(o))).join('')}</select></label>
-    <label class="row">For this ${isMicro()?'micro':'week'} and the next <input class="inp t" id="dfN" type="number" min="0" max="20" value="0" style="width:56px"> ${isMicro()?'micros':'weeks'} (load and sessions)</label>
+    <label class="row">For this ${uW()} and the next <input class="inp t" id="dfN" type="number" min="0" max="20" value="0" style="width:56px"> ${uW()}s (load and sessions)</label>
     <div class="row"><button class="btn primary sm edit" data-cmd="dmake" data-i="${i}">Add</button><button class="btn sm ghost" data-cmd="daddopen">Cancel</button></div></div>`;}
-/* micros (4.1): how the plan is divided */
-function microTools(i){if(!S.microTools)return '';const mic=isMicro();
-  return `<div class="card wv-micro"><b>How the plan is divided</b>
+function outHTML(i){if(isFar(i))return '';const cards=diffCards(i);const rn=rightNowHTML(i);
+  const n=new Set(cards.flatMap(c=>c.sws.map(s=>s.id)).concat(rightNowItems(i).map(x=>String(x.swimmer)))).size;
+  return `<section class="card wv-out"><div class="wv-ph"><div><span class="label warn">Not with their group</span><h2>${n?n+' this '+uW():'Everyone is with their group'}</h2>
+      <div class="small muted">Only swimmers whose own ${uW()} is different: their own load, time away, a camp, or a session changed for them. Being on a version of a session isn't listed here.</div></div></div>
+    ${rn}${cards.map(c=>diffCard(c,i)).join('')}
+    <div class="toolbar" style="margin-top:8px"><button class="btn sm edit" data-cmd="daddopen">+ Someone not with their group</button></div>${addDiffForm(i)}</section>`;}
+
+/* micros (4.1): how the plan is divided, on the Calendar tab */
+function microCard(){const i=wkCur(),mic=isMicro();
+  return `<div class="card detail wv-micro"><div class="d-head"><div><span class="label">How the season is split</span><h2>${mic?'Micros of any length':'Weeks, Monday to Sunday'}</h2></div></div>
     <label class="row"><input type="radio" name="mm" data-k="micromode" value="weeks"${mic?'':' checked'}> Weeks, Monday to Sunday</label>
     <label class="row"><input type="radio" name="mm" data-k="micromode" value="micros"${mic?' checked':''}> Micros of any length (8 days, then 6, then 4…)</label>
-    ${mic?`<p class="small muted">This micro: ${fdow(wkS(i))} – ${fdow(wkE(i))}, ${mLen(i)} day${mLen(i)>1?'s':''}.</p>
+    ${mic?`<p class="small muted">The micro open on the Weeks tab: ${fdow(wkS(i))} – ${fdow(wkE(i))}, ${mLen(i)} day${mLen(i)>1?'s':''}.</p>
       ${mLen(i)>1?`<div class="row">Start a new micro on <select class="inp" id="mSplit" style="width:auto">${Array.from({length:mLen(i)-1},(_,k)=>wkS(i)+(k+1)*DAY).map(d=>opt(toISO(d),'',fdow(d))).join('')}</select><button class="btn sm edit" data-cmd="msplit">Split</button></div>`:''}
-      ${i<NW()-1?`<div class="row"><button class="btn sm edit" data-cmd="mjoin" data-i="${i}">Join with the next micro</button></div>`:''}
-      <div class="row">From this micro to the end of the season, lengths in days <input class="inp" id="mLay" style="width:120px" placeholder="8, 6, 4"><button class="btn sm edit" data-cmd="mlay" data-i="${i}">Lay out</button></div>
-      <p class="small muted">The lengths repeat. Loads, blocks and planned sessions move with their dates.</p>`:''}</div>`;}
-function overviewHTML(){const nw=nowWk(),from=S.ovPast?0:Math.max(0,nw-2);const ls=lanes();
-  return `<div class="card detail"><div class="tbl-wrap"><table class="tbl ov-grid"><thead><tr><th>${isMicro()?'Micro':'Week'}</th>${ls.map(b=>`<th style="color:${esc(b.color)}">${esc(b.name)}</th>`).join('')}</tr></thead><tbody>
-  ${Array.from({length:NW()-from},(_,k)=>k+from).map(j=>`<tr class="ov-row${j===nw?' now':''}${isFar(j)?' far':''}" data-cmd="wkgo" data-i="${j}" title="Open this ${isMicro()?'micro':'week'}"><td><b>${fd(wkS(j))}</b>${isMicro()?`<div class="small muted">${mLen(j)} d</div>`:''}</td>
-    ${ls.map(b=>{if(!runsIn(b,j))return '<td></td>';const w=TL(b.id)[j];const n=membersAt(b.id,j).filter(sw=>diffOf(sw,j)).length;
-      return `<td><div class="ov-c"><span class="mono small">${esc(w.code)}</span> <b>${pct(w.load)}</b>${n?` <span class="dbadge">${n} differ</span>`:''}</div><div class="fstrip">${occs(j).map(o=>{const t=sessT(b.id,j,o.key);const c=t.camp?'#D6E8F7':t.a!=null?fColor(t.a):'transparent';return `<i style="background:${esc(c)}" title="${esc(o.x.label+': '+(t.camp?'camp':t.a!=null?fLabel(t.a):'—'))}"></i>`;}).join('')}</div></td>`;}).join('')}</tr>`).join('')}
-  </tbody></table></div>${from>0?`<div class="toolbar"><button class="btn sm" data-cmd="ovpast">Show the ${from} earlier ${colWord(from)}</button></div>`:S.ovPast?'<div class="toolbar"><button class="btn sm" data-cmd="ovpast">Hide earlier ones</button></div>':''}</div>`;}
+      ${i<NW()-1?`<div class="row"><button class="btn sm edit" data-cmd="mjoin" data-i="${i}">Join it with the next micro</button></div>`:''}
+      <div class="row">From that micro to the end of the season, lengths in days <input class="inp" id="mLay" style="width:120px" placeholder="8, 6, 4"><button class="btn sm edit" data-cmd="mlay" data-i="${i}">Lay out</button></div>
+      <p class="small muted">The lengths repeat. Each micro is one bar on the season chart. Loads, blocks and planned sessions move with their dates.</p>`:''}</div>`;}
+/* session versions set once on the timetable: every week starts from them (a block's usual week or one week can have its own) */
+function ttVersCard(){const ses=tSorted();const withV=ses.filter(x=>(x.v||[]).length);
+  return `<div class="card detail"><div class="d-head"><div><span class="label">Session versions</span><h2>Set once, for every ${uW()}</h2></div></div>
+    <p class="small muted" style="margin-top:0">For a session that changes with who came before it: Wed AM recovery for those who did Mon PM and Tue PM, a harder set for everyone else. Ahead of time it goes by each swimmer's usual sessions; once a register is taken, by who came. One ${uW()} can still be changed on the Weeks tab.</p>
+    ${withV.map(x=>`<div class="wv-ttv"><b>${esc(x.label)}</b>${x.v.map((v,n)=>ttVRow(x,normV(v),n)).join('')}<div class="row"><button class="btn sm ghost edit" data-cmd="ttvadd" data-id="${esc(x.id)}">+ Another version</button><span class="small muted">Everyone else does ${esc(x.label)} as planned for the ${uW()}.</span></div></div>`).join('')}
+    <div class="row"><select class="inp edit" data-k="ttvnew" style="width:auto"><option value="">+ Give a session versions…</option>${ses.filter(x=>!(x.v||[]).length).map(x=>opt(x.id,'',x.label)).join('')}</select></div></div>`;}
+function ttVRow(x,v,n){const at=`data-id="${esc(x.id)}" data-n="${n}"`;
+  return `<div class="wv-ver"><div class="row"><span class="small">For those who</span><select class="inp" style="width:auto" data-k="ttvk" ${at}>${[['did','did'],['missed','missed']].map(([k,l])=>opt(k,v.k,l)).join('')}</select>
+      ${tSorted().filter(y=>y.id!==x.id).map(y=>`<button class="chipbtn${v.s.includes(y.id)?' on':''} edit" data-cmd="ttvsess" ${at} data-x="${esc(y.id)}">${esc(y.label)}</button>`).join('')}
+      <button class="btn sm ghost edit" data-cmd="ttvdel" ${at} title="Remove this version">✕</button></div>
+    ${focusRow(v,`data-k="ttvf" ${at}`)}<input class="inp" data-k="ttvf" ${at} data-f="n" value="${esc(v.n||'')}" placeholder="Notes for this version"></div>`;}
+function editTT(id,fn){commit(()=>{const x=S.plan.sessions.find(y=>y.id===id);if(!x)return;const v=(x.v||[]).map(normV);fn(v);if(v.length)x.v=v;else delete x.v;});}
+
 function renderSessions(){
-  const v=$('#v-sessions');const sys=nsys();loadActual();const i=wkCur(),far=isFar(i);const mode=S.wkMode||'week';
-  const ms=meetsInWeek(i),ev=eventsInWeek(i);const cards=mode==='week'?diffCards(i):[];
-  const head=`<div class="card detail wv-head"><div class="wv-top"><button class="btn" data-cmd="wkstep" data-d="-1" ${i>0?'':'disabled'} aria-label="Earlier">◀</button>
-      <div class="wv-title"><span class="label">${esc(relWord(i))} · ${esc(colName(i))}</span><h2>${fdow(wkS(i))} – ${fdow(wkE(i))}</h2></div>
-      <button class="btn" data-cmd="wkstep" data-d="1" ${i<NW()-1?'':'disabled'} aria-label="Later">▶</button></div>
-    <div class="chips">${i!==nowWk()?`<button class="btn sm" data-cmd="wknow">This ${isMicro()?'micro':'week'}</button>`:''}
-      <button class="btn sm${mode==='week'?' primary':''}" data-cmd="wkmode" data-m="week">${isMicro()?'Micro':'Week'}</button><button class="btn sm${mode==='overview'?' primary':''}" data-cmd="wkmode" data-m="overview">Overview</button>
-      <button class="btn sm ghost" data-cmd="microtools" aria-expanded="${!!S.microTools}">${isMicro()?'Micros':'Weeks or micros'}</button>
-      <label class="small muted">Scale <select class="inp" id="scaleSel">${scaleList().map(s=>opt(s.key,sys.id,s.name)).join('')}</select></label></div>
-    ${mode==='week'&&(ms.length||ev.length)?`<div class="chips">${ms.map(c=>`<span class="chip">${esc(c.name)} · ${esc(c.course)}</span>`).join('')}${ev.map(e=>`<span class="chip">${esc(e.name)}</span>`).join('')}</div>`:''}
-    ${scaleBarHTML(sys)}
-    ${far&&mode==='week'?`<p class="small muted wv-farnote">This is a while ahead, so nothing needs planning yet. Tap "Plan this" on a session to fill it in.</p>`:''}</div>`;
-  if(mode==='overview'){v.innerHTML=head+microTools(i)+overviewHTML();return finish(v);}
-  const groups=lanes().filter(b=>runsIn(b,i)).map(b=>groupCard(b,i,far)).join('');
-  const extra=(S.actual?S.actual.extra:[]).filter(x=>iso(x.date)>=wkS(i)&&iso(x.date)<=wkE(i));
-  const diff=`<div class="wv-sep"><span>Swimmers who differ this ${isMicro()?'micro':'week'}</span></div>
-    <p class="small muted">Only swimmers whose season chart bar differs from their group's (their own load, time away, a camp) or who do a session differently. A version of a session, or coming to fewer sessions, is part of the group's plan.</p>
-    ${rightNowHTML(i)}${cards.map(c=>diffCard(c,i)).join('')||'<p class="small muted">Everyone follows their group this time.</p>'}
-    ${extra.length?`<div class="card wv-extra"><b>Extra sessions</b>${extra.map(x=>`<div class="row"><span>${esc(fdow(iso(x.date)))} · ${esc(x.title||'Extra session')} · ${esc(x.picked.map(firstName).join(', '))}</span><button class="slink done" data-cmd="pdf" data-id="${x.id}">Open ›</button></div>`).join('')}<span class="small muted">These count towards the load of the swimmers they were for.</span></div>`:''}
-    <div class="toolbar"><button class="btn sm edit" data-cmd="daddopen">+ Swimmer differs</button></div>${addDiffForm(i)}`;
-  v.innerHTML=head+microTools(i)+groups+diff;finish(v);}
+  const v=$('#v-sessions');const sys=nsys();loadActual();const i=wkCur();const both=i<=nowWk()+1;
+  v.innerHTML=`<div class="card detail wv-head">${stripHTML(i)}</div>
+    <div class="wv-cols${both?' both':''}">${both?recordHTML(i):''}<div class="wv-main">${planHTML(i)}${outHTML(i)}</div></div>
+    <details class="card detail wv-scale"><summary class="small muted">Intensity scale for the focuses</summary><label class="small muted">Scale <select class="inp" id="scaleSel">${scaleList().map(s=>opt(s.key,sys.id,s.name)).join('')}</select></label>${scaleBarHTML(sys)}</details>
+    ${sheetHTML()}`;
+  const c=v.querySelector('.wv-chip[aria-pressed="true"]');if(c){const s=c.parentNode;s.scrollLeft=Math.max(0,c.offsetLeft-s.offsetLeft-90);}
+  finish(v);}
 function finish(v){if(S.ro)v.querySelectorAll('input,select:not(#scaleSel),textarea,.edit').forEach(el=>{el.disabled=true;});}
 /* changing how the plan is divided: everything kept per column goes to the column its date now falls in */
 function setMicros(list){const oldS=grid().slice(),oldN=oldS.length,oldOcc=oldS.map((_,i)=>occs(i)),oldEnd=i=>(i+1<oldN?oldS[i+1]:END())-DAY;
@@ -1454,14 +1508,16 @@ document.addEventListener('click',e=>{
   case 'restore':arm(t,()=>restoreVersion(ds.id));break;
   case 'delversion':arm(t,async()=>{try{await verCol.doc(ds.id).delete();}catch(e){}renderVersions();});break;
   case 'blank':blankPlan();break;
-  case 'wkstep':S.wkI=Math.max(0,Math.min(NW()-1,wkCur()+(+ds.d)));S.ghost={};renderSessions();break;
-  case 'wknow':S.wkI=null;S.ghost={};renderSessions();break;
-  case 'wkmode':S.wkMode=ds.m;renderSessions();break;
-  case 'wkgo':S.wkMode='week';S.wkI=+ds.i;S.ghost={};renderSessions();break;
-  case 'ovpast':S.ovPast=!S.ovPast;renderSessions();break;
-  case 'microtools':S.microTools=!S.microTools;renderSessions();break;
-  case 'ghstep':S.ghost[ds.bid]=+ds.i;if(!S.ghostOpen.includes(ds.bid))S.ghostOpen.push(ds.bid);renderSessions();break;
-  case 'faropen':if(!S.farOpen.includes(ds.k))S.farOpen.push(ds.k);renderSessions();break;
+  case 'wkgo':S.wkI=+ds.i;S.lwBack=1;S.wvOpen=null;renderSessions();break;
+  case 'wknow':S.wkI=null;S.lwBack=1;S.wvOpen=null;renderSessions();break;
+  case 'lwstep':S.lwBack=Math.max(1,(S.lwBack||1)+(+ds.d));renderSessions();break;
+  case 'wvopen':S.wvOpen={bid:ds.bid,i:+ds.i,key:ds.s};renderSessions();break;
+  case 'wvclose':S.wvOpen=null;renderSessions();break;
+  case 'stay':break;
+  case 'keepblock':commit(()=>{const i=+ds.i;occs(i).forEach(o=>{if(sessOwn(ds.bid,i,o.key))makeStd(ds.bid,i,o.key);});});break;
+  case 'ttvadd':editTT(ds.id,v=>{v.push(normV({k:'missed',s:[]}));});break;
+  case 'ttvdel':editTT(ds.id,v=>{v.splice(+ds.n,1);});break;
+  case 'ttvsess':editTT(ds.id,v=>{const x=v[+ds.n];x.s=x.s.includes(ds.x)?x.s.filter(y=>y!==ds.x):x.s.concat(ds.x);});break;
   case 'pdf':if(opts.openPdf)opts.openPdf(+ds.id);else window.open('/sessions/'+ds.id+'/print','_blank');break;
   case 'vadd':commit(()=>{const i=+ds.i,t=sessT(ds.bid,i,ds.s),o=occOf(i,ds.s);const ts=tSorted();const k=o?ts.findIndex(x=>x.id===o.x.id):-1;const prev=k>=0&&ts.length>1?ts[(k-1+ts.length)%ts.length]:null;
     const v=(t.v||[]).map(normV);v.push(normV({k:'missed',s:prev?[prev.id]:[],a:t.a,b:t.b,c:t.c}));setSess(ds.bid,i,ds.s,{v});});break;
@@ -1469,7 +1525,7 @@ document.addEventListener('click',e=>{
   case 'vsess':editV(ds,v=>{const x=v[+ds.n];x.s=x.s.includes(ds.x)?x.s.filter(y=>y!==ds.x):x.s.concat(ds.x);});break;
   case 'vname':editV(ds,v=>{const x=v[+ds.n];x.ids=x.ids.includes(ds.id)?x.ids.filter(y=>y!==ds.id):x.ids.concat(ds.id);});break;
   case 'mkstd':commit(()=>{makeStd(ds.bid,+ds.i,ds.s);});break;
-  case 'showsame':if(!S.showSame.includes(ds.bid))S.showSame.push(ds.bid);renderSessions();break;
+  case 'showsame':if(!S.showSame.includes(ds.k))S.showSame.push(ds.k);renderSessions();break;
   case 'dsplit':if(!S.split.includes(ds.id))S.split.push(ds.id);renderSessions();break;
   case 'dreset':commit(()=>{dsIds(ds).forEach(sw=>{clearWeek(swBid(sw),+ds.i);occs(+ds.i).forEach(o=>clearSess(swBid(sw),+ds.i,o.key));});});break;
   case 'dsreset':commit(()=>{dsIds(ds).forEach(sw=>clearSess(swBid(sw),+ds.i,ds.s));});break;
@@ -1536,6 +1592,10 @@ document.addEventListener('change',e=>{
   if(k==='goaldone')return commit(()=>{S.roster.swimmers.find(x=>x.id===ds.id).goals[+ds.n].done=t.checked;},'roster');
   if(k==='tf')return commit(()=>{const x=S.plan.templates[+ds.n];x.f=x.f||{};const o=x.f[ds.s]=x.f[ds.s]||{};if(!t.value)delete o[ds.f];else o[ds.f]=rFromLevel(t.value,o[ds.f]);if(!Object.keys(o).length)delete x.f[ds.s];});
   if(k==='sf')return commit(()=>{const cur=sessT(ds.bid,+ds.i,ds.s);const patch={};if(ds.f==='n')patch.n=t.value;else patch[ds.f]=t.value?rFromLevel(t.value,cur[ds.f]):null;setSess(ds.bid,+ds.i,ds.s,patch);});
+  if(k==='follow')return commit(()=>{const b=BR(ds.bid);if(!b)return;const v=t.value;if(b.parent?v===b.parent&&S.plan.branches.some(x=>x.id===b.parent):v==='')delete b.follow;else b.follow=v;});
+  if(k==='ttvnew'){if(!t.value)return;const ts=tSorted(),n=ts.findIndex(x=>x.id===t.value);const prev=ts.slice(Math.max(0,n-2),n).map(x=>x.id);return editTT(t.value,v=>{v.push(normV({k:'did',s:prev}));});}
+  if(k==='ttvk')return editTT(ds.id,v=>{v[+ds.n].k=t.value;});
+  if(k==='ttvf')return editTT(ds.id,v=>{const x=v[+ds.n];if(ds.f==='n')x.n=t.value;else x[ds.f]=t.value?rFromLevel(t.value,x[ds.f]):null;});
   if(k==='vk')return editV(ds,v=>{v[+ds.n].k=t.value;});
   if(k==='vf')return editV(ds,v=>{const x=v[+ds.n];if(ds.f==='n')x.n=t.value;else x[ds.f]=t.value?rFromLevel(t.value,x[ds.f]):null;});
   if(k==='dload')return commit(()=>{const v=Math.max(0,Math.min(150,+t.value||0))/100;dsIds(ds).forEach(sw=>setLoad(swBid(sw),+ds.i,v));});
@@ -1569,10 +1629,10 @@ document.addEventListener('drop',e=>{const z=e.target.closest&&e.target.closest(
 document.addEventListener('keydown',e=>{const tag=(e.target.tagName||'').toLowerCase();if(['input','textarea','select'].includes(tag))return;
   if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('[role="button"][data-cmd]')){e.preventDefault();e.target.click();return;}
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
-  else if(e.key==='Escape'){if(S.sheet){S.sheet='';$('#sheetOverlay').hidden=true;}else{S.sel=null;renderAll();}}});
+  else if(e.key==='Escape'){if(S.wvOpen&&S.view==='sessions'){S.wvOpen=null;renderSessions();}else if(S.sheet){S.sheet='';$('#sheetOverlay').hidden=true;}else{S.sel=null;renderAll();}}});
 // A mouse wheel over a number box being typed in scrolls the page; it doesn't change the number.
 document.addEventListener('wheel',e=>{const a=e.target;if(a&&a.matches&&a.matches('input[type="number"]')&&a===a.ownerDocument.activeElement&&root.contains(a))a.blur();},{passive:true});
-document.addEventListener('toggle',e=>{const d=e.target;if(d&&d.classList&&d.classList.contains('wv-ghost')){const b=d.dataset.bid;S.ghostOpen=d.open?[...new Set(S.ghostOpen.concat(b))]:S.ghostOpen.filter(x=>x!==b);return;}
+document.addEventListener('toggle',e=>{const d=e.target;if(d&&d.classList&&d.classList.contains('wv-diff')){const k=d.dataset.k;S.dOpen=d.open?[...new Set(S.dOpen.concat(k))]:S.dOpen.filter(x=>x!==k);return;}
   if(d&&d.classList&&d.classList.contains('std-run')){const p=d.dataset.p;S.stdOpen=d.open?[...new Set((S.stdOpen||[]).concat(p))]:(S.stdOpen||[]).filter(x=>x!==p);return;}
   if(d&&d.classList&&d.classList.contains('tplcard')){const n=d.dataset.tpl;S.tplOpen=d.open?[...new Set(S.tplOpen.concat(n))]:S.tplOpen.filter(x=>x!==n);}},true);
 $('#sheetOverlay').addEventListener('click',e=>{if(e.target.id==='sheetOverlay'){S.sheet='';e.target.hidden=true;}});
